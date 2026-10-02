@@ -156,8 +156,9 @@ pub enum LockError {
     },
 }
 
-/// The Managed block's markers in an Agent file are not exactly one BEGIN then one END.
-/// `sync` refuses rather than guess which text belongs to refs.
+/// A problem with an Agent file. The marker variants mean the markers are not exactly one
+/// BEGIN then one END, so `sync` refuses rather than guess which text belongs to refs;
+/// `Write` is an I/O failure.
 #[derive(Debug, Error, Diagnostic)]
 pub enum BlockError {
     #[error("a marker has no partner")]

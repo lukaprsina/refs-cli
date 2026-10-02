@@ -139,3 +139,9 @@ mod write {
         assert_eq!(err.code().unwrap().to_string(), "refs::block::write_failed");
     }
 }
+
+#[test]
+fn a_file_with_one_stray_crlf_still_round_trips_its_lf_block() {
+    let text = format!("a\r\nb\n{}\nc\n", block("x"));
+    assert_eq!(splice(&text, &block("x")).unwrap(), text);
+}

@@ -9,12 +9,19 @@ const END: &str = "<!-- END:refs -->";
 
 /// Put `block` (markers included, `\n` line ends) into `text`: replace the existing
 /// marked region, or append after a blank line when there is none. Everything outside
-/// the markers is kept byte for byte. The block takes the file's line ending (CRLF if
-/// the file has any), so splicing what is already there changes nothing.
+/// the markers is kept byte for byte. The block takes the line ending of the region it
+/// replaces (of the whole file when appending), so splicing what is already there
+/// changes nothing even in a file with mixed endings.
 pub fn splice(text: &str, block: &str) -> Result<String, BlockError> {
-    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let region = find_region(text)?;
+    let sample = region.as_ref().map_or(text, |r| &text[r.clone()]);
+    let eol = if sample.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let block = block.replace("\r\n", "\n").replace('\n', eol);
-    match find_region(text)? {
+    match region {
         Some(region) => Ok(format!(
             "{}{block}{}",
             &text[..region.start],
