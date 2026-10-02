@@ -312,3 +312,34 @@ fn unknown_keys_are_rejected_in_every_table() {
         code_and_span(text, "refs::config::unknown_key", "bogus");
     }
 }
+
+#[test]
+fn settings_paths_stay_inside_the_project() {
+    let bad_dirs = [
+        "", "/abs", "../x", "a/../b", ".", "./", "a/..", "has`tick", "a\\nb",
+    ];
+    for bad in bad_dirs {
+        code_and_span(
+            &format!("[settings]\nreferences_dir = \"{bad}\"\n"),
+            "refs::config::bad_settings_path",
+            &format!("\"{bad}\""),
+        );
+    }
+    for bad in ["", "/abs/AGENTS.md", "../AGENTS.md", "."] {
+        code_and_span(
+            &format!("[settings]\nagents_files = [\"AGENTS.md\", \"{bad}\"]\n"),
+            "refs::config::bad_settings_path",
+            &format!("\"{bad}\""),
+        );
+    }
+    parse("[settings]\nreferences_dir = \"vendor/refs\"\nagents_files = [\"docs/AGENTS.md\"]\n")
+        .unwrap();
+}
+
+#[test]
+fn references_dir_defaults_and_loses_a_trailing_slash() {
+    let dir = |text: &str| parse(text).unwrap().settings.references_dir().to_string();
+    assert_eq!(dir(""), ".references");
+    assert_eq!(dir("[settings]\nreferences_dir = \".refs/\"\n"), ".refs");
+    assert_eq!(dir("[settings]\nreferences_dir = \"a/b\"\n"), "a/b");
+}

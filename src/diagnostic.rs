@@ -81,6 +81,18 @@ pub enum ConfigError {
         span: SourceSpan,
     },
 
+    #[error(
+        "`{path}` must be a path inside the project: relative, without `..`, backticks or control characters"
+    )]
+    #[diagnostic(code(refs::config::bad_settings_path))]
+    BadSettingsPath {
+        path: String,
+        #[source_code]
+        src: NamedSource<String>,
+        #[label("not allowed")]
+        span: SourceSpan,
+    },
+
     #[error("{reason}")]
     #[diagnostic(code(refs::config::bad_url))]
     BadUrl {

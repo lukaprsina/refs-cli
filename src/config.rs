@@ -22,8 +22,22 @@ pub struct Config {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
-    pub references_dir: Option<String>,
-    pub agents_files: Option<Vec<String>>,
+    pub references_dir: Option<Spanned<String>>,
+    pub agents_files: Option<Vec<Spanned<String>>>,
+}
+
+const DEFAULT_REFERENCES_DIR: &str = ".references";
+
+impl Settings {
+    /// The references directory, project-relative, without a trailing `/`: `.references`
+    /// when none is configured. This is what `render` pastes into the block's prose.
+    pub fn references_dir(&self) -> &str {
+        self.references_dir
+            .as_ref()
+            .map_or(DEFAULT_REFERENCES_DIR, |dir| {
+                dir.get_ref().trim_end_matches('/')
+            })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +100,7 @@ fn validate(config: &Config, text: &str) -> Vec<ConfigError> {
         text,
         errors: Vec::new(),
     };
+    v.settings(&config.settings);
     for group in config.groups.values() {
         v.group(group);
     }
@@ -110,6 +125,22 @@ impl Validator<'_> {
         let r = at.span();
         self.errors
             .push(make(source(self.text), (r.start, r.end - r.start).into()));
+    }
+
+    fn settings(&mut self, settings: &Settings) {
+        // `references_dir` is pasted into the block's prose between backticks
+        let dir = settings.references_dir.iter();
+        let files = settings.agents_files.iter().flatten();
+        for path in dir.chain(files) {
+            if !is_project_path(path.get_ref()) {
+                let bad = path.get_ref().clone();
+                self.report(path, |src, span| ConfigError::BadSettingsPath {
+                    path: bad,
+                    src,
+                    span,
+                });
+            }
+        }
     }
 
     fn group(&mut self, group: &Group) {
@@ -288,6 +319,15 @@ fn is_heading_safe(name: &str) -> bool {
 
 fn is_relative_path(path: &str) -> bool {
     !path.is_empty() && !path.starts_with('/') && !path.split('/').any(|part| part == "..")
+}
+
+/// A `settings` output path: relative, inside the project, not the project root itself, and
+/// safe to paste into the block's prose (no backtick, no control character, no marker).
+fn is_project_path(path: &str) -> bool {
+    is_relative_path(path)
+        && path.split('/').any(|part| !matches!(part, "" | "."))
+        && is_single_line_text(path)
+        && !path.contains('`')
 }
 
 /// Cone mode checks out every `paths` entry plus the files directly in the repo root.
