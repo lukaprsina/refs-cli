@@ -1,0 +1,9 @@
+---
+source: tests/render.rs
+expression: "body(&block(&config, &lock(&[(\"a\", SHA, None)])))"
+---
+### Ungrouped
+
+```text
+[a @ ee49b3e]
+```

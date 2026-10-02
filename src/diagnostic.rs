@@ -197,3 +197,16 @@ pub enum BlockError {
         source: std::io::Error,
     },
 }
+
+/// `render` was asked for Repos the Lock does not cover. `plan` makes sure the Lock is
+/// current before it renders, so this is a caller bug, but writing a block that silently
+/// leaves a Repo out would be worse.
+#[derive(Debug, Error, Diagnostic)]
+#[error("refs.lock has no entry for: {}", ids.join(", "))]
+#[diagnostic(
+    code(refs::render::not_locked),
+    help("run `refs lock` to resolve them")
+)]
+pub struct NotLocked {
+    pub ids: Vec<String>,
+}

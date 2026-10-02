@@ -1,0 +1,23 @@
+---
+source: tests/render.rs
+expression: "body(&block(config, &lock))"
+---
+### Later (v2): x/y + z & more
+
+```text
+[a @ v2 ee49b3e] Alpha.
+```
+
+### First
+
+```text
+When to look here.
+
+[b @ main ee49b3e] Packages: bee.
+```
+
+### Ungrouped
+
+```text
+[u @ HEAD ee49b3e]
+```

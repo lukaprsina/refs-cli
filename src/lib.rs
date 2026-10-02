@@ -4,4 +4,5 @@ pub mod atomic;
 pub mod config;
 pub mod diagnostic;
 pub mod lock;
+pub mod render;
 pub mod source;

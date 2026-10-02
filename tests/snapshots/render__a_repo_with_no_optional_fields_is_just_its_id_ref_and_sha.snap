@@ -1,0 +1,9 @@
+---
+source: tests/render.rs
+expression: "body(&block(config, &lock(&[(\"a\", \"v1\", None)])))"
+---
+### Ungrouped
+
+```text
+[a @ v1 ee49b3e]
+```
