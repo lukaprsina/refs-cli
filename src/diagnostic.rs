@@ -128,3 +128,30 @@ pub enum ConfigError {
         span: SourceSpan,
     },
 }
+
+/// A failure reported by a `Source`.
+#[derive(Debug, Clone, Error, Diagnostic)]
+pub enum SourceError {
+    #[error("{message}")]
+    #[diagnostic(code(refs::git::failed))]
+    Failed { message: String },
+}
+
+/// A problem reading or writing `refs.lock`.
+#[derive(Debug, Error, Diagnostic)]
+pub enum LockError {
+    #[error("invalid refs.lock: {message}")]
+    #[diagnostic(
+        code(refs::lock::invalid),
+        help("refs.lock is machine-written; run `refs lock` to regenerate it")
+    )]
+    Invalid { message: String },
+
+    #[error("could not write {path}")]
+    #[diagnostic(code(refs::lock::write_failed))]
+    Write {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+}
