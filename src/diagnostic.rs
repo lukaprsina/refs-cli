@@ -155,3 +155,32 @@ pub enum LockError {
         source: std::io::Error,
     },
 }
+
+/// The Managed block's markers in an Agent file are not exactly one BEGIN then one END.
+/// `sync` refuses rather than guess which text belongs to refs.
+#[derive(Debug, Error, Diagnostic)]
+pub enum BlockError {
+    #[error("a marker has no partner")]
+    #[diagnostic(code(refs::block::unbalanced))]
+    Unbalanced,
+
+    #[error("a BEGIN marker comes before the previous one is closed")]
+    #[diagnostic(code(refs::block::nested))]
+    Nested,
+
+    #[error("the END marker comes before the BEGIN marker")]
+    #[diagnostic(code(refs::block::reversed))]
+    Reversed,
+
+    #[error("the markers appear more than once")]
+    #[diagnostic(code(refs::block::duplicated))]
+    Duplicated,
+
+    #[error("could not write {path}")]
+    #[diagnostic(code(refs::block::write_failed))]
+    Write {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+}

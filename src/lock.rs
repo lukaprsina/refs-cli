@@ -51,20 +51,11 @@ impl Lock {
         format!("{HEADER}{body}")
     }
 
-    /// Write via a temp file in the same directory, then rename, so a reader never
-    /// sees a partial lock.
+    /// Write atomically, so a reader never sees a partial lock.
     pub fn write(&self, path: &Path) -> Result<(), LockError> {
-        let mut tmp = path.as_os_str().to_owned();
-        tmp.push(".tmp");
-        let tmp = Path::new(&tmp);
-        std::fs::write(tmp, self.to_toml())
-            .and_then(|()| std::fs::rename(tmp, path))
-            .map_err(|source| {
-                let _ = std::fs::remove_file(tmp);
-                LockError::Write {
-                    path: path.display().to_string(),
-                    source,
-                }
-            })
+        crate::atomic::write(path, &self.to_toml()).map_err(|source| LockError::Write {
+            path: path.display().to_string(),
+            source,
+        })
     }
 }
