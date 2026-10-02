@@ -224,3 +224,50 @@ fn the_binary_exits_2_on_a_usage_error_and_0_on_help() {
     assert_eq!(binary(&dir, &["nope"]).status.code(), Some(2));
     assert_eq!(binary(&dir, &["--help"]).status.code(), Some(0));
 }
+
+#[test]
+fn the_binary_resolves_with_git_and_stops_at_verify_until_the_cache_exists() {
+    let remote = TempDir::new().unwrap();
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "x",
+        ],
+    ] {
+        let status = Command::new("git")
+            .current_dir(remote.path())
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+    let project = TempDir::new().unwrap();
+    let config = |git_ref: &str| {
+        let url = format!("file://{}", remote.path().display());
+        fs::write(
+            project.path().join("refs.toml"),
+            format!("[repos.r]\nurl = \"{url}\"\nref = \"{git_ref}\"\n"),
+        )
+        .unwrap();
+    };
+
+    config("main");
+    let out = binary(&project, &["--no-color", "lock"]);
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("not implemented yet"), "{stderr}");
+    assert!(!project.path().join("refs.lock").exists());
+
+    config("nope");
+    let out = binary(&project, &["--no-color", "lock"]);
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("refs::git::ref_not_found"), "{stderr}");
+}

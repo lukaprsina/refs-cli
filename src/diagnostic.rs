@@ -147,6 +147,29 @@ pub enum SourceError {
     #[error("{message}")]
     #[diagnostic(code(refs::git::failed))]
     Failed { message: String },
+
+    #[error("`{git_ref}` was not found in {url}")]
+    #[diagnostic(code(refs::git::ref_not_found), help("{help}"))]
+    RefNotFound {
+        url: String,
+        git_ref: String,
+        help: &'static str,
+    },
+
+    #[error("`{git_ref}` matches more than one ref in the remote")]
+    #[diagnostic(code(refs::git::ambiguous_ref))]
+    AmbiguousRef { git_ref: String },
+
+    #[error("git {found} is too old; refs needs git 2.36.0 or newer")]
+    #[diagnostic(
+        code(refs::git::too_old),
+        help("older versions mishandle sparse checkouts in worktrees of a bare repository")
+    )]
+    TooOld { found: String },
+
+    #[error("{reason}")]
+    #[diagnostic(code(refs::git::unsafe_input))]
+    UnsafeInput { reason: String },
 }
 
 /// A problem reading or writing `refs.lock`.

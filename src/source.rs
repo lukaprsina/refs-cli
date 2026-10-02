@@ -2,6 +2,7 @@
 
 #[cfg(any(test, feature = "testing"))]
 pub mod fake;
+pub mod git;
 
 use serde::{Deserialize, Serialize};
 

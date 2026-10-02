@@ -1,0 +1,143 @@
+//! Pure helpers for talking to a remote: what to ask, and how to read the answer.
+
+use sha2::{Digest, Sha256};
+
+use crate::config::{is_full_sha, url_problem};
+use crate::diagnostic::SourceError;
+
+/// `<sha>\t<refname>` lines, as `git ls-remote` prints them.
+fn lines(output: &str) -> impl Iterator<Item = (&str, &str)> {
+    output.lines().filter_map(|l| l.split_once('\t'))
+}
+
+/// The one commit among `shas`, if they agree; `Err` when they name different ones.
+fn single<'a>(mut shas: Vec<&'a str>, git_ref: &str) -> Result<Option<&'a str>, SourceError> {
+    shas.dedup();
+    match shas.as_slice() {
+        [] => Ok(None),
+        [sha] => Ok(Some(sha)),
+        _ => Err(SourceError::AmbiguousRef {
+            git_ref: git_ref.into(),
+        }),
+    }
+}
+
+/// The commit a branch or tag names, from `git ls-remote` output for the patterns
+/// `refs/heads/<ref> refs/tags/<ref> refs/tags/<ref>^{}`. Those patterns tail-match, so
+/// only the exact ref names count. A tag wins over a branch; an annotated tag's `^{}` line
+/// is the commit, its plain line the tag object.
+pub fn select_ref(url: &str, git_ref: &str, ls_remote: &str) -> Result<String, SourceError> {
+    let named = |name: String| -> Vec<&str> {
+        lines(ls_remote)
+            .filter(|(_, n)| *n == name)
+            .map(|(sha, _)| sha)
+            .collect()
+    };
+    let tag = single(named(format!("refs/tags/{git_ref}")), git_ref)?;
+    let peeled = single(named(format!("refs/tags/{git_ref}^{{}}")), git_ref)?;
+    let branch = single(named(format!("refs/heads/{git_ref}")), git_ref)?;
+    tag.map(|tag| peeled.unwrap_or(tag))
+        .or(branch)
+        .map(String::from)
+        .ok_or_else(|| SourceError::RefNotFound {
+            url: url.into(),
+            git_ref: git_ref.into(),
+            help: "a ref is a branch, a tag or a full 40-character commit id; abbreviated ids are not supported",
+        })
+}
+
+/// The remote's default branch and its commit, from `git ls-remote --symref <url> HEAD`.
+/// The branch is omitted when the remote's HEAD is detached (no `ref:` line).
+pub fn select_head(url: &str, ls_remote: &str) -> Result<(String, Option<String>), SourceError> {
+    let head = || lines(ls_remote).filter(|(_, name)| *name == "HEAD");
+    let branch = head()
+        .find_map(|(target, _)| target.strip_prefix("ref: refs/heads/"))
+        .map(String::from);
+    head()
+        .map(|(sha, _)| sha)
+        .find(|sha| is_full_sha(sha))
+        .map(|sha| (sha.to_string(), branch))
+        .ok_or_else(|| SourceError::RefNotFound {
+            url: url.into(),
+            git_ref: "HEAD".into(),
+            help: "the remote has no commits to resolve HEAD to",
+        })
+}
+
+const MINIMUM_VERSION: (u32, u32, u32) = (2, 36, 0);
+
+/// `Ok` if `git --version` output names 2.36.0 or newer.
+pub fn check_version(output: &str) -> Result<(), SourceError> {
+    let found = output.trim();
+    let mut parts = found
+        .strip_prefix("git version ")
+        .unwrap_or_default()
+        .split(|c: char| !c.is_ascii_digit())
+        .map(|p| p.parse::<u32>());
+    let Some((Ok(major), Ok(minor), Ok(patch))) = parts
+        .next()
+        .zip(parts.next())
+        .zip(parts.next())
+        .map(|((a, b), c)| (a, b, c))
+    else {
+        return Err(SourceError::Failed {
+            message: format!("could not read the git version from `{found}`"),
+        });
+    };
+    if (major, minor, patch) < MINIMUM_VERSION {
+        return Err(SourceError::TooOld {
+            found: found.trim_start_matches("git version ").into(),
+        });
+    }
+    Ok(())
+}
+
+/// Reject a `url` or `ref` git must never see: option-like, or a transport other than
+/// https, ssh, git and file (`ext::`). `refs.toml` is checked on load too, but `GitSource`
+/// does not rely on its caller.
+pub fn check_input(url: &str, git_ref: &str) -> Result<(), SourceError> {
+    if let Some((reason, _)) = url_problem(url) {
+        return Err(SourceError::UnsafeInput {
+            reason: reason.into(),
+        });
+    }
+    if git_ref.starts_with('-') {
+        return Err(SourceError::UnsafeInput {
+            reason: "`ref` must not start with `-`: git would read it as an option".into(),
+        });
+    }
+    Ok(())
+}
+
+/// The form of `url` the cache is keyed on: no trailing `/` or `.git`, lowercase host.
+/// Protocols are not unified: that would mean guessing each host's URL mapping.
+pub fn normalise_url(url: &str) -> String {
+    let trimmed = url.trim_end_matches('/');
+    let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
+    let trimmed = trimmed.trim_end_matches('/');
+    if let Some((scheme, rest)) = trimmed.split_once("://") {
+        let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+        return format!("{scheme}://{}{path}", lower_host(authority));
+    }
+    match trimmed.split_once(':') {
+        Some((authority, path)) => format!("{}:{path}", lower_host(authority)),
+        None => trimmed.to_string(),
+    }
+}
+
+/// Lowercases what follows the last `@` (the host, and a port), keeping the user as written.
+fn lower_host(authority: &str) -> String {
+    match authority.rsplit_once('@') {
+        Some((user, host)) => format!("{user}@{}", host.to_lowercase()),
+        None => authority.to_lowercase(),
+    }
+}
+
+/// The cache directory name for `url`: 16 hex characters of the SHA-256 of its normal form.
+pub fn cache_dir_name(url: &str) -> String {
+    Sha256::digest(normalise_url(url).as_bytes())
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}

@@ -255,7 +255,7 @@ impl Validator<'_> {
 }
 
 /// A reason and an optional help line, for `ConfigError::BadUrl`.
-type UrlProblem = (&'static str, Option<&'static str>);
+pub(crate) type UrlProblem = (&'static str, Option<&'static str>);
 
 const NO_PASSWORD: UrlProblem = (
     "`url` must not contain a password",
@@ -270,7 +270,7 @@ const UNSUPPORTED: UrlProblem = (
 /// `url` reaches git from a file that may belong to an untrusted repository (spec §6.1).
 /// Allowed: `https://`, `ssh://`, `git://`, `file://` and scp-style `user@host:path`, with
 /// no password. `GIT_ALLOW_PROTOCOL` (spec §7.7) is the second layer.
-fn url_problem(url: &str) -> Option<UrlProblem> {
+pub(crate) fn url_problem(url: &str) -> Option<UrlProblem> {
     if url.starts_with('-') {
         return Some((
             "`url` must not start with `-`: git would read it as an option",

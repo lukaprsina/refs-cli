@@ -33,7 +33,7 @@ Everything above `source` is a plain function over data. Files, git and the netw
 | `sync` | Reads `ProjectObserved`, runs `plan_lock`, executes it (resolve, verify, write the Lock), then runs `plan_checkouts` and applies the Plan, or diffs it for `--check` (any non-`Note` action is out of date). Stage 1 collects all errors; stage 2 continues past a failed Repo and skips the block write. | no | fake `Source`; asserts on plans, not on git |
 | `doctor` | **Deferred.** Will be a registry of checks that reads `Observed` and the `sync --check` plan instead of re-inspecting, plus a few standalone checks. | mostly | one test per check, asserting on codes |
 | `diagnostic` | The shared error contract: `thiserror` enums deriving `miette::Diagnostic`, with stable codes. Only config validation carries spans. | yes | codes, not message strings |
-| `cli` | `clap` parsing, output, exit codes. No logic. `run(args, cwd, &dyn Source)` takes the `Source`, so tests pass the fake; `main` passes a stub until `GitSource` exists. | no | a few end-to-end runs |
+| `cli` | `clap` parsing, output, exit codes. No logic. `run(args, cwd, &dyn Source)` takes the `Source`, so tests pass the fake; `main` passes `GitSource`, whose `resolve` is real (`source::git`, pure helpers in `source::git::remote`); its other methods fail with "not implemented yet" until the cache and checkouts land. | no | a few end-to-end runs |
 
 One package, a library plus a thin binary. Split into a workspace only when a real reason appears (for example, `miette`'s `fancy` feature dominating build time).
 
