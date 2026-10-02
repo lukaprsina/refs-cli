@@ -17,6 +17,24 @@ pub struct Lock {
     pub repo: Vec<LockedRepo>,
 }
 
+/// A field of a lock entry that can differ from the config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    Url,
+    Ref,
+    Paths,
+}
+
+impl std::fmt::Display for Field {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Field::Url => "url",
+            Field::Ref => "ref",
+            Field::Paths => "paths",
+        })
+    }
+}
+
 /// One locked Repo. The `source` tag and its fields live in the `Pin`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockedRepo {
@@ -41,6 +59,10 @@ impl Lock {
             )));
         }
         Ok(lock)
+    }
+
+    pub fn get(&self, id: &str) -> Option<&LockedRepo> {
+        self.repo.iter().find(|e| e.id == id)
     }
 
     /// Stable text: entries sorted by id.

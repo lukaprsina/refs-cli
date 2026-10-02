@@ -210,3 +210,17 @@ pub enum BlockError {
 pub struct NotLocked {
     pub ids: Vec<String>,
 }
+
+/// `plan_lock` was asked for something it must not do.
+#[derive(Debug, Error, Diagnostic)]
+pub enum LockRefusal {
+    #[error("refs.lock is missing or out of date and --offline forbids resolving: {}", .drift.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
+    #[diagnostic(
+        code(refs::lock::offline_stale),
+        help("run `refs lock` while online, then sync again")
+    )]
+    OfflineStale { drift: Vec<crate::plan::Drift> },
+    #[error("--upgrade names repos that are not active: {}", .ids.join(", "))]
+    #[diagnostic(code(refs::lock::unknown_id))]
+    UnknownUpgradeId { ids: Vec<String> },
+}

@@ -4,5 +4,6 @@ pub mod atomic;
 pub mod config;
 pub mod diagnostic;
 pub mod lock;
+pub mod plan;
 pub mod render;
 pub mod source;

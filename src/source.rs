@@ -5,8 +5,9 @@ pub mod fake;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::RepoRef;
+use crate::config::{Repo, RepoRef};
 use crate::diagnostic::SourceError;
+use crate::lock::Field;
 
 /// A resolved identity of a Repo. Only this module interprets it; everything else
 /// goes through the display surface.
@@ -44,6 +45,20 @@ impl Pin {
             PinKind::Git { sha, .. } => {
                 sha.len() == 40 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
             }
+        }
+    }
+
+    /// The fields of `repo` that no longer match what this pin resolved (`Paths` is the
+    /// lock entry's, not the pin's).
+    pub fn drift_from(&self, repo: &Repo) -> Vec<Field> {
+        match &self.0 {
+            PinKind::Git { url, git_ref, .. } => [
+                (url.as_str() != repo.url.as_ref(), Field::Url),
+                (git_ref != repo.effective_ref(), Field::Ref),
+            ]
+            .into_iter()
+            .filter_map(|(differs, field)| differs.then_some(field))
+            .collect(),
         }
     }
 

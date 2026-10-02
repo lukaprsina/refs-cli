@@ -74,6 +74,12 @@ pub struct Repo {
 }
 
 impl Repo {
+    /// Whether the ref can move upstream: anything but a full 40-hex commit id.
+    pub fn is_floating(&self) -> bool {
+        let r = self.effective_ref();
+        !(r.len() == 40 && r.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+    }
+
     /// The ref to resolve: `HEAD` when none is configured.
     pub fn effective_ref(&self) -> &str {
         self.git_ref
