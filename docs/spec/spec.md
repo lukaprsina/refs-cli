@@ -395,7 +395,7 @@ Solid 2.0 release candidates, router and docs. Newer than your training data; ma
 Semantics follow `uv`: config is intent, the lock is resolution, `sync` makes the disk match the lock. Nothing updates behind the user's back.
 
 Global flags: `--project <dir>`, `-q/--quiet`, `--no-color`.
-Exit codes: `0` ok, `1` error, `2` usage error, `3` `--check` found something out of date.
+Exit codes: `0` ok, `1` error, `2` usage error, `3` `--check` found something out of date. `--check` exits 1, not 3, for a refusal (a foreign or dirty checkout, malformed markers): `sync` would refuse it too, so "run `refs sync`" would be the wrong advice.
 
 | Command | Behaviour |
 |---|---|
@@ -409,13 +409,13 @@ Exit codes: `0` ok, `1` error, `2` usage error, `3` `--check` found something ou
 
 `sync` steps:
 
-0. Compute the active set from the config (§6.4). Steps 1–5 operate on active repos; step 6 applies to the project.
-1. Determine whether the lock is current. A normal sync locks if it is missing or stale. With `--offline`, a missing or stale lock is an error. With `--check`, a missing or stale lock is out of date (exit 3); do not resolve refs or write the lock.
-2. Ensure required objects (commits, trees and the blobs the checkouts need, §7.3 steps 1 and 1b) are in the bare blobless cache, fetching them unless `--offline` (which errors if they are missing). In check mode, inspect current state without fetching.
-3. Update the sparse worktrees and prune removed repos. In check mode, inspect them without updating or pruning.
-4. Check `start` paths.
-5. Render the block; write it only if it changed. In check mode, compare without writing.
-6. Ensure the exclude rule. In check mode, report a missing rule as out of date (exit 3) without writing it.
+0. Compute the active set from the config (§6.4). Everything below operates on active repos, except removals (repos no longer active) and the agent file and exclude rule (the project).
+1. **Stage 1, lock** (`plan_lock`; ADR 0004). Determine whether the lock is current. A normal sync locks if it is missing or stale: resolve the repos that need it, reuse the other pins, and verify `paths` and `start` of every active repo at its pin against the cache (§7.2), fetching commits and trees only on a miss. Collect all errors; write `refs.lock` only if there are none. With `--offline`, a missing or stale lock is an error and nothing is fetched. With `--check`, skip this stage: a missing or stale lock is out of date (exit 3); do not resolve refs, verify or write the lock.
+2. Read the project state: the `Observed` state of every active checkout and of every checkout to be removed, plus the agent files and the exclude rule.
+3. **Stage 2, plan** (`plan_checkouts`) against the lock: an ordered list of actions (removals, materialisations, agent file writes, the exclude rule) plus refusals (`foreign_dir`, `dirty_checkout`, malformed markers) and info notes for autofixes (§7.3).
+4. With `--offline`, check that the objects needed by every materialisation are in the cache (§7.3 step 1b) before applying anything; error naming the missing objects.
+5. Apply the plan in order: ensure the required objects are in the bare blobless cache (§7.3 steps 1 and 1b, no fetching with `--offline`), update the sparse worktrees, prune removed repos, render the block and write it only if it changed, ensure the exclude rule. A failure for one repo does not stop the others; failures are collected, and the block is not rewritten if any repo failed. Exit 1 with all diagnostics.
+6. With `--check`, do not apply: exit 3 if the plan holds any action other than an info note (drift), exit 1 if it holds a refusal.
 
 ### 10.1 `doctor` checks (deferred, §3.2)
 

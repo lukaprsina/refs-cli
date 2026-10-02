@@ -1,16 +1,21 @@
 # Architecture
 
-How `refs` is put together, and where new features go. Vocabulary is in `CONTEXT.md`; the decisions behind the shape are in `docs/adr/` (0001 for the structure, 0002 for diagnostics, 0003 for where the sync decisions live). Behaviour is specified in `docs/spec/spec.md`.
+How `refs` is put together, and where new features go. Vocabulary is in `CONTEXT.md`; the decisions behind the shape are in `docs/adr/` (0001 for the structure, 0002 for diagnostics, 0003 for where the sync decisions live, 0004 for the two-stage plan). Behaviour is specified in `docs/spec/spec.md`.
 
 ## Shape: a pure core with effectful edges
 
 ```
 refs.toml ─▶ config ─▶ active(config) ─┐
-refs.lock ─▶ lock (read) ──────────────┼─▶ plan ─▶ apply
-Source.inspect ─▶ Observed ────────────┘     │   (or diff, for --check)
-                                             ▼
-                          (active repos, lock) ─▶ render ─▶ agent file splice
+refs.lock ─▶ lock (read) ──────────────┴─▶ plan_lock ─▶ resolve/verify ─▶ new Lock
+                                                                            │
+Source.inspect ─▶ Observed ──────────┐                                      ▼
+agent files, exclude ─▶ ProjectObserved ─┴─▶ plan_checkouts(active, Lock) ─▶ Plan ─▶ apply
+                                                    │                       (or diff, for --check)
+                                                    ▼
+                             (active repos, Lock) ─▶ render ─▶ agent file splice
 ```
+
+`sync --check` skips `plan_lock` and plans against the existing Lock.
 
 Everything above `source` is a plain function over data. Files, git and the network are touched in a few thin places, all listed below as impure.
 
@@ -23,8 +28,8 @@ Everything above `source` is a plain function over data. Files, git and the netw
 | `render` | (Preamble, active Repos, Lock) → block text. | yes | golden files, formatter-stability |
 | `agent_file` | Marker parsing and splicing; refuses malformed markers. Atomic write is a thin wrapper. | splice is pure | data |
 | `project` | Project root discovery, the references directory, the exclude rule. | no | temp directories |
-| `plan` | The deep module: (config, Lock, `Observed` per Repo) → actions. It owns every decision: whether the Lock is current, which Repos re-resolve (pin reuse keyed on url/ref/source, `--upgrade`, re-enabled), recreate a `Dangling` Checkout, refuse a `Foreign` or dirty one unless forced, move or remove a Checkout, write the Lock, write the Agent file. | yes | data; the fake `Source` simulates every `Observed` state |
-| `sync` | Applies a plan, or diffs it for `--check`. | no | fake `Source`; asserts on plans, not on git |
+| `plan` | The deep module, in two pure stages (ADR 0004). `plan_lock(config, Lock, flags)` decides whether the Lock is current and which Repos resolve, reuse a pin (keyed on url/ref/source; `--upgrade`; re-enabled) or verify. `plan_checkouts(active, Lock, Observed per Repo, ProjectObserved)` returns an ordered `Vec<Action>`: `Remove`, `Materialise { how }` (`Create`, `Move`, `Recreate`, `UpdateSparse`), `WriteAgentFile`, `EnsureExclude`, `Refuse` (a `Foreign` or dirty Checkout unless forced, malformed markers) and `Note` (autofix announcements). It renders the block and writes it only if it differs. | yes | data; the stateful fake `Source` simulates every `Observed` state |
+| `sync` | Reads `ProjectObserved`, runs `plan_lock`, executes it (resolve, verify, write the Lock), then runs `plan_checkouts` and applies the Plan, or diffs it for `--check` (any non-`Note` action is out of date). Stage 1 collects all errors; stage 2 continues past a failed Repo and skips the block write. | no | fake `Source`; asserts on plans, not on git |
 | `doctor` | **Deferred.** Will be a registry of checks that reads `Observed` and the `sync --check` plan instead of re-inspecting, plus a few standalone checks. | mostly | one test per check, asserting on codes |
 | `diagnostic` | The shared error contract: `thiserror` enums deriving `miette::Diagnostic`, with stable codes. Only config validation carries spans. | yes | codes, not message strings |
 | `cli` | `clap` parsing, output, exit codes. No logic. | no | a few end-to-end runs |
@@ -36,7 +41,7 @@ One package, a library plus a thin binary. Split into a workspace only when a re
 - **`Source` is the only trait.** It is injected wherever it is needed, so tests pass a fake, not a mocked module. Everything else is a function, because a trait with one implementation is speculative. If a second renderer or resolver ever appears, extracting a trait then is cheap.
 - **The Lock is a union tagged by `source`.** Only `source` code interprets the pin; other modules treat it as opaque.
 - **`active` is the selection seam.** The enabled flag is its first rule. Per-file placement of Groups would be another, and `render` already takes an Agent file plus the Entries selected for it.
-- **Plan then apply.** `--check` and `--offline` read the same plan, so they can't drift from a real `sync`. Decisions live in `plan`, mechanics in `Source` (ADR 0003).
+- **Plan then apply, in two stages.** `--check` reads the same stage 2 plan a real `sync` applies, so they can't drift. Decisions live in `plan`, mechanics in `Source` (ADR 0003); the pins stage 2 needs come from executing stage 1 (ADR 0004).
 
 ## Where future features land
 
