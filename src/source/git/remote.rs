@@ -26,6 +26,10 @@ fn single<'a>(mut shas: Vec<&'a str>, git_ref: &str) -> Result<Option<&'a str>, 
 /// `refs/heads/<ref> refs/tags/<ref> refs/tags/<ref>^{}`. Those patterns tail-match, so
 /// only the exact ref names count. A tag wins over a branch; an annotated tag's `^{}` line
 /// is the commit, its plain line the tag object.
+///
+/// A tag with no `^{}` line is taken as lightweight: the output cannot tell it from an
+/// annotated tag the server failed to peel. Rejecting a tag object (`refs::git::unpeeled_tag`)
+/// needs the object type, so it belongs to `verify` once the cache exists (#7).
 pub fn select_ref(url: &str, git_ref: &str, ls_remote: &str) -> Result<String, SourceError> {
     let named = |name: String| -> Vec<&str> {
         lines(ls_remote)
