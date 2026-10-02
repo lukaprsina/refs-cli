@@ -13,16 +13,18 @@ This refines ADR 0003. Decisions still live in `plan`, mechanics in `Source`.
 
 A `Plan` is an ordered `Vec<Action>`: removals, then materialisations, then Agent file writes, then the exclude rule.
 
-- Actions: `Remove`, `Materialise`, `WriteAgentFile`, `EnsureExclude`, `Refuse(repo, diagnostic)` and `Note(diagnostic)`. `Materialise` has no variants: `Source` tells creating, moving and sparse updates apart from what is on disk. A dangling Checkout is `Remove`, `Materialise` and a `Note(recreated)`. A `Note` is an info-level announcement of an autofix; only `recreated` exists for now.
+- Actions: `Remove`, `Materialise`, `WriteAgentFile`, `EnsureExclude`, `Refuse(diagnostic)` and `Note(diagnostic)`. `Materialise` has no variants: `Source` tells creating, moving and sparse updates apart from what is on disk. A dangling Checkout is `Remove`, `Materialise` and a `Note(recreated)`. A `Note` is an info-level announcement of an autofix; only `recreated` exists for now.
 - `force` is a flag to `plan_checkouts`: with it, a dirty Checkout becomes `Remove` plus `Materialise` instead of `Refuse`. `Source` takes no `force`.
 - `--check` means "the plan contains any action other than a `Note`".
 - `refs list` computes its own status table from `Observed`; it does not read the plan.
-- `ProjectObserved` is plain data read by `sync` before stage 2: the text of each Agent file and whether the exclude rule is present. `plan_checkouts` renders the block, splices it and emits `WriteAgentFile` only on a difference, so an in-sync project has an empty plan. Malformed markers become `Refuse`. There is no second trait; `Source` stays the only one.
+- `ProjectObserved` is plain data read by `sync` before stage 2: the text of each Agent file, the exclude rule (`Present`, `Missing` or `NoGit`; `NoGit` is a `Note`, not drift) and the directory names in `references_dir`. Removal candidates are the non-active names, each inspected by `sync`: `At` is `Remove` (`Refuse` if dirty), `Foreign` or `Absent` is ignored. The old Lock is not read, so a retry after a failed stage 2 still finds them.
+- Any `Refuse` suppresses `WriteAgentFile` (not `EnsureExclude`). A marker refusal is `Refuse(Diagnostic)`; it belongs to a file, not a Repo.
+- A Pin's `branch` is display-only, so `plan` compares an `Observed` pin with `Pin::same_commit`, and `paths` as sets. `plan_checkouts` renders the block, splices it and emits `WriteAgentFile` only on a difference, so an in-sync project has an empty plan. Malformed markers become `Refuse`. There is no second trait; `Source` stays the only one.
 
 ## Verification and offline
 
 - `verify` runs for every active Repo on `lock` and `sync`, against the Cache, fetching commits and trees only on a miss. `start` and `paths` edits do not stale the Lock, so they cannot be skipped by change detection. `--check` never verifies.
-- `plan` ignores `--offline` in stage 2. `materialise(opts.offline)` is what errors, naming the missing OIDs; other Repos proceed like any failure. There is no all-or-nothing pre-check, so no extra `Source` method: an offline failure may leave some Repos updated. Revisit if that bites. `--offline --check` never needs the Cache.
+- `plan` ignores `--offline` in stage 2. `materialise(opts.offline)` is what errors, naming a missing object (the full listing is deferred); other Repos proceed like any failure. There is no all-or-nothing pre-check, so no extra `Source` method: an offline failure may leave some Repos updated. Revisit if that bites. `--offline --check` never needs the Cache.
 
 ## Failures and exit codes
 

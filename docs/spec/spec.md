@@ -82,7 +82,7 @@ Caveat: one vendor, one framework that models already know changes often. Vercel
 ### 3.2 Deferred (rough priority order)
 
 - **Next, not ranked:** `refs doctor` (§10.1) and everything that mentions it. It is designed to reuse the `Observed` state and the `plan` that `sync --check` already computes, so it adds no new inspection code. Until it exists, `lock`/`sync` check the git version themselves (§7.5) and `init` prints the reminders.
-- Also: `sync --locked` and verbose `--check` diffs (`-v`, `similar`). `--check` already reports a stale lock for CI.
+- Also: peeling an unpeeled annotated tag locally (fetch the tag object, `rev-parse <sha>^{commit}`); listing every missing object for `sync --offline` (`GIT_NO_LAZY_FETCH=1 git cat-file --batch-check`; never `rev-list --missing=print`); the `REFS_GIT_ALLOW_PROTOCOL` override; `sync --locked` and verbose `--check` diffs (`-v`, `similar`). `--check` already reports a stale lock for CI.
 
 Ranked:
 
@@ -257,7 +257,7 @@ Shell out to the system `git` binary: it handles auth (credential helpers, SSH a
 - **`HEAD`:** `git ls-remote --symref <url> HEAD` returns the target branch and its SHA. The lock records the branch name (`branch`, §10.2) so the block can show `@ main` instead of `@ HEAD` (§8.1). If the server sends no `ref:` line (detached remote HEAD), `branch` is omitted.
 - **Prefer targeted patterns over a bare `ls-remote`**: a bare listing is ~2000 refs on typical targets (`solidjs/solid` 1967, `torvalds/linux` 3828, ~0.8s each).
 - **The lock stores the commit SHA, never a tag object SHA.** For an annotated tag, plain `ls-remote <url> <ref>` returns the tag object and no `^{}` line, and `worktree add` and `ls-tree` peel silently, so a tag SHA in the lock would check out a different commit than the one locked. `sync --check` would then fail forever and §8.1 would render an unlookable SHA, with no error anywhere. Resolve to the commit upstream of the lock.
-- **Fallback:** peeled lines depend on the server advertising them (some proxies and dumb HTTP do not). If `^{}` is missing for a tag, fetch the tag object SHA, peel it locally with `git -C <cache> rev-parse <sha>^{commit}`, and store the resulting commit SHA in the lock.
+- **No fallback in the MVP:** if the server omits `^{}` for an annotated tag, `lock` fails with `refs::git::unpeeled_tag` (never store the tag object SHA). Peeling locally is deferred (§3.2).
 - A 40-hex ref is taken as-is and verified on fetch. Abbreviated SHAs are rejected. Only 40-hex (SHA-1) object ids are supported; SHA-256 repositories (64 hex) are out of scope for the MVP.
 - For each configured path, verify it exists at the resolved SHA and is a tree (`git ls-tree`). A missing path, or a path that is a file, is an error naming repo, path and SHA.
 - For each `start` path, verify it exists at the SHA and will be in the checkout (inside `paths`, or a direct child of the root; §4). A missing one is an error.
@@ -267,7 +267,7 @@ Shell out to the system `git` binary: it handles auth (credential helpers, SSH a
 For each locked repo:
 
 1. Ensure the cache clone has the SHA.
-1b. Prefetch the blobs the checkout will need, under the cache lock, so all network access happens in steps 1 and 1b and `checkout` never fetches lazily. The needed set is the blobs directly in the repo root (`git ls-tree <sha>`, cone mode checks them out) plus every blob under the `paths` (`git ls-tree -r <sha> <paths>`), or the whole tree when `paths` is absent, deduplicated by OID. Fetch them in one round trip: `git fetch origin --no-tags --filter=blob:none --stdin` with the OIDs on stdin (verified against GitHub and a local daemon). Prefetching only the `paths` makes a no-lazy checkout fail with `could not fetch <oid> from promisor remote`. With `--offline`, verify the same set with `GIT_NO_LAZY_FETCH=1 git cat-file --batch-check` and error naming each `missing` OID. Do not use `rev-list --objects --missing=print` for this: it reports every blob outside the sparse set as missing. `cat-file` lazy-fetches in a partial clone unless `GIT_NO_LAZY_FETCH=1` is set. Run `checkout` with `GIT_NO_LAZY_FETCH=1` as a backstop.
+1b. Prefetch the blobs the checkout will need, under the cache lock, so all network access happens in steps 1 and 1b and `checkout` never fetches lazily. The needed set is the blobs directly in the repo root (`git ls-tree <sha>`, cone mode checks them out) plus every blob under the `paths` (`git ls-tree -r <sha> <paths>`), or the whole tree when `paths` is absent, deduplicated by OID. Fetch them in one round trip: `git fetch origin --no-tags --filter=blob:none --stdin` with the OIDs on stdin (verified against GitHub and a local daemon). Prefetching only the `paths` makes a no-lazy checkout fail with `could not fetch <oid> from promisor remote`. `--offline` is minimal: it skips steps 1 and 1b, and a missing object makes `checkout` fail, which `GitSource` reports for that Repo naming the object (and it removes the directory it just created). `cat-file` lazy-fetches in a partial clone unless `GIT_NO_LAZY_FETCH=1` is set. Run `checkout` with `GIT_NO_LAZY_FETCH=1` as a backstop.
 2. If `.references/<repo>/` doesn't exist: run `git -C <cache> worktree prune` first (a deleted checkout, e.g. after `git clean -fdx`, leaves a stale registration that makes `worktree add` fail), then `git -C <cache> worktree add --no-checkout --detach <project>/<references_dir>/<repo> <sha>`, then `git -C <worktree> sparse-checkout set --cone <paths>` (skip when `paths` is absent), then `git -C <worktree> checkout --detach <sha>`.
 3. If it exists at another SHA: update sparse patterns if paths changed, then `checkout --detach <sha>`.
 4. If `.references/<repo>/` exists but isn't a worktree of the expected cache repo, stop with `refs::sync::foreign_dir`; never delete a directory refs didn't create. The exception is a **dangling checkout**: its `.git` file points at a gitdir under the cache root that no longer exists (the cache was wiped, e.g. `rm -rf ~/.cache/refs` or a cache cleaner). Checkouts are generated, read-only copies and their history is gone, so `sync` removes the directory and recreates it from step 2, printing `refs::sync::recreated` (info). A directory with no `.git`, or whose `.git` points outside the cache root, is still foreign.
@@ -306,7 +306,7 @@ Before 2.36.0, `sparse-checkout set` in a worktree of a bare repo enabled `exten
 ### 7.6 Exclusion
 
 - `sync` and `init` ensure `/<references_dir>/` is a line in `<git-dir>/info/exclude` (the common git dir for linked worktrees of the project). Per-clone, which is fine since every clone runs `sync`.
-- If the project isn't in a git repo, warn and continue.
+- If the project isn't in a git repo, `plan` emits an info note and continues; it is not drift.
 - Consequence we rely on: default searches (ripgrep) skip `.references/`, so a grep for `useEffect` finds only the user's code. When a search path is passed explicitly (e.g. `.references/solid`), ripgrep searches it anyway. Hidden entries inside a checkout (e.g. `.github/`) stay skipped.
 - Linters, formatters and type checkers are **the user's responsibility** in the MVP. `init` prints a reminder (and the later `doctor` repeats it).
 
@@ -316,7 +316,7 @@ Before 2.36.0, `sparse-checkout set` in a worktree of a bare repo enabled `exten
 
 `refs.toml` may come from a repository the user just cloned, so `url` and `ref` are untrusted (§6.1).
 
-- Set `GIT_ALLOW_PROTOCOL=file:https:ssh:git` for every git command. Other transports (notably `ext::`) are refused. `file://` stays allowed: local forks are a legitimate use and the user can read those files anyway. The `REFS_GIT_ALLOW_PROTOCOL` environment variable overrides the list.
+- Set `GIT_ALLOW_PROTOCOL=file:https:ssh:git` for every git command. Other transports (notably `ext::`) are refused. `file://` stays allowed: local forks are a legitimate use and the user can read those files anyway.
 - Put `--` (or `--end-of-options` where git supports it) before any user-supplied `url` or `ref`.
 - Cache repos are created by refs and carry no hooks.
 
@@ -414,9 +414,9 @@ Exit codes: `0` ok, `1` error, `2` usage error, `3` `--check` found something ou
 
 0. Compute the active set from the config (§6.4). Everything below operates on active repos, except removals (repos no longer active) and the agent file and exclude rule (the project).
 1. **Stage 1, lock** (`plan_lock`; ADR 0004). Determine whether the lock is current. A normal sync locks if it is missing or stale: resolve the repos that need it, reuse the other pins, and verify `paths` and `start` of every active repo at its pin against the cache (§7.2), fetching commits and trees only on a miss. Collect all errors; write `refs.lock` only if there are none. With `--offline`, a missing or stale lock is an error and nothing is fetched. With `--check`, skip this stage: a missing or stale lock is out of date (exit 3); do not resolve refs, verify or write the lock.
-2. Read the project state: the `Observed` state of every active checkout and of every checkout to be removed, plus the agent files and the exclude rule.
-3. **Stage 2, plan** (`plan_checkouts`) against the lock: an ordered list of actions (removals, materialisations, agent file writes, the exclude rule) plus refusals (`foreign_dir`, `dirty_checkout`, malformed markers) and an info note for a recreated checkout (§7.3). With `--force` the plan replaces the `dirty_checkout` refusal by a removal and materialisation, so `Source` carries no force option.
-4. With `--offline`, `materialise` errors naming the missing objects (§7.3 step 1b) for the repo it cannot serve; other repos proceed as in any failure. There is no all-or-nothing pre-check.
+2. Read the project state: the `Observed` state of every active checkout, the agent files, the exclude rule (present, missing, or no git repo), and the directory names in `references_dir`; each name that is not active is inspected, and an `At` one is removed. A `Foreign` or absent non-active name is ignored (the later `doctor` reports orphans). The old Lock is not consulted.
+3. **Stage 2, plan** (`plan_checkouts`) against the lock: an ordered list of actions (removals, materialisations, agent file writes, the exclude rule) plus refusals (`foreign_dir`, `dirty_checkout`, malformed markers) and an info note for a recreated checkout (§7.3). A refusal suppresses the Agent file write (not the exclude rule), so the block never lists a Repo with no checkout. With `--force` the plan replaces the `dirty_checkout` refusal by a removal and materialisation, so `Source` carries no force option.
+4. With `--offline`, `materialise` errors, naming an object (§7.3 step 1b), for the repo it cannot serve; other repos proceed as in any failure. There is no all-or-nothing pre-check.
 5. Apply the plan in order: ensure the required objects are in the bare blobless cache (§7.3 steps 1 and 1b, no fetching with `--offline`), update the sparse worktrees, prune removed repos, render the block and write it only if it changed, ensure the exclude rule. A failure for one repo does not stop the others; failures are collected, and the block is not rewritten if any repo failed. Exit 1 with all diagnostics.
 6. With `--check`, do not apply: exit 3 if the plan holds any action other than an info note (drift), exit 1 if it holds a refusal.
 
