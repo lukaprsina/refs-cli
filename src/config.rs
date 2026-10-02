@@ -191,21 +191,63 @@ impl Validator<'_> {
     }
 }
 
+/// A reason and an optional help line, for `ConfigError::BadUrl`.
+type UrlProblem = (&'static str, Option<&'static str>);
+
+const NO_PASSWORD: UrlProblem = (
+    "`url` must not contain a password",
+    Some("use a credential helper or an SSH agent instead"),
+);
+
+const UNSUPPORTED: UrlProblem = (
+    "`url` must be https, ssh, git or file, or scp-style `user@host:path`",
+    Some("`http://`, `ext::` and other transports are not allowed"),
+);
+
 /// `url` reaches git from a file that may belong to an untrusted repository (spec §6.1).
-fn url_problem(url: &str) -> Option<(&'static str, Option<&'static str>)> {
+/// Allowed: `https://`, `ssh://`, `git://`, `file://` and scp-style `user@host:path`, with
+/// no password. `GIT_ALLOW_PROTOCOL` (spec §7.7) is the second layer.
+fn url_problem(url: &str) -> Option<UrlProblem> {
     if url.starts_with('-') {
         return Some((
             "`url` must not start with `-`: git would read it as an option",
             None,
         ));
     }
-    // userinfo is what sits between `://` and the next `@` within the authority
-    let authority = url.split_once("://")?.1.split(['/', '?', '#']).next()?;
-    let (userinfo, _) = authority.rsplit_once('@')?;
-    userinfo.contains(':').then_some((
-        "`url` must not contain a password",
-        Some("use a credential helper or an SSH agent instead"),
-    ))
+    // What follows the first `:` tells the forms apart: `//` is a scheme URL, `:` is git's
+    // `transport::address` syntax (`ext::`, `fd::`), anything else can only be scp-style.
+    let after_colon = url.split_once(':').map(|(_, rest)| rest);
+    if after_colon.is_some_and(|rest| rest.starts_with(':')) {
+        return Some(UNSUPPORTED);
+    }
+    if let Some(rest) = after_colon.and_then(|rest| rest.strip_prefix("//")) {
+        let scheme = url.split_once(':').map_or("", |(scheme, _)| scheme);
+        if !matches!(scheme, "https" | "ssh" | "git" | "file") {
+            return Some(UNSUPPORTED);
+        }
+        // userinfo is what sits between `://` and the next `@` within the authority
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        return has_password(authority).then_some(NO_PASSWORD);
+    }
+    // scp-style: a user, then `@`, a host, `:` and a path. A `/` before the first `:` would
+    // make git read a local path, so neither the user nor the host may contain one.
+    let Some((userinfo, rest)) = url.split_once('@') else {
+        return Some(UNSUPPORTED);
+    };
+    let Some((host, _)) = rest.split_once(':') else {
+        return Some(UNSUPPORTED);
+    };
+    if userinfo.is_empty() || userinfo.contains('/') || host.is_empty() || host.contains('/') {
+        return Some(UNSUPPORTED);
+    }
+    has_password(&format!("{userinfo}@")).then_some(NO_PASSWORD)
+}
+
+/// Whether the part before the last `@` of `authority` is `user:password`.
+fn has_password(authority: &str) -> bool {
+    authority
+        .rsplit_once('@')
+        .is_some_and(|(userinfo, _)| userinfo.contains(':'))
 }
 
 /// Free text lands inside the block's `text` fence, so it must stay on one line and

@@ -33,13 +33,13 @@ name = "Off"
 enabled = false
 
 [repos.a]
-url = "u"
+url = "https://github.com/o/a"
 group = "on"
 [repos.b]
-url = "u"
+url = "https://github.com/o/a"
 group = "off"
 [repos.c]
-url = "u"
+url = "https://github.com/o/a"
 group = "off"
 enabled = true
 "#;
@@ -55,22 +55,22 @@ name = "G1"
 name = "G2"
 
 [repos.loose]
-url = "u"
+url = "https://github.com/o/a"
 [repos.in2]
-url = "u"
+url = "https://github.com/o/a"
 group = "g2"
 [repos.in1]
-url = "u"
+url = "https://github.com/o/a"
 group = "g1"
 [repos.in1b]
-url = "u"
+url = "https://github.com/o/a"
 group = "g1"
 [repos.gone]
-url = "u"
+url = "https://github.com/o/a"
 group = "g1"
 enabled = false
 [repos.loose-off]
-url = "u"
+url = "https://github.com/o/a"
 enabled = false
 "#;
     assert_eq!(
@@ -91,7 +91,7 @@ name = "Empty"
 [groups.all-off]
 name = "All off"
 [repos.a]
-url = "u"
+url = "https://github.com/o/a"
 group = "all-off"
 enabled = false
 "#;

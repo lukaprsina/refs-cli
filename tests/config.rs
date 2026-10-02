@@ -79,7 +79,7 @@ fn repo_id_must_be_a_safe_directory_name() {
         code_and_span(&text, "refs::config::bad_id", bad);
     }
     parse(&repo("")).unwrap();
-    parse("[repos.a1-b_c]\nurl = \"u\"\n").unwrap();
+    parse("[repos.a1-b_c]\nurl = \"https://github.com/o/a\"\n").unwrap();
 }
 
 #[test]
@@ -141,6 +141,58 @@ fn url_must_not_look_like_an_option_or_carry_a_password() {
     ] {
         parse(&with(ok)).unwrap();
     }
+}
+
+#[test]
+fn url_must_use_an_allowed_transport() {
+    let with = |url: &str| format!("[repos.a]\nurl = \"{url}\"\n");
+    for bad in [
+        "ext::sh -c id@host:x",
+        "fd::3",
+        "ftp://host/a",
+        "http://github.com/o/a",
+        "github.com/o/a",
+        "word",
+        "/tmp/a",
+        "host:path",
+        "@host:path",
+        "user@:path",
+        "user@ho/st:path",
+    ] {
+        code_and_span(&with(bad), "refs::config::bad_url", &format!("\"{bad}\""));
+    }
+    for ok in [
+        "https://github.com/o/a",
+        "ssh://git@host/o/a",
+        "git://host/a",
+        "file:///tmp/a",
+        "git@github.com:owner/repo.git",
+    ] {
+        parse(&with(ok)).unwrap();
+    }
+}
+
+#[test]
+fn rejected_transports_get_the_transport_message_not_the_password_one() {
+    for bad in ["ext::sh -c id@host:x", "fd::3", "/tmp/x@y:z", "../a@b:c"] {
+        let text = format!("[repos.a]\nurl = \"{bad}\"\n");
+        let err = refs_cli::config::parse(&text).unwrap_err();
+        assert!(
+            format!("{:?}", err.errors[0]).contains("must be https, ssh, git or file"),
+            "{bad}: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn scp_style_path_may_contain_a_scheme_separator() {
+    parse("[repos.a]\nurl = \"git@host:x://y\"\n").unwrap();
+}
+
+#[test]
+fn scp_style_url_must_not_carry_a_password() {
+    let text = "[repos.a]\nurl = \"user:pass@host:o/a\"\n";
+    code_and_span(text, "refs::config::bad_url", "\"user:pass@host:o/a\"");
 }
 
 #[test]
