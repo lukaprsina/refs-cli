@@ -290,4 +290,27 @@ pub enum ProjectError {
         #[source]
         source: std::io::Error,
     },
+
+    #[error("no refs.toml in {start} or any parent directory")]
+    #[diagnostic(code(refs::project::no_config), help("create one with `refs init`"))]
+    NoConfig { start: String },
+
+    #[error("{path} resolves outside the project")]
+    #[diagnostic(
+        code(refs::project::escapes_root),
+        help("an output path must stay inside the project, symlinks included")
+    )]
+    EscapesRoot { path: String },
+
+    #[error("{path} is a symlink to nothing")]
+    #[diagnostic(code(refs::project::broken_symlink))]
+    BrokenSymlink { path: String },
+
+    #[error("{path} exists and is not a directory")]
+    #[diagnostic(code(refs::project::not_a_directory))]
+    NotADirectory { path: String },
+
+    #[error("{path} exists and is not a regular file")]
+    #[diagnostic(code(refs::project::not_a_file))]
+    NotAFile { path: String },
 }

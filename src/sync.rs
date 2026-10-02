@@ -17,7 +17,6 @@ use crate::plan::{
 use crate::source::{MaterialiseOpts, Observed, Source};
 
 const LOCK_FILE: &str = "refs.lock";
-const DEFAULT_AGENT_FILE: &str = "AGENTS.md";
 
 #[derive(Debug, Default)]
 pub struct SyncFlags {
@@ -222,10 +221,7 @@ fn read_project(
     listing: Vec<String>,
 ) -> Result<ProjectObserved, miette::Report> {
     let references_dir = config.settings.references_dir().to_string();
-    let files: Vec<String> = match &config.settings.agents_files {
-        Some(files) => files.iter().map(|f| f.get_ref().clone()).collect(),
-        None => vec![DEFAULT_AGENT_FILE.into()],
-    };
+    let files = config.settings.agents_files();
     let mut agent_files = Vec::new();
     for path in files {
         let text = match std::fs::read_to_string(root.join(&path)) {

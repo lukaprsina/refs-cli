@@ -27,8 +27,17 @@ pub struct Settings {
 }
 
 const DEFAULT_REFERENCES_DIR: &str = ".references";
+const DEFAULT_AGENTS_FILE: &str = "AGENTS.md";
 
 impl Settings {
+    /// The Agent files, project-relative: `AGENTS.md` when none are configured.
+    pub fn agents_files(&self) -> Vec<String> {
+        match &self.agents_files {
+            Some(files) => files.iter().map(|f| f.get_ref().clone()).collect(),
+            None => vec![DEFAULT_AGENTS_FILE.into()],
+        }
+    }
+
     /// The references directory, project-relative, without a trailing `/`: `.references`
     /// when none is configured. This is what `render` pastes into the block's prose.
     pub fn references_dir(&self) -> &str {
