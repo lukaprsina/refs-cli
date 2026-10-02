@@ -51,6 +51,15 @@ pub struct Repo {
     pub enabled: Option<bool>,
 }
 
+impl Repo {
+    /// The ref to resolve: `HEAD` when none is configured.
+    pub fn effective_ref(&self) -> &str {
+        self.git_ref
+            .as_ref()
+            .map_or("HEAD", |r| r.as_ref().as_str())
+    }
+}
+
 pub fn parse(text: &str) -> Result<Config, ConfigErrors> {
     let config: Config = toml::from_str(text).map_err(|e| ConfigErrors {
         errors: vec![from_toml_error(&e, text)],

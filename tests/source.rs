@@ -1,10 +1,15 @@
-use refs_cli::config::{Repo, parse};
 use miette::Diagnostic;
+use refs_cli::config::{Repo, parse};
 use refs_cli::source::fake::{FakeSource, Method};
 use refs_cli::source::{MaterialiseOpts, Observed, Pin, Source};
 
 fn pin() -> Pin {
-    Pin::git("https://example.com/a", "HEAD", &"a".repeat(40), Some("main"))
+    Pin::git(
+        "https://example.com/a",
+        "HEAD",
+        &"a".repeat(40),
+        Some("main"),
+    )
 }
 
 #[test]

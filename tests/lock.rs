@@ -104,7 +104,10 @@ url = "https://github.com/zed-industries/zed"
 
     #[test]
     fn it_ignores_display_fields_and_grouping() {
-        assert!(!changed("description = \"front end\"", "description = \"other\""));
+        assert!(!changed(
+            "description = \"front end\"",
+            "description = \"other\""
+        ));
         assert!(!changed("name = \"UI\"", "name = \"User interface\""));
         assert!(!changed("signals", "reactivity"));
         assert!(!changed("[\"solid-js\"]", "[\"solid-js\", \"x\"]"));
@@ -114,11 +117,7 @@ url = "https://github.com/zed-industries/zed"
 
     #[test]
     fn an_absent_ref_means_head() {
-        let explicit = BASE.replacen(
-            "zed\"\n",
-            "zed\"\nref = \"HEAD\"\n",
-            1,
-        );
+        let explicit = BASE.replacen("zed\"\n", "zed\"\nref = \"HEAD\"\n", 1);
         assert_eq!(hash(BASE), hash(&explicit));
     }
 
@@ -164,5 +163,35 @@ mod write {
 
         let err = Lock::parse(LOCK).unwrap().write(&path).unwrap_err();
         assert_eq!(err.code().unwrap().to_string(), "refs::lock::write_failed");
+    }
+}
+
+mod untrusted_lock {
+    use super::*;
+
+    fn code(text: &str) -> String {
+        Lock::parse(text).unwrap_err().code().unwrap().to_string()
+    }
+
+    #[test]
+    fn a_short_sha_is_rejected() {
+        let text = LOCK.replacen("1a2b3c4d5e6f0000000000000000000000000000", "1a2b3c", 1);
+        assert_eq!(code(&text), "refs::lock::invalid");
+    }
+
+    #[test]
+    fn a_non_hex_sha_is_rejected() {
+        let text = LOCK.replacen(
+            "1a2b3c4d5e6f0000000000000000000000000000",
+            &"é".repeat(40),
+            1,
+        );
+        assert_eq!(code(&text), "refs::lock::invalid");
+    }
+
+    #[test]
+    fn an_unknown_version_is_rejected() {
+        let text = LOCK.replacen("version = 1", "version = 2", 1);
+        assert_eq!(code(&text), "refs::lock::invalid");
     }
 }

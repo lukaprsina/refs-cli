@@ -38,10 +38,19 @@ impl Pin {
         })
     }
 
+    /// Whether the pin is well formed (a full 40-hex commit id), for input read from disk.
+    pub fn is_well_formed(&self) -> bool {
+        match &self.0 {
+            PinKind::Git { sha, .. } => {
+                sha.len() == 40 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+            }
+        }
+    }
+
     /// The first 7 characters of the commit id, for the block.
     pub fn short_id(&self) -> &str {
         match &self.0 {
-            PinKind::Git { sha, .. } => &sha[..7],
+            PinKind::Git { sha, .. } => sha.get(..7).unwrap_or(sha),
         }
     }
 
@@ -77,7 +86,7 @@ pub struct MaterialiseOpts {
 }
 
 pub trait Source {
-    /// Ref to commit, without fetching.
+    /// Ref to commit. Asks the remote; never creates a Checkout.
     fn resolve(&self, id: &str, repo: &Repo) -> Result<Pin, SourceError>;
     /// Check that `paths` and `start` exist at the pinned commit, using cached objects only.
     fn verify(&self, id: &str, repo: &Repo, pin: &Pin) -> Result<(), SourceError>;

@@ -52,8 +52,12 @@ impl FakeSource {
 impl Source for FakeSource {
     fn resolve(&self, id: &str, repo: &Repo) -> Result<Pin, SourceError> {
         self.check(id, Method::Resolve)?;
-        let git_ref = repo.git_ref.as_ref().map_or("HEAD", |r| r.as_ref().as_str());
-        Ok(Pin::git(repo.url.as_ref(), git_ref, &"a".repeat(40), None))
+        Ok(Pin::git(
+            repo.url.as_ref(),
+            repo.effective_ref(),
+            &"a".repeat(40),
+            None,
+        ))
     }
 
     fn verify(&self, id: &str, _repo: &Repo, _pin: &Pin) -> Result<(), SourceError> {
