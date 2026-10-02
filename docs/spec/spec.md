@@ -184,7 +184,7 @@ Free text is rendered inside the `text` fence (§8.1), where formatters leave it
 
 **`url` and `ref` come from a file that may belong to an untrusted repository**, and `refs sync` hands them to git:
 
-- Reject a `url` whose scheme is not `https`, `ssh`, `git` or `file`, or that is not scp-style `user@host:path` (so `http://`, `ext::` and `fd::` fail at config time, with `refs::config::bad_url`; `GIT_ALLOW_PROTOCOL`, §7.7, stays as the second layer).
+- Reject a `url` whose scheme is not `https`, `ssh`, `git` or `file`, or that is not scp-style `user@host:path` (a host starting with `-` is rejected too; so `http://`, `ext::` and `fd::` fail at config time, with `refs::config::bad_url`; `GIT_ALLOW_PROTOCOL`, §7.7, stays as the second layer).
 - Reject a `url` or `ref` that starts with `-` (git would read it as an option), and pass `--` or `--end-of-options` before them on every git command (§7.7).
 - Reject a password in the URL userinfo (`https://user:token@host/…`): it would be committed in `refs.toml` and `refs.lock` and copied into the cache metadata. The diagnostic points at credential helpers and SSH agents. A bare username (`git@github.com:o/r`) is fine.
 - `paths` entries name directories. §7.2 checks that each is a tree at the resolved SHA, not just that it exists.

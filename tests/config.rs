@@ -158,6 +158,7 @@ fn url_must_use_an_allowed_transport() {
         "@host:path",
         "user@:path",
         "user@ho/st:path",
+        "git@-oProxyCommand=x:p",
     ] {
         code_and_span(&with(bad), "refs::config::bad_url", &format!("\"{bad}\""));
     }

@@ -230,14 +230,20 @@ fn url_problem(url: &str) -> Option<UrlProblem> {
         return has_password(authority).then_some(NO_PASSWORD);
     }
     // scp-style: a user, then `@`, a host, `:` and a path. A `/` before the first `:` would
-    // make git read a local path, so neither the user nor the host may contain one.
+    // make git read a local path, so neither the user nor the host may contain one, and a
+    // host starting with `-` would be read as an option.
     let Some((userinfo, rest)) = url.split_once('@') else {
         return Some(UNSUPPORTED);
     };
     let Some((host, _)) = rest.split_once(':') else {
         return Some(UNSUPPORTED);
     };
-    if userinfo.is_empty() || userinfo.contains('/') || host.is_empty() || host.contains('/') {
+    if userinfo.is_empty()
+        || userinfo.contains('/')
+        || host.is_empty()
+        || host.contains('/')
+        || host.starts_with('-')
+    {
         return Some(UNSUPPORTED);
     }
     has_password(&format!("{userinfo}@")).then_some(NO_PASSWORD)
