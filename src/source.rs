@@ -60,6 +60,24 @@ impl Pin {
         }
     }
 
+    /// Whether both pins name the same commit of the same remote. The display-only
+    /// `branch` does not count.
+    pub fn same_commit(&self, other: &Pin) -> bool {
+        match (&self.0, &other.0) {
+            (
+                PinKind::Git {
+                    url, git_ref, sha, ..
+                },
+                PinKind::Git {
+                    url: u,
+                    git_ref: r,
+                    sha: s,
+                    ..
+                },
+            ) => url == u && git_ref == r && sha == s,
+        }
+    }
+
     /// The first 7 characters of the commit id, for the block.
     pub fn short_id(&self) -> &str {
         match &self.0 {

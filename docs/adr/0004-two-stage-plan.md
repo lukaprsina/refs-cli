@@ -13,12 +13,12 @@ This refines ADR 0003. Decisions still live in `plan`, mechanics in `Source`.
 
 A `Plan` is an ordered `Vec<Action>`: removals, then materialisations, then Agent file writes, then the exclude rule.
 
-- Actions: `Remove`, `Materialise`, `WriteAgentFile`, `EnsureExclude`, `Refuse(diagnostic)` and `Note(diagnostic)`. `Materialise` has no variants: `Source` tells creating, moving and sparse updates apart from what is on disk. A dangling Checkout is `Remove`, `Materialise` and a `Note(recreated)`. A `Note` is an info-level announcement of an autofix; only `recreated` exists for now.
+- Actions: `Remove`, `Materialise`, `WriteAgentFile`, `EnsureExclude`, `Refuse(Refusal)` and `Note(Note)` (typed enums in `diagnostic`, each a miette diagnostic). `Materialise` has no variants: `Source` tells creating, moving and sparse updates apart from what is on disk. A dangling Checkout is `Remove`, `Materialise` and a `Note(recreated)`. A `Note` is an info-level announcement of an autofix; only `recreated` exists for now.
 - `force` is a flag to `plan_checkouts`: with it, a dirty Checkout becomes `Remove` plus `Materialise` instead of `Refuse`. `Source` takes no `force`.
 - `--check` means "the plan contains any action other than a `Note`".
 - `refs list` computes its own status table from `Observed`; it does not read the plan.
-- `ProjectObserved` is plain data read by `sync` before stage 2: the text of each Agent file, the exclude rule (`Present`, `Missing` or `NoGit`; `NoGit` is a `Note`, not drift) and the directory names in `references_dir`. Removal candidates are the non-active names, each inspected by `sync`: `At` is `Remove` (`Refuse` if dirty), `Foreign` or `Absent` is ignored. The old Lock is not read, so a retry after a failed stage 2 still finds them.
-- Any `Refuse` suppresses `WriteAgentFile` (not `EnsureExclude`). A marker refusal is `Refuse(Diagnostic)`; it belongs to a file, not a Repo.
+- `ProjectObserved` is plain data read by `sync` before stage 2: the `references_dir` setting, the text of each Agent file, the exclude rule (`Present`, `Missing` or `NoGit`; `NoGit` is a `Note`, not drift) and the directory names in `references_dir`. Removal candidates are the non-active names, each inspected by `sync`: `At` is `Remove` (`Refuse` if dirty), `Foreign` or `Absent` is ignored. The old Lock is not read, so a retry after a failed stage 2 still finds them.
+- Any `Refuse` suppresses `WriteAgentFile` (not `EnsureExclude`). A marker refusal is `Refusal::Block`; it belongs to a file, not a Repo. Refusals sit after the materialisations and before the Agent file writes.
 - A Pin's `branch` is display-only, so `plan` compares an `Observed` pin with `Pin::same_commit`, and `paths` as sets. `plan_checkouts` renders the block, splices it and emits `WriteAgentFile` only on a difference, so an in-sync project has an empty plan. Malformed markers become `Refuse`. There is no second trait; `Source` stays the only one.
 
 ## Verification and offline

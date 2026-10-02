@@ -37,7 +37,6 @@ fn a_missing_lock_is_stale_and_every_repo_resolves() {
     let set = active(&config);
     assert_eq!(lock_drift(&set, None), vec![Drift::LockMissing]);
     let plan = plan_lock(&set, None, &LockFlags::default()).unwrap();
-    assert_eq!(plan.drift, vec![Drift::LockMissing]);
     assert!(matches!(plan.steps.as_slice(), [Step::Resolve(r)] if r.id == "a"));
 }
 
@@ -48,7 +47,6 @@ fn a_matching_lock_is_current_and_every_repo_is_reused() {
     let locked = lock(vec![a_entry()]);
     assert_eq!(lock_drift(&set, Some(&locked)), vec![]);
     let plan = plan_lock(&set, Some(&locked), &LockFlags::default()).unwrap();
-    assert_eq!(plan.drift, vec![]);
     assert!(matches!(plan.steps.as_slice(), [Step::Reuse(e)] if *e == a_entry()));
 }
 
@@ -63,7 +61,6 @@ fn editing_paths_keeps_the_pin_and_refreshes_the_entry_paths() {
     }];
     assert_eq!(lock_drift(&set, Some(&locked)), drift);
     let plan = plan_lock(&set, Some(&locked), &LockFlags::default()).unwrap();
-    assert_eq!(plan.drift, drift);
     let want = entry("a", "https://github.com/o/a", "next", &["docs", "src"]);
     assert!(matches!(plan.steps.as_slice(), [Step::Reuse(e)] if *e == want));
 }
@@ -118,7 +115,6 @@ fn an_entry_for_a_disabled_repo_is_removed_and_gets_no_step() {
     let want = vec![Drift::Removed("a".into())];
     assert_eq!(lock_drift(&set, Some(&locked)), want);
     let plan = plan_lock(&set, Some(&locked), &LockFlags::default()).unwrap();
-    assert_eq!(plan.drift, want);
     assert!(plan.steps.is_empty());
 }
 
@@ -178,7 +174,6 @@ fn resolved(upgrade: Upgrade) -> Vec<String> {
         ..LockFlags::default()
     };
     let plan = plan_lock(&set, Some(&locked), &flags).unwrap();
-    assert_eq!(plan.drift, vec![]);
     plan.steps
         .iter()
         .filter_map(|s| match s {

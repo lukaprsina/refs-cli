@@ -84,6 +84,11 @@ impl Repo {
         !is_full_sha(self.effective_ref())
     }
 
+    /// `paths` as plain strings, as the Lock and `Observed` hold them.
+    pub fn path_strings(&self) -> Vec<String> {
+        self.paths.iter().map(|p| p.get_ref().clone()).collect()
+    }
+
     /// The ref to resolve: `HEAD` when none is configured.
     pub fn effective_ref(&self) -> &str {
         self.git_ref

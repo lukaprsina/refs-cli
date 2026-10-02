@@ -6,6 +6,17 @@ pub struct ActiveSet<'a> {
     pub sections: Vec<Section<'a>>,
 }
 
+impl<'a> ActiveSet<'a> {
+    /// Every active repo, in block order.
+    pub fn repos<'b>(&'b self) -> impl Iterator<Item = RepoRef<'a>> + 'b {
+        self.sections.iter().flat_map(|s| s.repos.iter().copied())
+    }
+
+    pub fn get(&self, id: &str) -> Option<RepoRef<'a>> {
+        self.repos().find(|r| r.id == id)
+    }
+}
+
 /// A group heading with its active repos in config order. `group` is `None` for the
 /// trailing "Ungrouped" section.
 #[derive(Debug)]

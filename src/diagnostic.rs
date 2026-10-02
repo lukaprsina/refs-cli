@@ -227,3 +227,47 @@ pub enum LockRefusal {
     #[diagnostic(code(refs::lock::unknown_id))]
     UnknownUpgradeId { ids: Vec<String> },
 }
+
+/// Why `plan_checkouts` will not touch something. `sync` refuses rather than delete what
+/// refs did not create or what an agent edited; `--force` lifts only the second.
+#[derive(Debug, Error, Diagnostic)]
+pub enum Refusal {
+    #[error("`{id}` is a directory refs did not create")]
+    #[diagnostic(
+        code(refs::sync::foreign_dir),
+        help("move or delete it, then sync again; refs never removes it, even with --force")
+    )]
+    ForeignDir { id: String },
+
+    #[error("`{id}` has local changes: {}", .files.join(", "))]
+    #[diagnostic(
+        code(refs::sync::dirty_checkout),
+        help("untracked files count too; `refs sync --force` discards them")
+    )]
+    DirtyCheckout { id: String, files: Vec<String> },
+
+    #[error("`{path}` has refs markers that are not exactly one BEGIN then one END")]
+    #[diagnostic(
+        code(refs::sync::bad_markers),
+        help("fix or delete the markers by hand; refs will not guess which text is its own")
+    )]
+    Block {
+        path: String,
+        #[source]
+        #[diagnostic_source]
+        error: BlockError,
+    },
+}
+
+/// An autofix `sync` announces; not drift.
+#[derive(Debug, Error, Diagnostic)]
+#[diagnostic(severity(Advice))]
+pub enum Note {
+    #[error("not a git repository, so the exclude rule for the references directory was not added")]
+    #[diagnostic(code(refs::sync::no_git_repo))]
+    NoGitRepo,
+
+    #[error("`{id}` had a broken checkout; recreated it, local files in it were discarded")]
+    #[diagnostic(code(refs::sync::recreated))]
+    Recreated { id: String },
+}

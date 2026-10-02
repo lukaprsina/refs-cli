@@ -71,7 +71,7 @@ impl Source for FakeSource {
         _opts: MaterialiseOpts,
     ) -> Result<(), SourceError> {
         self.check(repo.id, Method::Materialise)?;
-        let paths = repo.repo.paths.iter().map(|p| p.as_ref().clone()).collect();
+        let paths = repo.repo.path_strings();
         self.seed(
             repo.id,
             Observed::At {
