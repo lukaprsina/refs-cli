@@ -5,7 +5,7 @@ pub mod fake;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::Repo;
+use crate::config::RepoRef;
 use crate::diagnostic::SourceError;
 
 /// A resolved identity of a Repo. Only this module interprets it; everything else
@@ -87,14 +87,13 @@ pub struct MaterialiseOpts {
 
 pub trait Source {
     /// Ref to commit. Asks the remote; never creates a Checkout.
-    fn resolve(&self, id: &str, repo: &Repo) -> Result<Pin, SourceError>;
+    fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError>;
     /// Check that `paths` and `start` exist at the pinned commit, using cached objects only.
-    fn verify(&self, id: &str, repo: &Repo, pin: &Pin) -> Result<(), SourceError>;
+    fn verify(&self, repo: RepoRef, pin: &Pin) -> Result<(), SourceError>;
     /// Fetch the pinned commit and create or move the Checkout to it.
     fn materialise(
         &self,
-        id: &str,
-        repo: &Repo,
+        repo: RepoRef,
         pin: &Pin,
         opts: MaterialiseOpts,
     ) -> Result<(), SourceError>;

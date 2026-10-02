@@ -1,7 +1,11 @@
 use miette::Diagnostic;
-use refs_cli::config::{Repo, parse};
+use refs_cli::config::{Repo, RepoRef, parse};
 use refs_cli::source::fake::{FakeSource, Method};
 use refs_cli::source::{MaterialiseOpts, Observed, Pin, Source};
+
+fn at<'a>(id: &'a str, repo: &'a Repo) -> RepoRef<'a> {
+    RepoRef { id, repo }
+}
 
 fn pin() -> Pin {
     Pin::git(
@@ -50,9 +54,9 @@ fn materialise_creates_the_checkout_and_remove_deletes_it() {
     let source = FakeSource::new();
     let repo = repo();
 
-    let pin = source.resolve("solid", &repo).unwrap();
+    let pin = source.resolve(at("solid", &repo)).unwrap();
     source
-        .materialise("solid", &repo, &pin, MaterialiseOpts::default())
+        .materialise(at("solid", &repo), &pin, MaterialiseOpts::default())
         .unwrap();
     assert_eq!(
         source.inspect("solid").unwrap(),
@@ -72,15 +76,15 @@ fn an_injected_failure_hits_only_that_repo_and_method() {
     let source = FakeSource::new();
     let repo = repo();
     let opts = MaterialiseOpts::default();
-    let pin = source.resolve("ok", &repo).unwrap();
+    let pin = source.resolve(at("ok", &repo)).unwrap();
     source.fail("bad", Method::Verify, "boom");
 
-    let err = source.verify("bad", &repo, &pin).unwrap_err();
+    let err = source.verify(at("bad", &repo), &pin).unwrap_err();
     assert_eq!(err.code().unwrap().to_string(), "refs::git::failed");
-    assert!(source.verify("ok", &repo, &pin).is_ok());
+    assert!(source.verify(at("ok", &repo), &pin).is_ok());
     // Other methods on the failing repo still work.
-    assert!(source.resolve("bad", &repo).is_ok());
-    assert!(source.materialise("bad", &repo, &pin, opts).is_ok());
+    assert!(source.resolve(at("bad", &repo)).is_ok());
+    assert!(source.materialise(at("bad", &repo), &pin, opts).is_ok());
 }
 
 #[test]
@@ -88,7 +92,7 @@ fn every_method_can_fail() {
     let repo = repo();
     let opts = MaterialiseOpts::default();
     let source = FakeSource::new();
-    let pin = source.resolve("a", &repo).unwrap();
+    let pin = source.resolve(at("a", &repo)).unwrap();
     for method in [
         Method::Resolve,
         Method::Verify,
@@ -97,9 +101,9 @@ fn every_method_can_fail() {
     ] {
         source.fail("a", method, "boom");
     }
-    assert!(source.resolve("a", &repo).is_err());
-    assert!(source.verify("a", &repo, &pin).is_err());
-    assert!(source.materialise("a", &repo, &pin, opts).is_err());
+    assert!(source.resolve(at("a", &repo)).is_err());
+    assert!(source.verify(at("a", &repo), &pin).is_err());
+    assert!(source.materialise(at("a", &repo), &pin, opts).is_err());
     assert!(source.remove("a").is_err());
 }
 
@@ -107,13 +111,13 @@ fn every_method_can_fail() {
 fn a_failed_materialise_leaves_the_checkout_untouched() {
     let source = FakeSource::new();
     let repo = repo();
-    let pin = source.resolve("a", &repo).unwrap();
+    let pin = source.resolve(at("a", &repo)).unwrap();
     source.fail("a", Method::Materialise, "boom");
     source.seed("a", Observed::Dangling);
 
     assert!(
         source
-            .materialise("a", &repo, &pin, MaterialiseOpts::default())
+            .materialise(at("a", &repo), &pin, MaterialiseOpts::default())
             .is_err()
     );
     assert_eq!(source.inspect("a").unwrap(), Observed::Dangling);

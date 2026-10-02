@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use super::{MaterialiseOpts, Observed, Pin, Source};
-use crate::config::Repo;
+use crate::config::RepoRef;
 use crate::diagnostic::SourceError;
 
 /// The `Source` methods a failure can be injected into.
@@ -50,31 +50,30 @@ impl FakeSource {
 }
 
 impl Source for FakeSource {
-    fn resolve(&self, id: &str, repo: &Repo) -> Result<Pin, SourceError> {
-        self.check(id, Method::Resolve)?;
+    fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError> {
+        self.check(repo.id, Method::Resolve)?;
         Ok(Pin::git(
-            repo.url.as_ref(),
-            repo.effective_ref(),
+            repo.repo.url.as_ref(),
+            repo.repo.effective_ref(),
             &"a".repeat(40),
             None,
         ))
     }
 
-    fn verify(&self, id: &str, _repo: &Repo, _pin: &Pin) -> Result<(), SourceError> {
-        self.check(id, Method::Verify)
+    fn verify(&self, repo: RepoRef, _pin: &Pin) -> Result<(), SourceError> {
+        self.check(repo.id, Method::Verify)
     }
 
     fn materialise(
         &self,
-        id: &str,
-        repo: &Repo,
+        repo: RepoRef,
         pin: &Pin,
         _opts: MaterialiseOpts,
     ) -> Result<(), SourceError> {
-        self.check(id, Method::Materialise)?;
-        let paths = repo.paths.iter().map(|p| p.as_ref().clone()).collect();
+        self.check(repo.id, Method::Materialise)?;
+        let paths = repo.repo.paths.iter().map(|p| p.as_ref().clone()).collect();
         self.seed(
-            id,
+            repo.id,
             Observed::At {
                 pin: pin.clone(),
                 paths,

@@ -1,4 +1,4 @@
-use crate::config::{Config, Group, Repo};
+use crate::config::{Config, Group, Repo, RepoRef};
 
 /// What `render` and `sync` act on: only active repos, grouped as the block shows them.
 #[derive(Debug)]
@@ -11,7 +11,7 @@ pub struct ActiveSet<'a> {
 #[derive(Debug)]
 pub struct Section<'a> {
     pub group: Option<(&'a str, &'a Group)>,
-    pub repos: Vec<(&'a str, &'a Repo)>,
+    pub repos: Vec<RepoRef<'a>>,
 }
 
 pub fn active(config: &Config) -> ActiveSet<'_> {
@@ -30,7 +30,10 @@ pub fn active(config: &Config) -> ActiveSet<'_> {
                         .as_ref()
                         .is_some_and(|g| g.as_ref() == group_id.as_ref())
             })
-            .map(|(id, r)| (id.as_ref().as_str(), r))
+            .map(|(id, repo)| RepoRef {
+                id: id.as_ref().as_str(),
+                repo,
+            })
             .collect();
         if !repos.is_empty() {
             sections.push(Section {
@@ -43,7 +46,10 @@ pub fn active(config: &Config) -> ActiveSet<'_> {
         .repos
         .iter()
         .filter(|(_, r)| repo_active(r) && r.group.is_none())
-        .map(|(id, r)| (id.as_ref().as_str(), r))
+        .map(|(id, repo)| RepoRef {
+            id: id.as_ref().as_str(),
+            repo,
+        })
         .collect();
     if !ungrouped.is_empty() {
         sections.push(Section {

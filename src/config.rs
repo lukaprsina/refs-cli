@@ -34,6 +34,14 @@ pub struct Group {
     pub enabled: Option<bool>,
 }
 
+/// A Repo with its id. The `Repo` carries no id (the map is keyed by a spanned id), so
+/// this pair is the unit everything downstream takes.
+#[derive(Debug, Clone, Copy)]
+pub struct RepoRef<'a> {
+    pub id: &'a str,
+    pub repo: &'a Repo,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Repo {
