@@ -5,7 +5,7 @@ Which Repos re-resolve is a pure decision, but the pins it produces exist only a
 1. `plan_lock(active, lock, flags)` decides which Repos to resolve or reuse (pin reuse keyed on url/ref/source, `--upgrade`, newly active). Verification is not a decision: the executor verifies every active Repo. `lock_drift(active, lock)` is the stale check on its own, which `sync --check` needs. The executor runs it and produces the new Lock. With `--offline`, a missing or stale Lock, or any `--upgrade`, yields a refusal here.
 2. `plan_checkouts(active, lock, Observed per Repo, ProjectObserved)` returns a `Plan`: the checkout, Agent file and exclude actions.
 
-`refs lock` is stage 1 plus a write. `sync` runs stage 1 if the Lock is stale, then stage 2. `sync --check` runs stage 2 only, against the existing Lock; a missing or stale Lock is reported as out of date without resolving.
+`refs lock` is stage 1 plus a write. `sync` always runs stage 1 (with a current Lock every step is a reuse, so nothing resolves, but every Repo is verified and the Lock is written only if it changed), then stage 2. `sync --check` runs stage 2 only, against the existing Lock; a missing or stale Lock is reported as out of date without resolving.
 
 This refines ADR 0003. Decisions still live in `plan`, mechanics in `Source`.
 
@@ -17,7 +17,7 @@ A `Plan` is an ordered `Vec<Action>`: removals, then materialisations, then Agen
 - `force` is a flag to `plan_checkouts`: with it, a dirty Checkout becomes `Remove` plus `Materialise` instead of `Refuse`. `Source` takes no `force`.
 - `--check` means "the plan contains any action other than a `Note`".
 - `refs list` computes its own status table from `Observed`; it does not read the plan.
-- `ProjectObserved` is plain data read by `sync` before stage 2: the `references_dir` setting, the text of each Agent file, the exclude rule (`Present`, `Missing` or `NoGit`; `NoGit` is a `Note`, not drift) and the directory names in `references_dir`. Removal candidates are the non-active names, each inspected by `sync`: `At` is `Remove` (`Refuse` if dirty), `Foreign` or `Absent` is ignored. The old Lock is not read, so a retry after a failed stage 2 still finds them.
+- `ProjectObserved` is plain data read by `sync` before stage 2: the `references_dir` setting, the text of each Agent file, the exclude rule (`Present`, `Missing` or `NoGit`; `NoGit` is a `Note`, not drift) and the directory names in `references_dir`, which `sync` gets from `Source::list` (the fake then stays the one truth about the disk). Removal candidates are the non-active names, each inspected by `sync`: `At` is `Remove` (`Refuse` if dirty), `Foreign` or `Absent` is ignored. The old Lock is not read, so a retry after a failed stage 2 still finds them.
 - Any `Refuse` suppresses `WriteAgentFile` (not `EnsureExclude`). A marker refusal is `Refusal::Block`; it belongs to a file, not a Repo. Refusals sit after the materialisations and before the Agent file writes.
 - A Pin's `branch` is display-only, so `plan` compares an `Observed` pin with `Pin::same_commit`, and `paths` as sets. `plan_checkouts` renders the block, splices it and emits `WriteAgentFile` only on a difference, so an in-sync project has an empty plan. Malformed markers become `Refuse`. There is no second trait; `Source` stays the only one.
 

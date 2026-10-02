@@ -138,3 +138,37 @@ fn a_pin_shows_its_ref_when_there_is_no_branch() {
     // A detached remote HEAD records no branch.
     assert_eq!(Pin::git("u", "HEAD", &sha, None).display_ref(), "HEAD");
 }
+
+#[test]
+fn list_names_every_present_directory_in_order() {
+    let source = FakeSource::new();
+    source.seed("b", Observed::Foreign);
+    source.seed("a", Observed::Dangling);
+    source.seed("c", Observed::Absent);
+    assert_eq!(source.list().unwrap(), ["a", "b"]);
+}
+
+#[test]
+fn the_fake_logs_calls_and_resolves_a_scripted_commit() {
+    use refs_cli::source::fake::Call;
+    let config = parse("[repos.a]\nurl = \"https://github.com/o/a\"\n").unwrap();
+    let (id, repo) = config.repos.iter().next().unwrap();
+    let repo = at(id.as_ref().as_str(), repo);
+    let source = FakeSource::new();
+    source.set_commit("a", &"b".repeat(40));
+    let pin = source.resolve(repo).unwrap();
+    source
+        .materialise(repo, &pin, MaterialiseOpts { offline: true })
+        .unwrap();
+    assert_eq!(
+        source.calls(),
+        [
+            Call::Resolve("a".into()),
+            Call::Materialise {
+                id: "a".into(),
+                offline: true
+            }
+        ]
+    );
+    assert_eq!(pin.short_id(), "bbbbbbb");
+}

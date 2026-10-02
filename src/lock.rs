@@ -46,6 +46,13 @@ pub struct LockedRepo {
 }
 
 impl Lock {
+    pub fn new(repo: Vec<LockedRepo>) -> Lock {
+        Lock {
+            version: VERSION,
+            repo,
+        }
+    }
+
     pub fn parse(text: &str) -> Result<Lock, LockError> {
         let invalid = |message: String| LockError::Invalid { message };
         let lock: Lock = toml::from_str(text).map_err(|e| invalid(e.message().to_string()))?;

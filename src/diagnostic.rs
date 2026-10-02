@@ -271,3 +271,23 @@ pub enum Note {
     #[diagnostic(code(refs::sync::recreated))]
     Recreated { id: String },
 }
+
+/// A problem reading or writing a project file other than `refs.lock` and the Agent files.
+#[derive(Debug, Error, Diagnostic)]
+pub enum ProjectError {
+    #[error("could not read {path}")]
+    #[diagnostic(code(refs::project::read_failed))]
+    Read {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("could not write {path}")]
+    #[diagnostic(code(refs::project::write_failed))]
+    Write {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+}

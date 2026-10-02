@@ -1,6 +1,6 @@
 # Decisions live in `plan`; `Source` only reports and executes
 
-`Source` has five methods: `resolve`, `verify`, `inspect`, `materialise` and `remove`. `inspect` returns an `Observed` value (`Absent`, `Dangling`, `Foreign` or `At { pin, paths, dirty_files }`) and `plan` decides what to do with it: recreate a dangling Checkout, refuse a foreign or dirty one unless forced, move or remove, re-resolve or reuse a pin. `GitSource` has no opinions about what should happen; it classifies what is on disk and executes single actions.
+`Source` has six methods: `resolve`, `verify`, `inspect`, `list` (the names in the references directory), `materialise` and `remove`. `inspect` returns an `Observed` value (`Absent`, `Dangling`, `Foreign` or `At { pin, paths, dirty_files }`) and `plan` decides what to do with it: recreate a dangling Checkout, refuse a foreign or dirty one unless forced, move or remove, re-resolve or reuse a pin. `GitSource` has no opinions about what should happen; it classifies what is on disk and executes single actions.
 
 `verify` stays separate from `resolve` because pin reuse skips `resolve` (a floating ref keeps its SHA when `paths` change) while the edited `paths` and `start` must still be checked against that SHA.
 

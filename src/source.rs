@@ -130,4 +130,6 @@ pub trait Source {
     ) -> Result<(), SourceError>;
     fn remove(&self, id: &str) -> Result<(), SourceError>;
     fn inspect(&self, id: &str) -> Result<Observed, SourceError>;
+    /// The names of the directories in the references directory, whatever made them.
+    fn list(&self) -> Result<Vec<String>, SourceError>;
 }
