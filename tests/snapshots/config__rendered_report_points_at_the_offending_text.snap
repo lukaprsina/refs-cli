@@ -1,0 +1,14 @@
+---
+source: tests/config.rs
+expression: out
+---
+refs::config::bad_url
+
+  x `url` must not contain a password
+   ,-[refs.toml:2:7]
+ 1 | [repos.a]
+ 2 | url = "https://me:secret@github.com/o/a"
+   :       ^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^
+   :                        `-- rejected
+   `----
+  help: use a credential helper or an SSH agent instead
