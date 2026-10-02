@@ -41,7 +41,7 @@ _Avoid_: Version, revision
 ### Pinning
 
 **Lock**:
-The commit each Repo's Ref resolved to, committed with the project so everyone reads the same content.
+The commit each Repo's Ref resolved to, committed with the project so everyone reads the same content. For a Repo that follows `HEAD` it also records the remote's default branch, for display.
 _Avoid_: Snapshot, pin file
 
 **Checkout**:
@@ -69,7 +69,3 @@ _Avoid_: Prompt, boilerplate, header
 **Entry**:
 One Repo's record in the Managed block: its id, Ref, short commit, description, Packages and Start.
 _Avoid_: Header line, listing, item
-
-**Global library**:
-Repo and Group definitions kept per user and used only as templates when adding to a project.
-_Avoid_: Global config, profile, preset

@@ -16,8 +16,8 @@ Everything above `source` is a plain function over data. Files, git and the netw
 
 | Module | Job | Pure? | Tested with |
 |---|---|---|---|
-| `config` | Parse and validate the Project config and the Global library, keeping spans for validation errors. Comment-preserving edits (`toml_edit`). | yes, apart from reading files | data: config text in, diagnostics or types out |
-| `active` | Config → the active set (spec §6.5). Everything after it sees only this. | yes | data |
+| `config` | Parse and validate the Project config (including `url`/`ref` hardening), keeping spans for validation errors. Comment-preserving edits (`toml_edit`). | yes, apart from reading files | data: config text in, diagnostics or types out |
+| `active` | Config → the active set (spec §6.4). Everything after it sees only this. | yes | data |
 | `source` | `trait Source`: `resolve`, `verify`, `materialise`, plus `remove` and `inspect` (what a checkout is at, and with which Paths) so `plan` can compare desired state with disk. `GitSource` is the only implementation and owns the Cache, `ls-remote`, sparse worktrees and file locks. | no | pure helpers as data; a few real-git contract tests |
 | `lock` | Config hash, Lock read and write (a union tagged by `source`), "which Repos need re-resolving". The resolver is injected. | yes | data, fake `Source` |
 | `entry` | `Entry` from (active Repo, pin). Plain data. | yes | data |
@@ -49,7 +49,6 @@ One package, a library plus a thin binary. Split into a workspace only when a re
 | Inline tree, per-file hints | new fields on `Entry`, new renderer step | `render` only |
 | Per-file placement of Groups | a new selection rule beside `active` | none beyond selection |
 | Nested Projects (monorepos) | `project` discovery; each Project runs the same pipeline | none |
-| Block for global-only Repos | a second Project-like input to the pipeline | `project` |
 | Linter and formatter exclusion | `project`, plus a `doctor` check | none |
 | `--json` output | a second consumer of `plan` and `Entry` | `cli` |
 | `gc` for the Cache | a `GitSource` method and a command | none |
