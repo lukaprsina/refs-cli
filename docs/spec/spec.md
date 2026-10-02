@@ -176,7 +176,7 @@ enabled = true                          # optional, default true; false = treate
 
 Validation: `paths` entries are relative, no `..`; when `paths` is present, every `start` is inside a `paths` entry or a direct child of the repo root (cone mode checks root files out too). With `paths = ["docs/guide"]`, `README.md` and `docs/guide/a.md` are valid `start` values; `docs/README.md`, `src/x.rs` and `docs/guide/../x.md` are not.
 
-`settings.references_dir` and each `settings.agents_files` entry are project-relative output paths. Reject absolute paths, paths containing `..`, empty paths, and paths that resolve to the project root. For an existing destination or its nearest existing ancestor, resolve symlinks and require the resolved path to remain inside the canonical project root; reject broken symlinks. Symlinks that resolve inside the project are allowed. If the destination already exists, `references_dir` must be a directory and each `agents_files` target must be a regular file. This validation is not race-resistant against a symlink being changed between validation and writing.
+`settings.references_dir` and each `settings.agents_files` entry are project-relative output paths. Reject absolute paths, paths containing `..`, empty paths, and paths that resolve to the project root. These lexical checks run at config time. Resolving symlinks (the destination, or its nearest existing ancestor, must stay inside the canonical project root; broken symlinks are rejected) and checking that an existing `references_dir` is a directory and each `agents_files` target a regular file belong to `project` and run at `sync` time; they are not race-resistant against a symlink changed between validation and writing.
 
 Every string that is rendered into the block (`name`, `description` on groups and repos, `packages` and `start` entries) is a single line: no control characters (including newlines), no ```` ``` ````, and neither `BEGIN:refs` nor `END:refs`. Otherwise a config value could end the fence or the markers early.
 
@@ -229,7 +229,7 @@ packages = ["@solidjs/router"]
 A disabled repo behaves as if it were commented out of the config, but stays visible to tooling. Use it to keep a reminder of where code came from (e.g. a proof-of-concept repo an agent already copied from) and switch it back on later.
 
 - **Active set:** repo active ⇔ `repo.enabled` and its group's `enabled` are both true. Disabling a group cascades to every repo in it. An ungrouped repo depends only on its own flag.
-- **Lock:** a disabled repo has no lock entry and isn't in `config_hash`. Disabling then running `lock`/`sync` drops its entry.
+- **Lock:** a disabled repo has no lock entry. Disabling then running `lock`/`sync` drops its entry.
 - **Checkout:** `sync` removes the checkout of a disabled repo like any repo no longer in the config (§7.3).
 - **Block:** a disabled repo has no Entry. A group with no active repos renders no heading (this holds for enabled groups that simply have no repos too).
 - **Re-enabling** re-resolves the ref, exactly as uncommenting would. A floating ref may land on a newer commit than before; the old pin isn't kept.
@@ -278,8 +278,8 @@ Also:
 
 - Remove worktrees for repos no longer active (removed from the config or disabled, §6.4): `git worktree remove --force` (generated, read-only copies). **Unless the checkout is dirty**: if `git status --porcelain` in it shows any modified or untracked file, `sync` refuses to remove it or move it to another SHA and reports `refs::sync::dirty_checkout` naming the files, so the "never delete a directory refs didn't create" rule of step 4 also holds for edits an agent made despite the block. Untracked files count (a `node_modules` created by running a tool inside a checkout blocks `sync` too); the diagnostic says so and names `sync --force`, which discards them.
 - Run `git worktree prune` on each touched cache repo. Prune forgets registrations whose directory is missing, including projects on a currently unmounted drive; their checkouts are recreated by the next `sync`. Accepted; the later `doctor` reports such registrations as info (§10.1).
-- Moving a project directory breaks worktree links; `sync` detects this and repairs with `git worktree repair` or recreates the checkout.
-- **Autofixes are announced.** Whenever `sync` repairs or recreates something on its own (recreating a dangling or stale checkout, `git worktree repair`, pruning stale registrations), it prints an info-level diagnostic naming what it did (`refs::sync::recreated`, `refs::sync::repaired`, `refs::sync::pruned`). `-q` silences them.
+- Moving a project directory breaks worktree links; `GitSource` repairs the links with `git worktree repair` (silently) or, if that cannot work, `inspect` reports the checkout as dangling and `sync` recreates it.
+- **Recreating is announced.** When `sync` recreates a dangling checkout it prints an info-level diagnostic (`refs::sync::recreated`). `-q` silences it. Repairing a moved project and pruning stale registrations (`git worktree repair`, `git worktree prune`) happen silently inside `GitSource`; announcing them (`refs::sync::repaired`, `refs::sync::pruned`) is deferred.
 - Ignore submodules and Git LFS content in the MVP; the later `doctor` mentions them if detected.
 
 ### 7.4 Server prerequisites
@@ -339,9 +339,9 @@ One line per repo:
 
 ### 8.2 Determinism
 
-Output depends only on (config, lock, generator version). Same inputs → byte-identical block.
+Output depends only on (config, lock, `refs` version). Same inputs → byte-identical block.
 
-The fixed prose changes between `refs` releases, so a teammate or CI on a different version would fail `sync --check` forever. `sync` records the version that last wrote the block as `generator` in `refs.lock` (updated only when it rewrites a block). If `--check` finds the block differs and the running version differs from `generator`, it exits 3 with `refs::sync::generator_mismatch` ("block was generated by refs X, this is Y; run `refs sync`") instead of a plain "out of date". `sync` run twice is a no-op. `packages`, `start` and descriptions change only the rendered block, not the lock.
+The fixed prose changes between `refs` releases, so a teammate or CI on a different version would fail `sync --check` forever. `--check` reports that as plain "out of date" (exit 3). A dedicated `generator_mismatch` diagnostic, with a `generator` field in the lock recording the version that wrote the block, is deferred. `sync` run twice is a no-op. `packages`, `start` and descriptions change only the rendered block, not the lock.
 
 ---
 
@@ -413,8 +413,8 @@ Exit codes: `0` ok, `1` error, `2` usage error, `3` `--check` found something ou
 0. Compute the active set from the config (§6.4). Everything below operates on active repos, except removals (repos no longer active) and the agent file and exclude rule (the project).
 1. **Stage 1, lock** (`plan_lock`; ADR 0004). Determine whether the lock is current. A normal sync locks if it is missing or stale: resolve the repos that need it, reuse the other pins, and verify `paths` and `start` of every active repo at its pin against the cache (§7.2), fetching commits and trees only on a miss. Collect all errors; write `refs.lock` only if there are none. With `--offline`, a missing or stale lock is an error and nothing is fetched. With `--check`, skip this stage: a missing or stale lock is out of date (exit 3); do not resolve refs, verify or write the lock.
 2. Read the project state: the `Observed` state of every active checkout and of every checkout to be removed, plus the agent files and the exclude rule.
-3. **Stage 2, plan** (`plan_checkouts`) against the lock: an ordered list of actions (removals, materialisations, agent file writes, the exclude rule) plus refusals (`foreign_dir`, `dirty_checkout`, malformed markers) and info notes for autofixes (§7.3).
-4. With `--offline`, check that the objects needed by every materialisation are in the cache (§7.3 step 1b) before applying anything; error naming the missing objects.
+3. **Stage 2, plan** (`plan_checkouts`) against the lock: an ordered list of actions (removals, materialisations, agent file writes, the exclude rule) plus refusals (`foreign_dir`, `dirty_checkout`, malformed markers) and an info note for a recreated checkout (§7.3). With `--force` the plan replaces the `dirty_checkout` refusal by a removal and materialisation, so `Source` carries no force option.
+4. With `--offline`, `materialise` errors naming the missing objects (§7.3 step 1b) for the repo it cannot serve; other repos proceed as in any failure. There is no all-or-nothing pre-check.
 5. Apply the plan in order: ensure the required objects are in the bare blobless cache (§7.3 steps 1 and 1b, no fetching with `--offline`), update the sparse worktrees, prune removed repos, render the block and write it only if it changed, ensure the exclude rule. A failure for one repo does not stop the others; failures are collected, and the block is not rewritten if any repo failed. Exit 1 with all diagnostics.
 6. With `--check`, do not apply: exit 3 if the plan holds any action other than an info note (drift), exit 1 if it holds a refusal.
 
@@ -427,7 +427,7 @@ Not in the MVP. Kept as the design for the later command, which reads `Observed`
 - `start` path missing, or not in the checkout (§4): error.
 - A package listed under more than one active repo: info.
 - Number of disabled repos and groups: info.
-- Lock present and its `config_hash` matches.
+- Lock present and not stale (§10.2).
 - Each checkout exists, is a worktree of the right cache repo, is at the locked SHA, and has the right sparse patterns. A dirty checkout: warn.
 - Orphan directories in `references_dir` not matching any repo.
 - Cache worktree registrations whose directory is missing: info (the next `sync` prunes them and recreates this project's; §7.3).
@@ -449,8 +449,6 @@ TOML, sorted by repo id, stable formatting:
 ```toml
 # Generated by refs. Do not edit.
 version = 1
-generator = "refs 0.1.0"   # version that last wrote the block (§8.2)
-config_hash = "sha256:…"   # hash of the normalised active repo set: (id, source, url, ref, paths)
 
 [[repo]]
 id = "solid"
@@ -464,7 +462,7 @@ paths = ["packages", "documentation"]
 
 The entry is a tagged union on `source`. `git` is the only kind in the MVP and keeps git-specific field names (`url`, `ref`, `sha`). Adding a kind is additive and needs no `version` bump. `source` is required in every lock entry (the lock is machine-written). `[repos.<id>]` in `refs.toml` has no `source` key in the MVP; a repo is a git repo. A later kind adds an optional key defaulting to `"git"`. Code outside the source module treats the resolved identity as an opaque pin.
 
-`config_hash` covers the active repo set and the fields that affect resolution and checkout: each repo's `id`, `source`, `url`, `ref` and `paths`. A change to any of those, or to the active set (including enable/disable), makes the lock stale. Stale does not mean re-resolve: `lock` re-resolves only when `url`, `ref` or `source` changed or the repo is newly active; a `paths`-only change updates the entry in place (§10). A floating ref whose upstream branch was renamed is noticed only by `lock --upgrade`, like any floating-ref movement. Group membership and display fields (`description`, `name`, `packages`, `start` and the lock's `branch`) don't stale the lock; they only affect the block on the next `sync`. `sync --check` reports a missing lock or a config-hash mismatch as out of date with exit code 3.
+The lock is **stale** when its entries differ from the active set: an id added or missing, or an entry whose `source`, `url`, `ref` or `paths` differs from the config. This is a direct comparison, not a hash, so a report can name the repo and the field. Enable/disable changes the active set and so stales the lock. Stale does not mean re-resolve: `lock` re-resolves only when `url`, `ref` or `source` changed or the repo is newly active; a `paths`-only change updates the entry in place (§10). A floating ref whose upstream branch was renamed is noticed only by `lock --upgrade`, like any floating-ref movement. Group membership and display fields (`description`, `name`, `packages`, `start` and the lock's `branch`) don't stale the lock; they only affect the block on the next `sync`. `sync --check` reports a missing or stale lock as out of date with exit code 3.
 
 ---
 

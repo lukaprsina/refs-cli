@@ -44,6 +44,14 @@ _Avoid_: Version, revision
 The commit each Repo's Ref resolved to, committed with the project so everyone reads the same content. For a Repo that follows `HEAD` it also records the remote's default branch, for display.
 _Avoid_: Snapshot, pin file
 
+**Pin**:
+What a Repo's Ref resolved to, as recorded in the Lock: the commit and, for a Ref that follows `HEAD`, the remote's default branch. The Lock holds one Pin per active Repo.
+_Avoid_: Lock entry (an Entry is the Managed block's record), resolution
+
+**Stale**:
+A Lock whose Pins no longer match the active Repos: a Repo added or removed, or one whose url, Ref or Paths changed. Stale does not mean re-resolve: only a changed url or Ref, or a newly active Repo, resolves again.
+_Avoid_: Outdated, invalid
+
 **Checkout**:
 The readable copy of a Repo's Paths at its locked commit, placed in the project's references directory.
 _Avoid_: Clone, mirror, vendor
@@ -69,3 +77,25 @@ _Avoid_: Prompt, boilerplate, header
 **Entry**:
 One Repo's record in the Managed block: its id, Ref, short commit, description, Packages and Start.
 _Avoid_: Header line, listing, item
+
+### Keeping in sync
+
+**Dangling checkout**:
+A Checkout whose Cache history is gone, for example because the Cache was wiped. It is a generated copy, so it is rebuilt, not refused.
+_Avoid_: Broken, orphaned
+
+**Foreign directory**:
+A directory in the references directory that refs did not create. It is never deleted or overwritten.
+_Avoid_: Conflict, unmanaged
+
+**Dirty checkout**:
+A Checkout with changes made by hand, including untracked files. It is not moved or removed unless forced.
+_Avoid_: Modified, tainted
+
+**Plan**:
+The ordered changes a sync would make, decided from the Lock and what is on disk before anything is touched. A sync applies it; a check only reports it.
+_Avoid_: Diff, dry run
+
+**Out of date**:
+A Project whose Plan is not empty apart from announcements: the Lock is stale or missing, a Checkout differs from the Lock, or an Agent file's block differs from the one that would be written. A refusal (a Foreign directory, a Dirty checkout, malformed markers) is not out of date: a sync would refuse it too.
+_Avoid_: Drifted, unsynced

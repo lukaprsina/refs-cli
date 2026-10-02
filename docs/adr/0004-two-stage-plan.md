@@ -13,7 +13,8 @@ This refines ADR 0003. Decisions still live in `plan`, mechanics in `Source`.
 
 A `Plan` is an ordered `Vec<Action>`: removals, then materialisations, then Agent file writes, then the exclude rule.
 
-- Actions: `Remove`, `Materialise { how }` with `how` one of `Create | Move | Recreate | UpdateSparse`, `WriteAgentFile`, `EnsureExclude`, `Refuse(repo, diagnostic)` and `Note(diagnostic)`. A `Note` is an info-level announcement of an autofix (`recreated`, `repaired`, `pruned`).
+- Actions: `Remove`, `Materialise`, `WriteAgentFile`, `EnsureExclude`, `Refuse(repo, diagnostic)` and `Note(diagnostic)`. `Materialise` has no variants: `Source` tells creating, moving and sparse updates apart from what is on disk. A dangling Checkout is `Remove`, `Materialise` and a `Note(recreated)`. A `Note` is an info-level announcement of an autofix; only `recreated` exists for now.
+- `force` is a flag to `plan_checkouts`: with it, a dirty Checkout becomes `Remove` plus `Materialise` instead of `Refuse`. `Source` takes no `force`.
 - `--check` means "the plan contains any action other than a `Note`".
 - `refs list` computes its own status table from `Observed`; it does not read the plan.
 - `ProjectObserved` is plain data read by `sync` before stage 2: the text of each Agent file and whether the exclude rule is present. `plan_checkouts` renders the block, splices it and emits `WriteAgentFile` only on a difference, so an in-sync project has an empty plan. Malformed markers become `Refuse`. There is no second trait; `Source` stays the only one.
@@ -21,7 +22,7 @@ A `Plan` is an ordered `Vec<Action>`: removals, then materialisations, then Agen
 ## Verification and offline
 
 - `verify` runs for every active Repo on `lock` and `sync`, against the Cache, fetching commits and trees only on a miss. `start` and `paths` edits do not stale the Lock, so they cannot be skipped by change detection. `--check` never verifies.
-- `plan` ignores `--offline` in stage 2. `materialise(opts.offline)` is what errors, naming the missing OIDs. Before applying anything, the executor runs the blob-presence check (spec §7.3 step 1b) for every `Materialise` action, so an offline failure leaves the disk untouched. `--offline --check` never needs the Cache.
+- `plan` ignores `--offline` in stage 2. `materialise(opts.offline)` is what errors, naming the missing OIDs; other Repos proceed like any failure. There is no all-or-nothing pre-check, so no extra `Source` method: an offline failure may leave some Repos updated. Revisit if that bites. `--offline --check` never needs the Cache.
 
 ## Failures and exit codes
 
