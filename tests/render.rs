@@ -1,3 +1,4 @@
+use miette::Diagnostic;
 use refs_cli::active::active;
 use refs_cli::config::parse;
 use refs_cli::lock::{Lock, LockedRepo};
@@ -87,6 +88,21 @@ fn head_shows_the_locked_branch_or_stays_head() {
 }
 
 #[test]
+fn only_a_head_ref_shows_the_branch() {
+    let config = "[repos.a]\nurl = \"https://example.com/o/r\"\nref = \"v1\"\n";
+    let text = block(config, &lock(&[("a", "v1", Some("main"))]));
+    assert!(text.contains("[a @ v1 ee49b3e]"), "{text}");
+}
+
+#[test]
+fn only_a_full_sha_collapses_to_the_short_id() {
+    // an abbreviated sha is not a valid ref, but a tag can look like one
+    let config = "[repos.a]\nurl = \"https://example.com/o/r\"\nref = \"ee49b3e\"\n";
+    let text = block(config, &lock(&[("a", "ee49b3e", None)]));
+    assert!(text.contains("[a @ ee49b3e ee49b3e]"), "{text}");
+}
+
+#[test]
 fn a_description_that_ends_in_a_period_does_not_get_a_second() {
     let config = "[repos.a]\nurl = \"https://example.com/o/r\"\ndescription = \"Done.\"\n";
     let text = block(config, &lock(&[("a", "HEAD", None)]));
@@ -149,6 +165,7 @@ fn a_repo_the_lock_does_not_cover_is_an_error_naming_it() {
     )
     .unwrap_err();
     assert_eq!(err.ids, ["b"]);
+    assert_eq!(err.code().unwrap().to_string(), "refs::render::not_locked");
 }
 
 #[test]

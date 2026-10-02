@@ -59,7 +59,8 @@ impl Pin {
         match &self.0 {
             PinKind::Git {
                 git_ref, branch, ..
-            } => branch.as_deref().unwrap_or(git_ref),
+            } if git_ref == "HEAD" => branch.as_deref().unwrap_or(git_ref),
+            PinKind::Git { git_ref, .. } => git_ref,
         }
     }
 }

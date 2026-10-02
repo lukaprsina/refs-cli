@@ -4,8 +4,8 @@ use std::path::Path;
 
 use crate::diagnostic::BlockError;
 
-const BEGIN: &str = "<!-- BEGIN:refs -->";
-const END: &str = "<!-- END:refs -->";
+pub(crate) const BEGIN: &str = "<!-- BEGIN:refs -->";
+pub(crate) const END: &str = "<!-- END:refs -->";
 
 /// Put `block` (markers included, `\n` line ends) into `text`: replace the existing
 /// marked region, or append after a blank line when there is none. Everything outside

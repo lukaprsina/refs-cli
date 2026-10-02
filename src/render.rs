@@ -8,12 +8,10 @@
 use std::fmt::Write;
 
 use crate::active::{ActiveSet, Section};
+use crate::agent_file::{BEGIN, END};
 use crate::config::RepoRef;
 use crate::diagnostic::NotLocked;
 use crate::lock::{Lock, LockedRepo};
-
-const BEGIN: &str = "<!-- BEGIN:refs -->";
-const END: &str = "<!-- END:refs -->";
 
 /// The block, markers included, without a trailing newline (what `agent_file::splice`
 /// takes). `references_dir` is `Settings::references_dir`.
@@ -98,7 +96,7 @@ fn section_text<'a>(section: &Section, locked: impl Fn(RepoRef) -> &'a LockedRep
 fn header_line(repo: RepoRef, locked: &LockedRepo) -> String {
     let (git_ref, sha7) = (locked.pin.display_ref(), locked.pin.short_id());
     // a SHA ref would only repeat the commit id
-    let at = if is_hex_prefix_of(git_ref, sha7) {
+    let at = if is_full_sha(git_ref, sha7) {
         sha7.to_string()
     } else {
         format!("{git_ref} {sha7}")
@@ -122,9 +120,10 @@ fn header_line(repo: RepoRef, locked: &LockedRepo) -> String {
     line
 }
 
-/// Whether `git_ref` is a (possibly full) commit id that starts with `sha7`.
-fn is_hex_prefix_of(git_ref: &str, sha7: &str) -> bool {
-    git_ref.len() >= sha7.len()
+/// Whether `git_ref` is a full commit id (a ref that is 40 hex characters) of the commit
+/// that starts with `sha7`.
+fn is_full_sha(git_ref: &str, sha7: &str) -> bool {
+    git_ref.len() == 40
         && git_ref
             .bytes()
             .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
