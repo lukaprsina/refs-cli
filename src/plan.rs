@@ -15,8 +15,8 @@ pub enum Drift {
     Changed { id: String, field: Field },
 }
 
-/// What the executor does for one active Repo. It verifies every Repo afterwards, so
-/// verification is not a variant (ADR 0004).
+/// What the executor does for one active Repo. It verifies `paths` and `start` of
+/// every Repo afterwards, so verification is not a variant (ADR 0004).
 #[derive(Debug)]
 pub enum Step<'a> {
     /// Ask the Source for a new pin: a new, re-enabled or changed Repo, or an upgrade.
@@ -42,6 +42,7 @@ pub enum Upgrade {
     #[default]
     None,
     All,
+    /// Only these Repos. An empty list upgrades nothing; the CLI maps a bare `--upgrade` to `All`.
     Ids(Vec<String>),
 }
 
@@ -85,8 +86,8 @@ fn paths(repo: RepoRef) -> Vec<String> {
     repo.repo.paths.iter().map(|p| p.as_ref().clone()).collect()
 }
 
-/// Stage 1 (ADR 0004): one step per active Repo, in active-set order. The CLI never combines
-/// `upgrade` with `offline`, so their interplay is not decided here.
+/// Stage 1 (ADR 0004): one step per active Repo, in active-set order. `offline` refuses
+/// anything that would resolve: a missing or stale Lock, or any `upgrade`.
 pub fn plan_lock<'a>(
     active: &ActiveSet<'a>,
     lock: Option<&Lock>,
@@ -101,6 +102,9 @@ pub fn plan_lock<'a>(
         if !unknown.is_empty() {
             return Err(LockRefusal::UnknownUpgradeId { ids: unknown });
         }
+    }
+    if flags.offline && !matches!(flags.upgrade, Upgrade::None) {
+        return Err(LockRefusal::OfflineUpgrade);
     }
     let drift = lock_drift(active, lock);
     if flags.offline && !drift.is_empty() {

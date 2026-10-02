@@ -73,11 +73,15 @@ pub struct Repo {
     pub enabled: Option<bool>,
 }
 
+/// A full commit id: 40 lowercase hex characters.
+pub(crate) fn is_full_sha(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 impl Repo {
     /// Whether the ref can move upstream: anything but a full 40-hex commit id.
     pub fn is_floating(&self) -> bool {
-        let r = self.effective_ref();
-        !(r.len() == 40 && r.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+        !is_full_sha(self.effective_ref())
     }
 
     /// The ref to resolve: `HEAD` when none is configured.

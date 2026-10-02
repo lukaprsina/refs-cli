@@ -17,7 +17,7 @@ pub struct Lock {
     pub repo: Vec<LockedRepo>,
 }
 
-/// A field of a lock entry that can differ from the config.
+/// A field of a locked Repo that can differ from the config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     Url,

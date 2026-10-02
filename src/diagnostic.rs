@@ -220,6 +220,9 @@ pub enum LockRefusal {
         help("run `refs lock` while online, then sync again")
     )]
     OfflineStale { drift: Vec<crate::plan::Drift> },
+    #[error("--upgrade resolves refs, which --offline forbids")]
+    #[diagnostic(code(refs::lock::offline_upgrade))]
+    OfflineUpgrade,
     #[error("--upgrade names repos that are not active: {}", .ids.join(", "))]
     #[diagnostic(code(refs::lock::unknown_id))]
     UnknownUpgradeId { ids: Vec<String> },

@@ -9,7 +9,7 @@ use std::fmt::Write;
 
 use crate::active::{ActiveSet, Section};
 use crate::agent_file::{BEGIN, END};
-use crate::config::RepoRef;
+use crate::config::{RepoRef, is_full_sha as is_commit_id};
 use crate::diagnostic::NotLocked;
 use crate::lock::{Lock, LockedRepo};
 
@@ -123,9 +123,5 @@ fn header_line(repo: RepoRef, locked: &LockedRepo) -> String {
 /// Whether `git_ref` is a full commit id (a ref that is 40 hex characters) of the commit
 /// that starts with `sha7`.
 fn is_full_sha(git_ref: &str, sha7: &str) -> bool {
-    git_ref.len() == 40
-        && git_ref
-            .bytes()
-            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-        && git_ref.starts_with(sha7)
+    is_commit_id(git_ref) && git_ref.starts_with(sha7)
 }

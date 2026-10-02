@@ -2,7 +2,7 @@
 
 Which Repos re-resolve is a pure decision, but the pins it produces exist only after `resolve` has run, so one `plan` over (config, Lock, `Observed`) cannot also decide the checkouts. Planning is split into two pure functions with the executor between them.
 
-1. `plan_lock(config, lock, flags)` decides which Repos to resolve, reuse or verify (pin reuse keyed on url/ref/source, `--upgrade`, newly enabled). The executor runs it and produces the new Lock. With `--offline`, a missing or stale Lock yields a refusal here.
+1. `plan_lock(active, lock, flags)` decides which Repos to resolve or reuse (pin reuse keyed on url/ref/source, `--upgrade`, newly active). Verification is not a decision: the executor verifies every active Repo. `lock_drift(active, lock)` is the stale check on its own, which `sync --check` needs. The executor runs it and produces the new Lock. With `--offline`, a missing or stale Lock, or any `--upgrade`, yields a refusal here.
 2. `plan_checkouts(active, lock, Observed per Repo, ProjectObserved)` returns a `Plan`: the checkout, Agent file and exclude actions.
 
 `refs lock` is stage 1 plus a write. `sync` runs stage 1 if the Lock is stale, then stage 2. `sync --check` runs stage 2 only, against the existing Lock; a missing or stale Lock is reported as out of date without resolving.

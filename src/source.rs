@@ -5,7 +5,7 @@ pub mod fake;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Repo, RepoRef};
+use crate::config::{Repo, RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
 use crate::lock::Field;
 
@@ -15,7 +15,7 @@ use crate::lock::Field;
 #[serde(transparent)]
 pub struct Pin(PinKind);
 
-/// Tagged by `source`, which is how it appears in a lock entry.
+/// Tagged by `source`, which is how it appears in the Lock.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "lowercase")]
 enum PinKind {
@@ -42,14 +42,12 @@ impl Pin {
     /// Whether the pin is well formed (a full 40-hex commit id), for input read from disk.
     pub fn is_well_formed(&self) -> bool {
         match &self.0 {
-            PinKind::Git { sha, .. } => {
-                sha.len() == 40 && sha.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-            }
+            PinKind::Git { sha, .. } => is_full_sha(sha),
         }
     }
 
     /// The fields of `repo` that no longer match what this pin resolved (`Paths` is the
-    /// lock entry's, not the pin's).
+    /// locked Repo's, not the pin's).
     pub fn drift_from(&self, repo: &Repo) -> Vec<Field> {
         match &self.0 {
             PinKind::Git { url, git_ref, .. } => [

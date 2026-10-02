@@ -254,3 +254,18 @@ fn upgrading_a_repo_that_is_not_active_is_a_refusal() {
     assert_eq!(err.code().unwrap().to_string(), "refs::lock::unknown_id");
     assert!(matches!(&err, LockRefusal::UnknownUpgradeId { ids } if ids == &["a", "nope"]));
 }
+
+#[test]
+fn offline_never_upgrades_even_with_a_current_lock() {
+    let config = parse(A).unwrap();
+    let set = active(&config);
+    let flags = LockFlags {
+        upgrade: Upgrade::All,
+        offline: true,
+    };
+    let err = plan_lock(&set, Some(&lock(vec![a_entry()])), &flags).unwrap_err();
+    assert_eq!(
+        err.code().unwrap().to_string(),
+        "refs::lock::offline_upgrade"
+    );
+}
