@@ -1,5 +1,7 @@
 use std::fs;
 
+mod common;
+
 use refs_cli::project::find_root;
 use tempfile::TempDir;
 
@@ -101,6 +103,7 @@ mod outputs {
 mod observed {
     use std::fs;
 
+    use crate::common::git;
     use refs_cli::config::parse;
     use refs_cli::plan::Exclude;
     use refs_cli::project::{ensure_exclude, observe};
@@ -184,17 +187,6 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
         let observed = observe(dir.path(), &parse(CONFIG).unwrap(), vec![]).unwrap();
 
         assert_eq!(observed.exclude, Exclude::Missing);
-    }
-
-    fn git(dir: &std::path::Path, args: &[&str]) {
-        let status = std::process::Command::new("git")
-            .current_dir(dir)
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-            .args(["-c", "commit.gpgsign=false"])
-            .args(args)
-            .status()
-            .unwrap();
-        assert!(status.success(), "git {args:?}");
     }
 
     /// How many lines of `<git_dir>/info/exclude` are exactly `rule`.

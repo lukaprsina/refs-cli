@@ -1,7 +1,9 @@
 //! `GitSource::resolve` against real git, on local repositories.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod common;
+
+use common::git;
+use std::path::PathBuf;
 
 use miette::Diagnostic;
 use refs_cli::config::{Repo, RepoRef, parse};
@@ -9,22 +11,6 @@ use refs_cli::source::Pin;
 use refs_cli::source::Source;
 use refs_cli::source::git::GitSource;
 use tempfile::TempDir;
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-        .args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
 
 /// A remote with two commits on `main`:
 /// - `first`: tagged `light` (lightweight), `v1` (annotated) and `dup` (tag);

@@ -2,6 +2,9 @@
 //! binary for what only a process shows (clap's exit code, what reaches stderr). The binary
 //! cannot take the fake, so its tests stop before any Source call.
 
+mod common;
+
+use common::git;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
@@ -271,17 +274,6 @@ fn the_binary_locks_with_git_and_reports_an_unknown_ref() {
     let out = binary(&project, &["--no-color", "lock"]);
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("refs::git::ref_not_found"), "{stderr}");
-}
-
-fn git(dir: &std::path::Path, args: &[&str]) {
-    let status = Command::new("git")
-        .current_dir(dir)
-        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-        .args(["-c", "commit.gpgsign=false"])
-        .args(args)
-        .status()
-        .unwrap();
-    assert!(status.success(), "git {args:?}");
 }
 
 #[test]

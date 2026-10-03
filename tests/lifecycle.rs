@@ -1,22 +1,14 @@
 //! The git lifecycle of spec §12, through the `refs` binary against local `file://` remotes:
 //! one Cache, real worktrees, real exit codes.
 
+mod common;
+
+use common::git;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use tempfile::TempDir;
-
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .current_dir(dir)
-        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-        .args(["-c", "commit.gpgsign=false"])
-        .args(args)
-        .status()
-        .unwrap();
-    assert!(status.success(), "git {args:?}");
-}
 
 /// A remote with `docs/a.md` and `src/b.rs` on `main`.
 struct Remote {

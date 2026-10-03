@@ -1,9 +1,12 @@
 //! `GitSource::verify` and `materialise` against real git: a local `file://` remote that
 //! allows filters (spec §7.1), a Cache in a temporary directory, Checkouts beside it.
 
+mod common;
+
+use common::git;
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 use miette::Diagnostic;
@@ -13,22 +16,6 @@ use refs_cli::source::git::GitSource;
 use refs_cli::source::git::remote::cache_dir_name;
 use refs_cli::source::{MaterialiseOpts, Observed, Pin, Source, VerifyOpts};
 use tempfile::TempDir;
-
-fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(dir)
-        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
-        .args(["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
 
 fn code(e: impl Diagnostic) -> String {
     e.code().expect("a code").to_string()
