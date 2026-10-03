@@ -2,11 +2,12 @@ use std::collections::HashMap;
 
 use miette::Diagnostic;
 use refs_cli::active::{ActiveSet, active};
-use refs_cli::config::parse;
+use refs_cli::config::{Config, parse};
 use refs_cli::diagnostic::Refusal;
 use refs_cli::lock::{Lock, LockedRepo};
 use refs_cli::plan::{
-    Action, AgentFileText, Checkouts, Exclude, Plan, ProjectObserved, plan_checkouts,
+    AgentFileText, Checkouts, Exclude, ExcludeAction, Plan, ProjectObserved, RepoAction,
+    plan_checkouts,
 };
 use refs_cli::render::render;
 use refs_cli::source::fake::FakeSource;
@@ -72,16 +73,38 @@ fn project(set: &ActiveSet) -> ProjectObserved {
     }
 }
 
-fn plan(source: &FakeSource, project: &ProjectObserved, force: bool) -> Plan {
+fn plan(source: &FakeSource, project: &ProjectObserved, force: bool) -> Plan<'static> {
     plan_with(source, &[], project, force)
 }
 
 /// As `plan`, with `extra` names found in the references directory.
-fn plan_with(source: &FakeSource, extra: &[&str], project: &ProjectObserved, force: bool) -> Plan {
-    let config = parse(CONFIG).unwrap();
-    let set = active(&config);
+fn plan_with(
+    source: &FakeSource,
+    extra: &[&str],
+    project: &ProjectObserved,
+    force: bool,
+) -> Plan<'static> {
+    // a Plan borrows the config its Repos come from; leaking it keeps the helper simple
+    let config: &'static Config = Box::leak(Box::new(parse(CONFIG).unwrap()));
+    let set = active(config);
     let observed = observe(source, &set, extra);
     plan_checkouts(&set, &lock(), &observed, project, force).unwrap()
+}
+
+/// Only `exclude` is set, and to `exclude`.
+fn empty_but_for(plan: &Plan, exclude: ExcludeAction) -> bool {
+    plan.repos.is_empty()
+        && plan.writes.is_empty()
+        && plan.refusals.is_empty()
+        && plan.exclude == Some(exclude)
+}
+
+/// Nothing to do, refuse or say.
+fn empty(plan: &Plan) -> bool {
+    plan.repos.is_empty()
+        && plan.writes.is_empty()
+        && plan.refusals.is_empty()
+        && plan.exclude.is_none()
 }
 
 fn in_sync_source() -> FakeSource {
@@ -95,7 +118,7 @@ fn an_in_sync_project_has_an_empty_plan() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
     let plan = plan(&in_sync_source(), &project(&set), false);
-    assert!(plan.actions.is_empty(), "{:?}", plan.actions);
+    assert!(empty(&plan), "{plan:?}");
     assert!(!plan.is_drift());
 }
 
@@ -105,14 +128,15 @@ fn an_absent_checkout_is_materialised_at_the_locked_pin() {
     let set = active(&config);
     let plan = plan(&FakeSource::new(), &project(&set), false);
     assert!(matches!(
-        plan.actions.as_slice(),
-        [Action::Materialise { id, pin: p }] if id == "a" && *p == pin(SHA)
+        plan.repos.as_slice(),
+        [RepoAction::Materialise { repo, pin: p }] if repo.id == "a" && *p == pin(SHA)
     ));
     assert!(plan.is_drift());
 }
 
 fn materialised(plan: &Plan) -> bool {
-    matches!(plan.actions.as_slice(), [Action::Materialise { id, .. }] if id == "a")
+    matches!(plan.repos.as_slice(), [RepoAction::Materialise { repo, .. }] if repo.id == "a")
+        && plan.refusals.is_empty()
 }
 
 #[test]
@@ -139,7 +163,7 @@ fn paths_are_compared_as_sets() {
     let set = active(&config);
     let source = FakeSource::new();
     source.seed("a", at(SHA, &["src", "docs"], &[]));
-    assert!(plan(&source, &project(&set), false).actions.is_empty());
+    assert!(empty(&plan(&source, &project(&set), false)));
 }
 
 #[test]
@@ -155,7 +179,7 @@ fn no_paths_in_the_config_equals_no_sparse_patterns_on_disk() {
     project.agent_files[0].text = Some(text);
     let observed = observe(&source, &set, &[]);
     let plan = plan_checkouts(&set, &locked, &observed, &project, false).unwrap();
-    assert!(plan.actions.is_empty(), "{:?}", plan.actions);
+    assert!(empty(&plan), "{plan:?}");
 }
 
 #[test]
@@ -171,7 +195,7 @@ fn a_pin_differing_only_in_branch_is_in_sync() {
             dirty_files: vec![],
         },
     );
-    assert!(plan(&source, &project(&set), false).actions.is_empty());
+    assert!(empty(&plan(&source, &project(&set), false)));
 }
 
 fn code(d: &dyn Diagnostic) -> String {
@@ -179,7 +203,7 @@ fn code(d: &dyn Diagnostic) -> String {
 }
 
 #[test]
-fn a_dangling_checkout_is_recreated_with_a_note_and_force_changes_nothing() {
+fn a_dangling_checkout_is_replaced_with_a_note_and_force_changes_nothing() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
     for force in [false, true] {
@@ -188,15 +212,11 @@ fn a_dangling_checkout_is_recreated_with_a_note_and_force_changes_nothing() {
         let plan = plan(&source, &project(&set), force);
         assert!(
             matches!(
-                plan.actions.as_slice(),
-                [
-                    Action::Remove { id: r },
-                    Action::Materialise { id: m, .. },
-                    Action::Note(note),
-                ] if r == "a" && m == "a" && code(note) == "refs::sync::recreated"
-            ),
-            "{:?}",
-            plan.actions
+                plan.repos.as_slice(),
+                [RepoAction::Replace { repo, note: Some(note), .. }]
+                    if repo.id == "a" && code(note) == "refs::sync::recreated"
+            ) && plan.refusals.is_empty(),
+            "{plan:?}"
         );
         assert!(plan.is_drift());
     }
@@ -212,12 +232,11 @@ fn a_foreign_directory_is_refused_even_with_force() {
         let plan = plan(&source, &project(&set), force);
         assert!(
             matches!(
-                plan.actions.as_slice(),
-                [Action::Refuse(r @ Refusal::ForeignDir { id })]
+                plan.refusals.as_slice(),
+                [r @ Refusal::ForeignDir { id }]
                     if id == "a" && code(r) == "refs::sync::foreign_dir"
-            ),
-            "{:?}",
-            plan.actions
+            ) && plan.repos.is_empty(),
+            "{plan:?}"
         );
     }
 }
@@ -231,20 +250,18 @@ fn a_dirty_checkout_that_must_move_is_refused_naming_the_files() {
     let plan = plan(&source, &project(&set), false);
     assert!(
         matches!(
-            plan.actions.as_slice(),
-            [Action::Refuse(r @ Refusal::DirtyCheckout { id, files })]
+            plan.refusals.as_slice(),
+            [r @ Refusal::DirtyCheckout { id, files }]
                 if id == "a"
                     && files == &["docs/x.md", "junk"]
                     && code(r) == "refs::sync::dirty_checkout"
-        ),
-        "{:?}",
-        plan.actions
+        ) && plan.repos.is_empty(),
+        "{plan:?}"
     );
-    assert!(plan.refusals().count() == 1);
 }
 
 #[test]
-fn force_replaces_a_dirty_refusal_by_remove_and_materialise() {
+fn force_replaces_a_dirty_refusal_by_a_replace_without_a_note() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
     let source = FakeSource::new();
@@ -252,11 +269,10 @@ fn force_replaces_a_dirty_refusal_by_remove_and_materialise() {
     let plan = plan(&source, &project(&set), true);
     assert!(
         matches!(
-            plan.actions.as_slice(),
-            [Action::Remove { id: r }, Action::Materialise { id: m, .. }] if r == "a" && m == "a"
-        ),
-        "{:?}",
-        plan.actions
+            plan.repos.as_slice(),
+            [RepoAction::Replace { repo, note: None, .. }] if repo.id == "a"
+        ) && plan.refusals.is_empty(),
+        "{plan:?}"
     );
 }
 
@@ -266,7 +282,7 @@ fn a_dirty_checkout_already_in_sync_is_left_alone() {
     let set = active(&config);
     let source = FakeSource::new();
     source.seed("a", at(SHA, &["docs", "src"], &["junk"]));
-    assert!(plan(&source, &project(&set), false).actions.is_empty());
+    assert!(empty(&plan(&source, &project(&set), false)));
 }
 
 #[test]
@@ -278,11 +294,11 @@ fn a_non_active_checkout_is_removed_before_anything_is_materialised() {
     let plan = plan_with(&source, &["old"], &project(&set), false);
     assert!(
         matches!(
-            plan.actions.as_slice(),
-            [Action::Remove { id }, Action::Materialise { id: m, .. }] if id == "old" && m == "a"
+            plan.repos.as_slice(),
+            [RepoAction::Remove { id }, RepoAction::Materialise { repo, .. }]
+                if id == "old" && repo.id == "a"
         ),
-        "{:?}",
-        plan.actions
+        "{plan:?}"
     );
 }
 
@@ -297,15 +313,14 @@ fn a_dirty_non_active_checkout_is_refused_unless_forced() {
     let first = plan_with(&source, &["old"], &project, false);
     assert!(
         matches!(
-            first.actions.as_slice(),
-            [Action::Refuse(Refusal::DirtyCheckout { id, files })]
+            first.refusals.as_slice(),
+            [Refusal::DirtyCheckout { id, files }]
                 if id == "old" && files == &["node_modules"]
-        ),
-        "{:?}",
-        first.actions
+        ) && first.repos.is_empty(),
+        "{first:?}"
     );
     let forced = plan_with(&source, &["old"], &project, true);
-    assert!(matches!(forced.actions.as_slice(), [Action::Remove { id }] if id == "old"));
+    assert!(matches!(forced.repos.as_slice(), [RepoAction::Remove { id }] if id == "old"));
 }
 
 #[test]
@@ -315,11 +330,12 @@ fn a_foreign_or_absent_non_active_name_is_ignored() {
     let source = in_sync_source();
     source.seed("notes", Observed::Foreign);
     let project = project(&set);
-    assert!(
-        plan_with(&source, &["notes", "gone"], &project, false)
-            .actions
-            .is_empty()
-    );
+    assert!(empty(&plan_with(
+        &source,
+        &["notes", "gone"],
+        &project,
+        false
+    )));
 }
 
 fn with_agent_files(set: &ActiveSet, files: &[(&str, Option<&str>)]) -> ProjectObserved {
@@ -342,17 +358,13 @@ fn a_stale_block_is_rewritten_keeping_the_text_around_it() {
     let project = with_agent_files(&set, &[("AGENTS.md", Some(stale)), ("CLAUDE.md", None)]);
     let plan = plan(&in_sync_source(), &project, false);
     let block = render(&set, &lock(), ".references").unwrap();
-    let [
-        Action::WriteAgentFile { path: p1, text: t1 },
-        Action::WriteAgentFile { path: p2, text: t2 },
-    ] = plan.actions.as_slice()
-    else {
-        panic!("{:?}", plan.actions);
+    let [first, second] = plan.writes.as_slice() else {
+        panic!("{plan:?}");
     };
-    assert_eq!(p1, "AGENTS.md");
-    assert_eq!(*t1, format!("# Notes\n\n{block}\n\nafter\n"));
-    assert_eq!(p2, "CLAUDE.md");
-    assert_eq!(*t2, format!("{block}\n"));
+    assert_eq!(first.path, "AGENTS.md");
+    assert_eq!(first.text, format!("# Notes\n\n{block}\n\nafter\n"));
+    assert_eq!(second.path, "CLAUDE.md");
+    assert_eq!(second.text, format!("{block}\n"));
 }
 
 #[test]
@@ -369,12 +381,11 @@ fn malformed_markers_are_refused_and_suppress_every_agent_file_write() {
     let plan = plan(&in_sync_source(), &project, false);
     assert!(
         matches!(
-            plan.actions.as_slice(),
-            [Action::Refuse(r @ Refusal::Block { path, .. })]
+            plan.refusals.as_slice(),
+            [r @ Refusal::Block { path, .. }]
                 if path == "AGENTS.md" && code(r) == "refs::sync::bad_markers"
-        ),
-        "{:?}",
-        plan.actions
+        ) && plan.writes.is_empty(),
+        "{plan:?}"
     );
 }
 
@@ -388,36 +399,25 @@ fn a_refusal_suppresses_the_block_write_but_not_the_exclude_rule() {
     project.exclude = Exclude::Missing;
     let plan = plan(&source, &project, false);
     assert!(
-        matches!(
-            plan.actions.as_slice(),
-            [
-                Action::Refuse(Refusal::ForeignDir { .. }),
-                Action::EnsureExclude
-            ]
-        ),
-        "{:?}",
-        plan.actions
+        matches!(plan.refusals.as_slice(), [Refusal::ForeignDir { .. }])
+            && plan.writes.is_empty()
+            && plan.exclude == Some(ExcludeAction::Ensure),
+        "{plan:?}"
     );
 }
 
 #[test]
-fn a_missing_exclude_rule_is_ensured_last() {
+fn a_missing_exclude_rule_is_ensured_alongside_the_rest() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
     let mut project = with_agent_files(&set, &[("AGENTS.md", None)]);
     project.exclude = Exclude::Missing;
     let plan = plan(&FakeSource::new(), &project, false);
     assert!(
-        matches!(
-            plan.actions.as_slice(),
-            [
-                Action::Materialise { .. },
-                Action::WriteAgentFile { .. },
-                Action::EnsureExclude,
-            ]
-        ),
-        "{:?}",
-        plan.actions
+        matches!(plan.repos.as_slice(), [RepoAction::Materialise { .. }])
+            && plan.writes.len() == 1
+            && plan.exclude == Some(ExcludeAction::Ensure),
+        "{plan:?}"
     );
 }
 
@@ -428,14 +428,7 @@ fn no_git_repo_is_a_note_and_not_drift() {
     let mut project = project(&set);
     project.exclude = Exclude::NoGit;
     let plan = plan(&in_sync_source(), &project, false);
-    assert!(
-        matches!(
-            plan.actions.as_slice(),
-            [Action::Note(n)] if code(n) == "refs::sync::no_git_repo"
-        ),
-        "{:?}",
-        plan.actions
-    );
+    assert!(empty_but_for(&plan, ExcludeAction::NoGit), "{plan:?}");
     assert!(!plan.is_drift());
 }
 
@@ -448,25 +441,24 @@ fn applying_a_plan_to_the_fake_and_replanning_gives_an_empty_plan() {
     let mut project = with_agent_files(&set, &[("AGENTS.md", None)]);
     let first = plan_with(&source, &["old"], &project, false);
     assert!(first.is_drift());
-    for action in &first.actions {
+    for action in &first.repos {
         match action {
-            Action::Remove { id } => source.remove(id).unwrap(),
-            Action::Materialise { id, pin } => {
-                let repo = set.get(id).unwrap();
-                source.materialise(repo, pin, Default::default()).unwrap()
+            RepoAction::Remove { id } => source.remove(id).unwrap(),
+            RepoAction::Materialise { repo, pin } => {
+                source.materialise(*repo, pin, Default::default()).unwrap()
             }
-            Action::WriteAgentFile { path, text } => {
-                project
-                    .agent_files
-                    .iter_mut()
-                    .find(|f| f.path == *path)
-                    .unwrap()
-                    .text = Some(text.clone())
-            }
-            other => panic!("unexpected {other:?}"),
+            RepoAction::Replace { .. } => panic!("unexpected {action:?}"),
         }
     }
-    assert!(plan(&source, &project, false).actions.is_empty());
+    for write in &first.writes {
+        project
+            .agent_files
+            .iter_mut()
+            .find(|f| f.path == write.path)
+            .unwrap()
+            .text = Some(write.text.clone());
+    }
+    assert!(empty(&plan(&source, &project, false)));
 }
 
 #[test]
@@ -503,10 +495,7 @@ fn force_leaves_the_clean_rows_unchanged() {
         let plain = plan(&source, &project, false);
         let forced = plan_with(&source, &["old"], &project, true);
         assert_eq!(plain.is_drift(), drift);
-        assert_eq!(
-            format!("{:?}", plain.actions),
-            format!("{:?}", forced.actions)
-        );
+        assert_eq!(format!("{plain:?}"), format!("{forced:?}"));
     }
 }
 
@@ -518,7 +507,7 @@ fn a_refusal_is_drift() {
     source.seed("a", Observed::Foreign);
     let plan = plan(&source, &project(&set), false);
     assert!(plan.is_drift());
-    assert_eq!(plan.refusals().count(), 1);
+    assert_eq!(plan.refusals.len(), 1);
 }
 
 #[test]
@@ -528,11 +517,7 @@ fn a_dangling_non_active_name_is_left_for_doctor() {
     let source = in_sync_source();
     source.seed("old", Observed::Dangling);
     let project = project(&set);
-    assert!(
-        plan_with(&source, &["old"], &project, false)
-            .actions
-            .is_empty()
-    );
+    assert!(empty(&plan_with(&source, &["old"], &project, false)));
 }
 
 #[test]
@@ -549,4 +534,39 @@ fn a_name_that_is_not_active_does_not_satisfy_an_active_repo() {
     let set = active(&config);
     let seen = [("other".to_string(), Observed::Absent)];
     assert!(Checkouts::new(&set, seen).is_err());
+}
+
+#[test]
+fn only_actions_on_a_checkout_the_block_lists_gate_the_agent_file_writes() {
+    let config = parse(CONFIG).unwrap();
+    let set = active(&config);
+    let source = FakeSource::new();
+    source.seed("old", at(OTHER_SHA, &[], &[]));
+    let plan = plan_with(&source, &["old"], &project(&set), false);
+    let gates: Vec<(&str, bool)> = plan
+        .repos
+        .iter()
+        .map(|a| match a {
+            RepoAction::Remove { id } => (id.as_str(), a.gates_writes()),
+            RepoAction::Materialise { repo, .. } | RepoAction::Replace { repo, .. } => {
+                (repo.id, a.gates_writes())
+            }
+        })
+        .collect();
+    // `old` is only removed, `a` is materialised and listed in the block
+    assert_eq!(gates, [("old", false), ("a", true)]);
+}
+
+#[test]
+fn a_replace_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
+    let config = parse(CONFIG).unwrap();
+    let set = active(&config);
+    let source = FakeSource::new();
+    source.seed("a", Observed::Dangling);
+    let plan = plan(&source, &project(&set), false);
+    assert!(matches!(
+        plan.repos.as_slice(),
+        [RepoAction::Replace { .. }]
+    ));
+    assert!(plan.repos[0].gates_writes());
 }

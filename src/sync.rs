@@ -1,17 +1,18 @@
 //! The `sync` executor (ADR 0004): reads the project, runs the two stages, applies the plan.
 //! Decisions live in `plan`; this module only does what the plans say and collects failures.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::active::{ActiveSet, active};
 use crate::agent_file;
 use crate::config::{self, Config};
-use crate::diagnostic::{NotLocked, NotObserved};
+use crate::diagnostic::{NotLocked, NotObserved, Note};
 use crate::list::Status;
 use crate::lock::{Lock, LockedRepo};
 use crate::plan::{
-    Action, Checkouts, Drift, LockFlags, Plan, Step, lock_drift, plan_checkouts, plan_lock,
+    Checkouts, Drift, ExcludeAction, LockFlags, Plan, RepoAction, Step, lock_drift, plan_checkouts,
+    plan_lock,
 };
 use crate::project;
 use crate::source::{MaterialiseOpts, Observed, Source, VerifyOpts};
@@ -128,7 +129,7 @@ pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
         check(plan, drift)
     } else {
         let dir = config.settings.references_dir();
-        apply(source, root, &active, dir, plan, flags, drift)
+        apply(source, root, dir, plan, flags, drift)
     }
 }
 
@@ -268,14 +269,14 @@ enum StageTwoError {
 }
 
 /// Read the project and what is on disk, then plan the checkouts.
-fn plan_stage_two(
+fn plan_stage_two<'a>(
     source: &dyn Source,
     root: &Path,
     config: &Config,
-    active: &ActiveSet,
+    active: &ActiveSet<'a>,
     lock: &Lock,
     force: bool,
-) -> Result<Plan, StageTwoError> {
+) -> Result<Plan<'a>, StageTwoError> {
     let mut errors: Vec<miette::Report> = Vec::new();
     let listing = source.list().unwrap_or_else(|e| {
         errors.push(e.into());
@@ -310,31 +311,22 @@ fn plan_stage_two(
 
 /// `--check`: report what applying the plan would do.
 fn check(plan: Plan, drift: Vec<Drift>) -> Report {
-    let refused = plan.refusals().next().is_some();
+    let refused = !plan.refusals.is_empty();
     let out_of_date = plan.is_drift() || !drift.is_empty();
     let outcome = match () {
         _ if refused => Outcome::Refused,
         _ if out_of_date => Outcome::OutOfDate,
         _ => Outcome::InSync,
     };
-    let diagnostics = plan
-        .actions
-        .into_iter()
-        .filter_map(|a| match a {
-            Action::Refuse(r) => Some(miette::Report::new(r)),
-            _ => None,
-        })
-        .collect();
+    let diagnostics = plan.refusals.into_iter().map(miette::Report::new).collect();
     Report::new(outcome, drift, diagnostics)
 }
 
-/// Apply the plan in order. A failure does not stop the other Repos, but nothing that
-/// depends on a failed Repo is done: not its materialise after a failed remove, and no
-/// Agent file write at all.
+/// Apply the plan (ADR 0006). A failure does not stop the other Repos. The Agent files are
+/// written only if no Repo the block lists failed, each file on its own.
 fn apply(
     source: &dyn Source,
     root: &Path,
-    active: &ActiveSet,
     references_dir: &str,
     plan: Plan,
     flags: &SyncFlags,
@@ -344,58 +336,68 @@ fn apply(
         offline: flags.offline,
     };
     let mut diagnostics: Vec<miette::Report> = Vec::new();
-    let mut failed_ids: HashSet<String> = HashSet::new();
     let mut failed = false;
-    let mut refused = false;
-    for action in plan.actions {
-        match action {
-            Action::Remove { id } => {
-                if let Err(e) = source.remove(&id) {
-                    diagnostics.push(e.into());
-                    failed_ids.insert(id);
-                }
+    let mut listed_failed = false;
+    for action in plan.repos {
+        let gates = action.gates_writes();
+        let note = match run(source, action, opts) {
+            Ok(note) => note,
+            Err(e) => {
+                diagnostics.push(e);
+                failed = true;
+                listed_failed |= gates;
+                continue;
             }
-            Action::Materialise { id, pin } => {
-                let repo = active.get(&id).expect("only active Repos are materialised");
-                if failed_ids.contains(&id) {
-                    continue;
-                }
-                if let Err(e) = source.materialise(repo, &pin, opts) {
-                    diagnostics.push(e.into());
-                    failed_ids.insert(id);
-                }
-            }
-            Action::Refuse(r) => {
-                refused = true;
-                diagnostics.push(r.into());
-            }
-            Action::Note(n) => {
-                let skipped = matches!(&n, crate::diagnostic::Note::Recreated { id } if failed_ids.contains(id));
-                if !skipped {
-                    diagnostics.push(n.into());
-                }
-            }
-            Action::WriteAgentFile { path, text } => {
-                if !failed_ids.is_empty() || failed {
-                    continue;
-                }
-                if let Err(e) = agent_file::write(&root.join(&path), &text) {
-                    diagnostics.push(e.into());
-                    failed = true;
-                }
-            }
-            Action::EnsureExclude => {
-                if let Err(e) = project::ensure_exclude(root, references_dir) {
-                    diagnostics.push(e.into());
-                    failed = true;
-                }
+        };
+        diagnostics.extend(note.map(miette::Report::new));
+    }
+    let refused = !plan.refusals.is_empty();
+    diagnostics.extend(plan.refusals.into_iter().map(miette::Report::new));
+    if !listed_failed {
+        for write in plan.writes {
+            if let Err(e) = agent_file::write(&root.join(&write.path), &write.text) {
+                diagnostics.push(e.into());
+                failed = true;
             }
         }
     }
+    match plan.exclude {
+        Some(ExcludeAction::Ensure) => {
+            if let Err(e) = project::ensure_exclude(root, references_dir) {
+                diagnostics.push(e.into());
+                failed = true;
+            }
+        }
+        Some(ExcludeAction::NoGit) => diagnostics.push(Note::NoGitRepo.into()),
+        None => {}
+    }
     let outcome = match () {
-        _ if failed || !failed_ids.is_empty() => Outcome::Failed,
+        _ if failed => Outcome::Failed,
         _ if refused => Outcome::Refused,
         _ => Outcome::InSync,
     };
     Report::new(outcome, drift, diagnostics)
+}
+
+/// Do one `RepoAction`; on success the note it carries, if any.
+fn run(
+    source: &dyn Source,
+    action: RepoAction,
+    opts: MaterialiseOpts,
+) -> Result<Option<Note>, miette::Report> {
+    match action {
+        RepoAction::Materialise { repo, pin } => {
+            source.materialise(repo, &pin, opts)?;
+            Ok(None)
+        }
+        RepoAction::Replace { repo, pin, note } => {
+            source.remove(repo.id)?;
+            source.materialise(repo, &pin, opts)?;
+            Ok(note)
+        }
+        RepoAction::Remove { id } => {
+            source.remove(&id)?;
+            Ok(None)
+        }
+    }
 }

@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::active::ActiveSet;
 use crate::agent_file::splice;
+use crate::config::RepoRef;
 use crate::diagnostic::{NotLocked, NotObserved, Note, Refusal};
 use crate::lock::Lock;
 use crate::render::render;
@@ -70,42 +71,66 @@ pub struct ProjectObserved {
     pub exclude: Exclude,
 }
 
+/// What to do for one Repo's Checkout. One unit per Repo: a Repo's remove and materialise
+/// are a single `Replace`, so nothing in the Plan depends on the order of two actions.
 #[derive(Debug)]
-pub enum Action {
-    Remove {
-        id: String,
-    },
+pub enum RepoAction<'a> {
     /// Create or move the Checkout to `pin`; `Source` tells which from what is on disk.
-    Materialise {
-        id: String,
+    Materialise { repo: RepoRef<'a>, pin: Pin },
+    /// Remove the Checkout, then materialise it: a Dangling one, or a dirty one under
+    /// `--force`. `note` is reported once the whole action has succeeded.
+    Replace {
+        repo: RepoRef<'a>,
         pin: Pin,
+        note: Option<Note>,
     },
-    /// Replace the file with `text` (the whole file, block spliced in).
-    WriteAgentFile {
-        path: String,
-        text: String,
-    },
-    EnsureExclude,
-    Refuse(Refusal),
-    Note(Note),
+    /// Remove the Checkout of a name that is no longer active. It takes an id because a
+    /// Checkout can outlive its config entry.
+    Remove { id: String },
 }
 
-#[derive(Debug)]
-pub struct Plan {
-    pub actions: Vec<Action>,
-}
-
-impl Plan {
-    /// Anything to do or refuse: every action except a `Note` counts.
-    pub fn is_drift(&self) -> bool {
-        self.actions.iter().any(|a| !matches!(a, Action::Note(_)))
+impl RepoAction<'_> {
+    /// Whether the block lists this Repo's Checkout, so that the block must not be written
+    /// if the action failed. A Checkout that is only being removed is not listed.
+    pub fn gates_writes(&self) -> bool {
+        !matches!(self, RepoAction::Remove { .. })
     }
+}
 
-    pub fn refusals(&self) -> impl Iterator<Item = &Refusal> {
-        self.actions.iter().filter_map(|a| match a {
-            Action::Refuse(r) => Some(r),
-            _ => None,
-        })
+/// Replace the file with `text` (the whole file, block spliced in).
+#[derive(Debug)]
+pub struct WriteAgentFile {
+    pub path: String,
+    pub text: String,
+}
+
+/// What the plan does about the exclude rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExcludeAction {
+    Ensure,
+    /// Not a git repository: say so, there is nothing to do.
+    NoGit,
+}
+
+/// Stage 2's decisions, by what they act on (ADR 0006). The executor runs `repos` (a
+/// failure of one does not stop the others), then reports `refusals`, then runs `writes`
+/// only if no `gates_writes` action failed, each independently, then the exclude rule.
+#[derive(Debug)]
+pub struct Plan<'a> {
+    /// Removals of non-active names first, then the active Repos in block order.
+    pub repos: Vec<RepoAction<'a>>,
+    pub writes: Vec<WriteAgentFile>,
+    pub exclude: Option<ExcludeAction>,
+    pub refusals: Vec<Refusal>,
+}
+
+impl Plan<'_> {
+    /// Anything to do or refuse: everything except the note that there is no git repository.
+    pub fn is_drift(&self) -> bool {
+        !self.repos.is_empty()
+            || !self.writes.is_empty()
+            || !self.refusals.is_empty()
+            || self.exclude == Some(ExcludeAction::Ensure)
     }
 }
 
@@ -119,49 +144,44 @@ fn same_set(a: &[String], b: &[String]) -> bool {
     sorted(a) == sorted(b)
 }
 
-/// Stage 2 (ADR 0004): what to do to the checkouts, the Agent files and the exclude rule,
-/// in the order removals, materialisations, Agent file writes, exclude rule.
-pub fn plan_checkouts(
-    active: &ActiveSet,
+/// Stage 2 (ADR 0006): what to do to the checkouts, the Agent files and the exclude rule.
+pub fn plan_checkouts<'a>(
+    active: &ActiveSet<'a>,
     lock: &Lock,
     checkouts: &Checkouts,
     project: &ProjectObserved,
     force: bool,
-) -> Result<Plan, NotLocked> {
+) -> Result<Plan<'a>, NotLocked> {
     let block = render(active, lock, &project.references_dir)?;
     let mut removals = Vec::new();
-    let mut materialisations = Vec::new();
+    let mut repos = Vec::new();
     let mut refusals = Vec::new();
     for repo in active.repos() {
         let locked = lock.get(repo.id).expect("render checked the Lock");
-        let id = || repo.id.to_string();
-        let materialise = Action::Materialise {
-            id: id(),
-            pin: locked.pin.clone(),
-        };
+        let pin = || locked.pin.clone();
         match checkouts.of(repo.id) {
-            Observed::Absent => materialisations.push(materialise),
-            Observed::Dangling => {
-                removals.push(Action::Remove { id: id() });
-                materialisations.push(materialise);
-                materialisations.push(Action::Note(Note::Recreated { id: id() }));
-            }
-            Observed::Foreign => refusals.push(Action::Refuse(Refusal::ForeignDir { id: id() })),
-            Observed::At { pin, paths, .. }
-                if pin.same_commit(&locked.pin) && same_set(paths, &repo.repo.path_strings()) => {}
+            Observed::Absent => repos.push(RepoAction::Materialise { repo, pin: pin() }),
+            Observed::Dangling => repos.push(RepoAction::Replace {
+                repo,
+                pin: pin(),
+                note: Some(Note::Recreated { id: repo.id.into() }),
+            }),
+            Observed::Foreign => refusals.push(Refusal::ForeignDir { id: repo.id.into() }),
+            Observed::At {
+                pin: seen, paths, ..
+            } if seen.same_commit(&locked.pin) && same_set(paths, &repo.repo.path_strings()) => {}
             Observed::At { dirty_files, .. } if dirty_files.is_empty() => {
-                materialisations.push(materialise)
+                repos.push(RepoAction::Materialise { repo, pin: pin() })
             }
-            Observed::At { .. } if force => {
-                removals.push(Action::Remove { id: id() });
-                materialisations.push(materialise);
-            }
-            Observed::At { dirty_files, .. } => {
-                refusals.push(Action::Refuse(Refusal::DirtyCheckout {
-                    id: id(),
-                    files: dirty_files.clone(),
-                }))
-            }
+            Observed::At { .. } if force => repos.push(RepoAction::Replace {
+                repo,
+                pin: pin(),
+                note: None,
+            }),
+            Observed::At { dirty_files, .. } => refusals.push(Refusal::DirtyCheckout {
+                id: repo.id.into(),
+                files: dirty_files.clone(),
+            }),
         }
     }
     // Names refs no longer manages. Only a checkout refs made (`At`) is touched; anything
@@ -169,12 +189,12 @@ pub fn plan_checkouts(
     for (name, observed) in checkouts.unmanaged(active) {
         match observed {
             Observed::At { dirty_files, .. } if !dirty_files.is_empty() && !force => {
-                refusals.push(Action::Refuse(Refusal::DirtyCheckout {
+                refusals.push(Refusal::DirtyCheckout {
                     id: name.clone(),
                     files: dirty_files.clone(),
-                }))
+                })
             }
-            Observed::At { .. } => removals.push(Action::Remove { id: name.clone() }),
+            Observed::At { .. } => removals.push(RepoAction::Remove { id: name.clone() }),
             _ => {}
         }
     }
@@ -182,16 +202,16 @@ pub fn plan_checkouts(
     for file in &project.agent_files {
         match splice(file.text.as_deref().unwrap_or(""), &block) {
             Ok(text) if file.text.as_deref() != Some(text.as_str()) => {
-                writes.push(Action::WriteAgentFile {
+                writes.push(WriteAgentFile {
                     path: file.path.clone(),
                     text,
                 })
             }
             Ok(_) => {}
-            Err(error) => refusals.push(Action::Refuse(Refusal::Block {
+            Err(error) => refusals.push(Refusal::Block {
                 path: file.path.clone(),
                 error,
-            })),
+            }),
         }
     }
     // A block listing a Repo with no checkout is the harm, so nothing is written past a
@@ -201,15 +221,14 @@ pub fn plan_checkouts(
     }
     let exclude = match project.exclude {
         Exclude::Present => None,
-        Exclude::Missing => Some(Action::EnsureExclude),
-        Exclude::NoGit => Some(Action::Note(Note::NoGitRepo)),
+        Exclude::Missing => Some(ExcludeAction::Ensure),
+        Exclude::NoGit => Some(ExcludeAction::NoGit),
     };
-    let actions: Vec<Action> = removals
-        .into_iter()
-        .chain(materialisations)
-        .chain(refusals)
-        .chain(writes)
-        .chain(exclude)
-        .collect();
-    Ok(Plan { actions })
+    removals.extend(repos);
+    Ok(Plan {
+        repos: removals,
+        writes,
+        exclude,
+        refusals,
+    })
 }

@@ -382,3 +382,38 @@ fn the_exclude_rule_is_appended_to_what_is_already_there() {
         "*.log\n/.references/\n"
     );
 }
+
+#[test]
+fn a_failed_removal_of_an_inactive_repo_does_not_hold_back_the_block() {
+    let mut p = synced(AB);
+    assert!(p.read("AGENTS.md").unwrap().contains("[b @"));
+    p.config = parse(&AB.replace("[repos.b]", "[repos.b]\nenabled = false")).unwrap();
+    p.source.fail("b", Method::Remove, "busy");
+
+    let report = p.sync(&SyncFlags::default());
+
+    // still a failure to report, but the block lists only what has a checkout
+    assert_eq!(report.outcome, Outcome::Failed);
+    let block = p.read("AGENTS.md").unwrap();
+    assert!(block.contains("[a @"), "{block}");
+    assert!(!block.contains("[b @"), "{block}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_agent_file_write_does_not_stop_the_next_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let p = Project::new(&format!(
+        "[settings]\nagents_files = [\"locked/AGENTS.md\", \"AGENTS.md\"]\n{A}"
+    ));
+    fs::create_dir(p.path("locked")).unwrap();
+    fs::set_permissions(p.path("locked"), fs::Permissions::from_mode(0o555)).unwrap();
+
+    let report = p.sync(&SyncFlags::default());
+
+    fs::set_permissions(p.path("locked"), fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(report.outcome, Outcome::Failed);
+    assert_eq!(codes(&report), ["refs::block::write_failed"]);
+    assert!(p.read("AGENTS.md").unwrap().contains("<!-- BEGIN:refs -->"));
+}

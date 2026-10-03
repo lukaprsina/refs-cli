@@ -4,6 +4,7 @@ mod checkouts;
 mod lock;
 
 pub use checkouts::{
-    Action, AgentFileText, Checkouts, Exclude, Plan, ProjectObserved, plan_checkouts,
+    AgentFileText, Checkouts, Exclude, ExcludeAction, Plan, ProjectObserved, RepoAction,
+    WriteAgentFile, plan_checkouts,
 };
 pub use lock::{Drift, LockFlags, LockPlan, Step, Upgrade, lock_drift, plan_lock};
