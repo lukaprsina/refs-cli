@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::plan::{Drift, LockFlags, Upgrade};
+use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::source::Source;
 use crate::sync::{self, Outcome, Report, SyncFlags};
@@ -142,17 +142,8 @@ fn print(report: &Report, quiet: bool) {
     }
     if report.outcome == Outcome::OutOfDate {
         for drift in &report.drift {
-            eprintln!("out of date: {}", describe(drift));
+            eprintln!("out of date: {drift}");
         }
         eprintln!("run `refs sync` to bring the project up to date");
-    }
-}
-
-fn describe(drift: &Drift) -> String {
-    match drift {
-        Drift::LockMissing => "refs.lock is missing".into(),
-        Drift::Added(id) => format!("`{id}` is not locked"),
-        Drift::Removed(id) => format!("`{id}` is locked but no longer active"),
-        Drift::Changed { id, field } => format!("`{id}` changed its {field}"),
     }
 }
