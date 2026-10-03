@@ -84,8 +84,8 @@ pub enum RepoAction<'a> {
         pin: Pin,
         note: Option<Note>,
     },
-    /// Remove the Checkout of a name that is no longer active. It takes an id because a
-    /// Checkout can outlive its config entry.
+    /// Remove the Checkout of a name that is not Active, for example a disabled or deleted
+    /// Repo. It takes an id because a Checkout can outlive its config entry.
     Remove { id: String },
 }
 
@@ -151,7 +151,7 @@ fn same_set(a: &[String], b: &[String]) -> bool {
     sorted(a) == sorted(b)
 }
 
-/// Stage 2 (ADR 0006): what to do to the checkouts, the Agent files and the exclude rule.
+/// Plan stage 2 against the Lock and what is on disk.
 pub fn plan_checkouts<'a>(
     active: &ActiveSet<'a>,
     lock: &Lock,
