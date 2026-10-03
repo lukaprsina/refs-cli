@@ -111,7 +111,11 @@ fn an_edit_verifies_every_repo_once() {
             _ => None,
         })
         .collect();
-    assert_eq!(verified.len(), 2, "{verified:?}");
+    assert_eq!(
+        verified.len(),
+        parse(AFTER).unwrap().repos.len(),
+        "{verified:?}"
+    );
 }
 
 #[test]
@@ -123,4 +127,21 @@ fn an_edit_reports_how_the_lock_differed_from_it() {
     let edited = sync_edited(&source, dir.path(), BEFORE, AFTER, &SyncFlags::default());
 
     assert_eq!(edited.report.drift.len(), 1, "{:?}", edited.report.drift);
+}
+
+#[test]
+fn an_edit_that_cannot_resolve_offline_is_rejected_and_writes_nothing() {
+    let dir = project();
+    let source = FakeSource::new();
+    let flags = SyncFlags {
+        offline: true,
+        ..SyncFlags::default()
+    };
+
+    let edited = sync_edited(&source, dir.path(), BEFORE, AFTER, &flags);
+
+    assert_eq!(edited.change, Change::Rejected);
+    assert_eq!(read(&dir, "refs.toml").unwrap(), BEFORE);
+    assert_eq!(read(&dir, "refs.lock"), None);
+    assert!(source.calls().is_empty(), "{:?}", source.calls());
 }

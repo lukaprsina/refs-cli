@@ -105,7 +105,7 @@ pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
             Err(report) => return report.with_drift(drift),
         }
     };
-    finish(source, root, config, &active, &lock, drift, flags)
+    plan_and_apply(source, root, config, &active, &lock, drift, flags)
 }
 
 /// Stage 1 as `sync` runs it: only `offline` carries over.
@@ -118,7 +118,7 @@ fn lock_flags(flags: &SyncFlags) -> LockFlags {
 
 /// Stage 2 against a Lock that stage 1 has just produced (or, with `--check`, the one on
 /// disk): plan the checkouts, then report on the plan or apply it.
-fn finish(
+fn plan_and_apply(
     source: &dyn Source,
     root: &Path,
     config: &Config,
@@ -161,10 +161,18 @@ pub struct Edited {
     pub report: Report,
 }
 
+fn rejected(report: Report) -> Edited {
+    Edited {
+        change: Change::Rejected,
+        report,
+    }
+}
+
 /// `refs.toml` was `before` and has been edited to `after`: run stage 1 against that
 /// config, and only if it passes write `refs.toml` (stage 1 writes the Lock), then run stage 2
-/// on the Lock stage 1 produced, so each Repo is verified once. A stage 2 failure keeps the edit and the Lock; `refs sync` retries it. An
-/// edit that changes nothing writes nothing and just syncs. The Lock is written before
+/// on the Lock stage 1 produced, so each Repo is verified once. A stage 2 failure keeps the
+/// edit and the Lock; `refs sync` retries it. An edit that changes nothing writes nothing and
+/// just syncs. `flags.check` is not for this function: it writes. The Lock is written before
 /// `refs.toml`, so a failed write of `refs.toml` leaves a Lock with an entry the config does
 /// not have, which the next `sync` removes.
 pub fn sync_edited(
@@ -177,10 +185,7 @@ pub fn sync_edited(
     let config = match config::parse(after) {
         Ok(config) => config,
         Err(e) => {
-            return Edited {
-                change: Change::Rejected,
-                report: Report::failed(e),
-            };
+            return rejected(Report::failed(e));
         }
     };
     if after == before {
@@ -192,30 +197,21 @@ pub fn sync_edited(
     let Preflight { active, old, drift } = match preflight(root, &config) {
         Ok(preflight) => preflight,
         Err(report) => {
-            return Edited {
-                change: Change::Rejected,
-                report,
-            };
+            return rejected(report);
         }
     };
     let lock = match stage_one(source, &active, old, &lock_flags(flags), root) {
         Ok(lock) => lock,
         Err(report) => {
-            return Edited {
-                change: Change::Rejected,
-                report: report.with_drift(drift),
-            };
+            return rejected(report.with_drift(drift));
         }
     };
     if let Err(e) = project::write_config(root, after) {
-        return Edited {
-            change: Change::Rejected,
-            report: Report::failed(e),
-        };
+        return rejected(Report::failed(e));
     }
     Edited {
         change: Change::Written,
-        report: finish(source, root, &config, &active, &lock, drift, flags),
+        report: plan_and_apply(source, root, &config, &active, &lock, drift, flags),
     }
 }
 
@@ -291,7 +287,8 @@ enum StageTwoError {
 }
 
 impl StageTwoError {
-    /// After stage 1 the Lock covers every active Repo, so `NotLocked` here is a bug too.
+    /// The reports to show. Past stage 1 (and not `--check`) the Lock covers every active
+    /// Repo, so `NotLocked` is then a bug, like `NotObserved`.
     fn into_reports(self) -> Vec<miette::Report> {
         match self {
             StageTwoError::NotLocked(e) => vec![e.into()],
