@@ -7,6 +7,7 @@ use std::path::Path;
 use crate::active::{ActiveSet, active};
 use crate::agent_file;
 use crate::config::Config;
+use crate::diagnostic::NotLocked;
 use crate::lock::{Lock, LockedRepo};
 use crate::plan::{Action, Drift, LockFlags, Plan, Step, lock_drift, plan_checkouts, plan_lock};
 use crate::project;
@@ -51,61 +52,72 @@ impl Report {
     }
 }
 
+/// What every run starts from: the active set, the Lock on disk (if any) and how it differs.
+struct Start<'a> {
+    active: ActiveSet<'a>,
+    old: Option<Lock>,
+    drift: Vec<Drift>,
+}
+
+fn start<'a>(root: &Path, config: &'a Config) -> Result<Start<'a>, Report> {
+    let active = active(config);
+    let old = Lock::read(&Lock::path(root)).map_err(Report::failed)?;
+    let drift = lock_drift(&active, old.as_ref());
+    Ok(Start { active, old, drift })
+}
+
 /// `refs lock`: stage 1 and a write.
 pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags) -> Report {
-    let active = active(config);
-    let old = match Lock::read(&Lock::path(root)) {
-        Ok(old) => old,
-        Err(e) => return Report::failed(e),
+    let Start { active, old, drift } = match start(root, config) {
+        Ok(start) => start,
+        Err(report) => return report,
     };
-    let drift = lock_drift(&active, old.as_ref());
     match stage_one(source, &active, old, flags, root) {
         Ok(_) => Report::new(Outcome::InSync, drift, vec![]),
-        Err(report) => report,
+        Err(report) => Report { drift, ..report },
     }
 }
 
 /// `refs sync`. With `check`, nothing is resolved, verified, fetched or written.
 pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
-    let active = active(config);
-    let old = match Lock::read(&Lock::path(root)) {
-        Ok(old) => old,
-        Err(e) => return Report::failed(e),
+    let Start { active, old, drift } = match start(root, config) {
+        Ok(start) => start,
+        Err(report) => return report,
     };
-    let drift = lock_drift(&active, old.as_ref());
     let lock = if flags.check {
-        old
+        match old {
+            Some(lock) => lock,
+            // Nothing to plan against: the Lock is what is out of date.
+            None => return Report::new(Outcome::OutOfDate, drift, vec![]),
+        }
     } else {
         let lock_flags = LockFlags {
             offline: flags.offline,
             ..LockFlags::default()
         };
         match stage_one(source, &active, old, &lock_flags, root) {
-            Ok(lock) => Some(lock),
+            Ok(lock) => lock,
             Err(report) => return Report { drift, ..report },
         }
     };
-    let mut diagnostics = Vec::new();
-    let plan = lock.as_ref().and_then(|lock| {
-        match plan_stage_two(source, root, config, &active, lock, flags.force) {
-            Ok(plan) => plan,
-            Err(errors) => {
-                diagnostics.extend(errors);
-                None
-            }
+    let plan = match plan_stage_two(source, root, config, &active, &lock, flags.force) {
+        Ok(plan) => plan,
+        // Only `--check` can meet a Lock that does not cover the active set, and it does not
+        // repair it: the Lock is what is out of date.
+        Err(StageTwoError::NotLocked(_)) if flags.check => {
+            return Report::new(Outcome::OutOfDate, drift, vec![]);
         }
-    });
-    if !diagnostics.is_empty() {
-        return Report::new(Outcome::Failed, drift, diagnostics);
-    }
-    match plan {
-        Some(plan) if flags.check => check(plan, drift),
-        Some(plan) => {
-            let dir = config.settings.references_dir();
-            apply(source, root, &active, dir, plan, flags, drift)
+        // After stage 1 the Lock covers every active Repo, so this is a bug, not drift.
+        Err(StageTwoError::NotLocked(e)) => {
+            return Report::new(Outcome::Failed, drift, vec![e.into()]);
         }
-        // `--check` without a Lock to plan against: the Lock is what is out of date.
-        None => Report::new(Outcome::OutOfDate, drift, diagnostics),
+        Err(StageTwoError::Read(errors)) => return Report::new(Outcome::Failed, drift, errors),
+    };
+    if flags.check {
+        check(plan, drift)
+    } else {
+        let dir = config.settings.references_dir();
+        apply(source, root, &active, dir, plan, flags, drift)
     }
 }
 
@@ -155,6 +167,14 @@ fn stage_one(
     Ok(lock)
 }
 
+/// Why stage 2 produced no Plan.
+enum StageTwoError {
+    /// The Lock does not cover every active Repo.
+    NotLocked(NotLocked),
+    /// Reading the project or the checkouts failed; every failure is collected.
+    Read(Vec<miette::Report>),
+}
+
 /// Read the project and what is on disk, then plan the checkouts.
 fn plan_stage_two(
     source: &dyn Source,
@@ -163,7 +183,7 @@ fn plan_stage_two(
     active: &ActiveSet,
     lock: &Lock,
     force: bool,
-) -> Result<Option<Plan>, Vec<miette::Report>> {
+) -> Result<Plan, StageTwoError> {
     let mut errors: Vec<miette::Report> = Vec::new();
     let listing = source.list().unwrap_or_else(|e| {
         errors.push(e.into());
@@ -190,11 +210,9 @@ fn plan_stage_two(
         }
     };
     let Some(project) = project.filter(|_| errors.is_empty()) else {
-        return Err(errors);
+        return Err(StageTwoError::Read(errors));
     };
-    // A Lock that does not cover the active set can only be seen by `--check`, which does
-    // not repair it: the Lock is what is out of date.
-    Ok(plan_checkouts(active, lock, &observed, &project, force).ok())
+    plan_checkouts(active, lock, &observed, &project, force).map_err(StageTwoError::NotLocked)
 }
 
 /// `--check`: report what applying the plan would do.
