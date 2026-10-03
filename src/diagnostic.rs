@@ -18,15 +18,15 @@ pub enum EditError {
     Invalid(#[from] ConfigErrors),
 
     #[error("a repo with the id `{id}` already exists")]
-    #[diagnostic(code(refs::edit::id_taken), help("pick another id with `--id <id>`"))]
+    #[diagnostic(code(refs::config::id_taken), help("pick another id with `--id <id>`"))]
     IdTaken { id: String },
 
     #[error("there is no repo with the id `{id}`")]
-    #[diagnostic(code(refs::edit::unknown_repo), help("`refs list` shows the ids"))]
+    #[diagnostic(code(refs::config::unknown_repo), help("`refs list` shows the ids"))]
     UnknownRepo { id: String },
 
     #[error("could not edit refs.toml: {0}")]
-    #[diagnostic(code(refs::edit::unreadable))]
+    #[diagnostic(code(refs::config::unreadable))]
     Unreadable(String),
 }
 

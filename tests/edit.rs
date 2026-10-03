@@ -91,7 +91,7 @@ fn add_rejects_a_group_that_is_not_in_the_config() {
 #[test]
 fn add_rejects_an_id_that_is_taken_and_points_at_the_id_option() {
     let err = add(CONFIG, &new_repo("https://github.com/other/solid.git")).unwrap_err();
-    assert_eq!(codes(&err), ["refs::edit::id_taken"]);
+    assert_eq!(codes(&err), ["refs::config::id_taken"]);
     assert!(
         miette::Diagnostic::help(&err)
             .unwrap()
@@ -121,7 +121,7 @@ fn the_default_id_is_the_last_url_segment_without_dot_git() {
 #[test]
 fn remove_rejects_an_id_that_is_not_in_the_config() {
     let err = remove(CONFIG, "nope").unwrap_err();
-    assert_eq!(codes(&err), ["refs::edit::unknown_repo"]);
+    assert_eq!(codes(&err), ["refs::config::unknown_repo"]);
 }
 
 mod groups {
@@ -181,4 +181,72 @@ fn add_and_remove_round_trip_when_there_are_no_repos_or_no_final_newline() {
         assert!(added.contains("[repos.r]"), "{added:?}");
         assert_eq!(remove(&added, "r").unwrap(), text, "{text:?}");
     }
+}
+
+#[test]
+fn add_appends_at_the_end_of_the_file_whatever_the_section_order() {
+    let text =
+        "[repos.z]\nurl = \"https://github.com/o/z\"\n\n[groups.g]\nname = \"G\"\n# trailing\n";
+    let added = add(text, &new_repo("https://github.com/o/r")).unwrap();
+    assert_eq!(
+        added,
+        format!("{text}\n[repos.r]\nurl = \"https://github.com/o/r\"\n")
+    );
+    assert_eq!(remove(&added, "r").unwrap(), text);
+}
+
+#[test]
+fn a_crlf_file_stays_crlf_through_add_and_remove() {
+    let text = CONFIG.replace('\n', "\r\n");
+    let added = add(&text, &new_repo("https://github.com/o/r")).unwrap();
+    assert!(!added.replace("\r\n", "").contains('\n'), "{added:?}");
+    assert_eq!(remove(&added, "r").unwrap(), text);
+}
+
+#[test]
+fn an_inline_repos_table_is_refused_with_a_hint_not_rewritten() {
+    let text = "repos = { a = { url = \"https://github.com/o/a\" } }\n";
+    let err = add(text, &new_repo("https://github.com/o/r")).unwrap_err();
+    assert_eq!(codes(&err), ["refs::config::unreadable"]);
+    let err = remove(text, "a").unwrap_err();
+    assert_eq!(codes(&err), ["refs::config::unreadable"]);
+}
+
+#[test]
+fn remove_cuts_the_table_and_its_own_comments_and_leaves_the_rest_alone() {
+    let text = "\
+# About the first.
+[repos.a]
+url = \"https://github.com/o/a\" # why
+packages = [
+  \"x\",
+]
+
+# A note for nobody in particular.
+
+# About b.
+[repos.b]
+url = \"https://github.com/o/b\"
+
+# About c.
+[repos.c]
+url = \"https://github.com/o/c\"
+";
+    assert_eq!(
+        remove(text, "b").unwrap(),
+        "\
+# About the first.
+[repos.a]
+url = \"https://github.com/o/a\" # why
+packages = [
+  \"x\",
+]
+
+# A note for nobody in particular.
+
+# About c.
+[repos.c]
+url = \"https://github.com/o/c\"
+"
+    );
 }

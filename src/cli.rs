@@ -11,9 +11,8 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::atomic;
 use crate::config::Config;
-use crate::diagnostic::{EditError, ProjectError, SourceError};
+use crate::diagnostic::{EditError, SourceError};
 use crate::edit::{self, AddRepo};
 use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
@@ -204,29 +203,17 @@ impl From<&AddArgs> for AddRepo {
     }
 }
 
-/// Apply `edit` to the text of `<root>/refs.toml` and write the result atomically. A
-/// rejected edit writes nothing.
+/// Apply `edit` to the text of `<root>/refs.toml` and write the result. A rejected edit
+/// writes nothing.
 fn edit_config(
     root: &Path,
     quiet: bool,
     edit: impl FnOnce(&str) -> Result<String, EditError>,
 ) -> u8 {
-    let path = root.join(project::CONFIG_FILE);
-    let result = std::fs::read_to_string(&path)
-        .map_err(|source| ProjectError::Read {
-            path: project::CONFIG_FILE.into(),
-            source,
-        })
+    let result = project::read_config(root)
         .map_err(miette::Report::new)
         .and_then(|text| edit(&text).map_err(miette::Report::new))
-        .and_then(|text| {
-            atomic::write(&path, &text).map_err(|source| {
-                miette::Report::new(ProjectError::Write {
-                    path: project::CONFIG_FILE.into(),
-                    source,
-                })
-            })
-        });
+        .and_then(|text| project::write_config(root, &text).map_err(miette::Report::new));
     match result {
         Ok(()) => {
             if !quiet {

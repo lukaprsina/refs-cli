@@ -4,7 +4,7 @@
 //! result with `config::parse` before returning it, so a rejected edit has produced no text
 //! to write.
 
-use toml_edit::{Array, DocumentMut, Item, Table, value};
+use toml_edit::{Array, Document, DocumentMut, Item, Table, value};
 
 use crate::config;
 use crate::diagnostic::EditError;
@@ -22,21 +22,38 @@ pub struct AddRepo {
     pub start: Vec<String>,
 }
 
-/// Append a repo table to the end of `text`.
+/// Append a repo table to the end of `text`, after a blank line. The text before it is
+/// left as it was, so the edit cannot disturb it.
 pub fn add(text: &str, req: &AddRepo) -> Result<String, EditError> {
-    let mut doc = open(text)?;
+    let config = open(text)?;
     let id = req.id.clone().unwrap_or_else(|| id_from_url(&req.url));
-    let repos = doc
-        .entry("repos")
-        .or_insert_with(|| Item::Table(Table::new()))
-        .as_table_mut()
-        .ok_or_else(|| EditError::Unreadable("`repos` is not a table".into()))?;
-    repos.set_implicit(true);
-    if repos.contains_key(&id) {
+    if config.repos.contains_key(id.as_str()) {
         return Err(EditError::IdTaken { id });
     }
+    if parse(text)?.get("repos").is_some_and(Item::is_inline_table) {
+        return Err(EditError::Unreadable(
+            "`repos` is an inline table; write each repo as a `[repos.<id>]` table".into(),
+        ));
+    }
+    let mut out = text.to_owned();
+    if !out.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    out.push_str(&repo_table(&id, req));
+    match_line_endings(&mut out, text);
+    if !text.is_empty() && !text.ends_with('\n') {
+        out.pop();
+    }
+    config::parse(&out)?;
+    Ok(out)
+}
+
+/// `[repos.<id>]` and its keys, as one block of text ending in a newline.
+fn repo_table(id: &str, req: &AddRepo) -> String {
     let mut table = Table::new();
-    table.decor_mut().set_prefix("\n");
     table["url"] = value(&req.url);
     if let Some(group) = &req.group {
         table["group"] = value(group);
@@ -56,40 +73,84 @@ pub fn add(text: &str, req: &AddRepo) -> Result<String, EditError> {
             table[key] = value(items.iter().collect::<Array>());
         }
     }
-    repos.insert(&id, Item::Table(table));
-    finish(doc, text)
+    let mut repos = Table::new();
+    repos.set_implicit(true);
+    repos.insert(id, Item::Table(table));
+    let mut doc = DocumentMut::new();
+    doc.insert("repos", Item::Table(repos));
+    doc.to_string()
 }
 
-/// Drop the repo `id`, with the comments attached to its table, and its group when it was
+/// Drop the repo `id` with the comment lines directly above it, and its group when it was
 /// the group's last repo (disabled repos count) and the group has no `description`.
 pub fn remove(text: &str, id: &str) -> Result<String, EditError> {
-    let mut doc = open(text)?;
-    let group = doc
-        .get("repos")
-        .and_then(|repos| repos.get(id))
-        .and_then(Item::as_table_like)
-        .ok_or_else(|| EditError::UnknownRepo { id: id.into() })?
-        .get("group")
-        .and_then(Item::as_str)
-        .map(str::to_owned);
-    doc["repos"].as_table_mut().map(|repos| repos.remove(id));
-    if let Some(group) = group {
-        let has_members = doc["repos"].as_table().is_some_and(|repos| {
-            repos
-                .iter()
-                .any(|(_, repo)| repo.get("group").and_then(Item::as_str) == Some(&group))
+    let config = open(text)?;
+    let repo = config
+        .repos
+        .get(id)
+        .ok_or_else(|| EditError::UnknownRepo { id: id.into() })?;
+    let mut out = cut_table(text, "repos", id)?;
+    if let Some(group) = repo.group.as_ref().map(|g| g.as_ref().as_str()) {
+        let has_members = config.repos.iter().any(|(other, r)| {
+            other.as_ref() != id && r.group.as_ref().is_some_and(|g| g.as_ref() == group)
         });
-        let described = doc
-            .get("groups")
-            .and_then(|groups| groups.get(&group))
-            .is_some_and(|g| g.get("description").is_some());
+        let described = config
+            .groups
+            .get(group)
+            .is_some_and(|g| g.description.is_some());
         if !has_members && !described {
-            doc["groups"]
-                .as_table_mut()
-                .map(|groups| groups.remove(&group));
+            out = cut_table(&out, "groups", group)?;
         }
     }
-    finish(doc, text)
+    config::parse(&out)?;
+    Ok(out)
+}
+
+/// Cut the table `[<parent>.<key>]` out of `text`: its header, its comment lines directly
+/// above, the blank line before those, and every line up to its last key. What follows the
+/// last key (blank lines, comments for the next table) stays. Cutting by text, not through
+/// the document, leaves every other byte alone.
+fn cut_table(text: &str, parent: &str, key: &str) -> Result<String, EditError> {
+    let doc = parse(text)?;
+    let table = doc
+        .get(parent)
+        .and_then(|p| p.get(key))
+        .and_then(Item::as_table)
+        .ok_or_else(|| {
+            EditError::Unreadable(format!(
+                "`{parent}.{key}` is not a `[{parent}.{key}]` table"
+            ))
+        })?;
+    let header = table.span().map_or(0, |span| span.start);
+    let body_end = table
+        .iter()
+        .filter_map(|(_, item)| item.span())
+        .map(|span| span.end)
+        .max()
+        .unwrap_or_else(|| table.span().map_or(0, |span| span.end));
+    let end = text[body_end..]
+        .find('\n')
+        .map_or(text.len(), |i| body_end + i + 1);
+
+    let lines: Vec<&str> = text[..header].split_inclusive('\n').collect();
+    let mut start = header;
+    let mut above = lines.iter().rev().peekable();
+    while let Some(line) = above.next_if(|l| l.trim_start().starts_with('#')) {
+        start -= line.len();
+    }
+    if let Some(blank) = above.next_if(|l| l.trim().is_empty()) {
+        start -= blank.len();
+    }
+
+    let mut out = format!("{}{}", &text[..start], &text[end..]);
+    // A file that ended without a newline ended with the table's last line.
+    if end == text.len() && !text.ends_with('\n') && out.ends_with('\n') {
+        out.pop();
+        if out.ends_with('\r') {
+            out.pop();
+        }
+    }
+    Ok(out)
 }
 
 /// The last path segment of the URL, without a trailing `.git`.
@@ -102,19 +163,17 @@ fn id_from_url(url: &str) -> String {
     last.strip_suffix(".git").unwrap_or(last).to_string()
 }
 
-fn open(text: &str) -> Result<DocumentMut, EditError> {
-    config::parse(text)?;
-    text.parse()
-        .map_err(|e: toml_edit::TomlError| EditError::Unreadable(e.to_string()))
+fn open(text: &str) -> Result<config::Config, EditError> {
+    Ok(config::parse(text)?)
 }
 
-/// Serialise `doc` and validate it. `toml_edit` ends every document with a newline, so a
-/// file that had none (`original`) is given back without one.
-fn finish(doc: DocumentMut, original: &str) -> Result<String, EditError> {
-    let mut text = doc.to_string();
-    if !original.is_empty() && !original.ends_with('\n') && text.ends_with('\n') {
-        text.pop();
+fn parse(text: &str) -> Result<Document<&str>, EditError> {
+    Document::parse(text).map_err(|e| EditError::Unreadable(e.to_string()))
+}
+
+/// Give `text` the `\r\n` line endings of `original` if it used them.
+fn match_line_endings(text: &mut String, original: &str) {
+    if original.contains("\r\n") {
+        *text = text.replace("\r\n", "\n").replace('\n', "\r\n");
     }
-    config::parse(&text)?;
-    Ok(text)
 }

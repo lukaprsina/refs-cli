@@ -283,3 +283,20 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
         assert_eq!(observed.exclude, Exclude::NoGit);
     }
 }
+
+#[test]
+fn the_config_is_written_atomically_and_read_back() {
+    use refs_cli::project::{read_config, write_config};
+
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("refs.toml"), "old\n").unwrap();
+
+    write_config(dir.path(), "[settings]\n").unwrap();
+
+    assert_eq!(read_config(dir.path()).unwrap(), "[settings]\n");
+    let names: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["refs.toml"], "no temp file is left behind");
+}

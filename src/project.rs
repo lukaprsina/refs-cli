@@ -4,6 +4,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use crate::agent_file;
+use crate::atomic;
 use crate::config::{self, Config};
 use crate::diagnostic::ProjectError;
 use crate::plan::{AgentFileText, Exclude, ProjectObserved};
@@ -26,19 +27,27 @@ pub fn find_root(start: &Path) -> Result<PathBuf, ProjectError> {
         })
 }
 
+/// The text of `<root>/refs.toml`.
+pub fn read_config(root: &Path) -> Result<String, ProjectError> {
+    std::fs::read_to_string(root.join(CONFIG_FILE)).map_err(|source| ProjectError::Read {
+        path: CONFIG_FILE.into(),
+        source,
+    })
+}
+
+/// Replace `<root>/refs.toml` with `text`, atomically.
+pub fn write_config(root: &Path, text: &str) -> Result<(), ProjectError> {
+    atomic::write(&root.join(CONFIG_FILE), text).map_err(|source| ProjectError::Write {
+        path: CONFIG_FILE.into(),
+        source,
+    })
+}
+
 /// Find the project from `start`, read and validate its config, and check its output
 /// paths, all before anything is written. Every problem found is returned.
 pub fn load(start: &Path) -> Result<(PathBuf, Config), Vec<miette::Report>> {
     let root = find_root(start).map_err(|e| vec![e.into()])?;
-    let text = std::fs::read_to_string(root.join(CONFIG_FILE)).map_err(|source| {
-        vec![
-            ProjectError::Read {
-                path: CONFIG_FILE.into(),
-                source,
-            }
-            .into(),
-        ]
-    })?;
+    let text = read_config(&root).map_err(|e| vec![e.into()])?;
     let config = config::parse(&text).map_err(|e| vec![e.into()])?;
     let errors = check_outputs(&root, &config);
     if errors.is_empty() {
