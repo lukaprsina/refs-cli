@@ -7,8 +7,8 @@ How `refs` is put together, and where new features go. Vocabulary is in `CONTEXT
 ```
 refs.toml ─▶ config ─▶ active(config) ─┐
 refs.lock ─▶ lock (read) ──────────────┴─▶ plan_lock ─▶ resolve/verify ─▶ new Lock
-                                                                            │
-Source.inspect ─▶ Observed ──────────┐                                      ▼
+                                                                          │
+Source.inspect ─▶ Observed ──────────────┐                                ▼
 agent files, exclude ─▶ ProjectObserved ─┴─▶ plan_checkouts(active, Lock) ─▶ Plan ─▶ apply
                                                     │                       (or diff, for --check)
                                                     ▼
