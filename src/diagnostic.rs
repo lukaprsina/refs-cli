@@ -9,6 +9,27 @@ pub struct ConfigErrors {
     pub errors: Vec<ConfigError>,
 }
 
+/// Why an edit of `refs.toml` was not made. Nothing is written when one is returned.
+#[derive(Debug, Error, Diagnostic)]
+pub enum EditError {
+    /// The config before the edit, or the text the edit would produce, fails validation.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Invalid(#[from] ConfigErrors),
+
+    #[error("a repo with the id `{id}` already exists")]
+    #[diagnostic(code(refs::edit::id_taken), help("pick another id with `--id <id>`"))]
+    IdTaken { id: String },
+
+    #[error("there is no repo with the id `{id}`")]
+    #[diagnostic(code(refs::edit::unknown_repo), help("`refs list` shows the ids"))]
+    UnknownRepo { id: String },
+
+    #[error("could not edit refs.toml: {0}")]
+    #[diagnostic(code(refs::edit::unreadable))]
+    Unreadable(String),
+}
+
 #[derive(Debug, Error, Diagnostic)]
 pub enum ConfigError {
     #[error("{message}")]

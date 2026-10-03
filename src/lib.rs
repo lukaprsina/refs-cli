@@ -4,6 +4,8 @@ pub mod atomic;
 pub mod cli;
 pub mod config;
 pub mod diagnostic;
+pub mod edit;
+pub mod list;
 pub mod lock;
 pub mod plan;
 pub mod project;
