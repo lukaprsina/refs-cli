@@ -134,6 +134,13 @@ impl Plan<'_> {
     }
 }
 
+fn dirty(id: &str, files: &[String]) -> Refusal {
+    Refusal::DirtyCheckout {
+        id: id.into(),
+        files: files.to_vec(),
+    }
+}
+
 fn same_set(a: &[String], b: &[String]) -> bool {
     let sorted = |v: &[String]| {
         let mut v = v.to_vec();
@@ -153,15 +160,15 @@ pub fn plan_checkouts<'a>(
     force: bool,
 ) -> Result<Plan<'a>, NotLocked> {
     let block = render(active, lock, &project.references_dir)?;
-    let mut removals = Vec::new();
-    let mut repos = Vec::new();
+    let mut stale = Vec::new();
+    let mut current = Vec::new();
     let mut refusals = Vec::new();
     for repo in active.repos() {
         let locked = lock.get(repo.id).expect("render checked the Lock");
         let pin = || locked.pin.clone();
         match checkouts.of(repo.id) {
-            Observed::Absent => repos.push(RepoAction::Materialise { repo, pin: pin() }),
-            Observed::Dangling => repos.push(RepoAction::Replace {
+            Observed::Absent => current.push(RepoAction::Materialise { repo, pin: pin() }),
+            Observed::Dangling => current.push(RepoAction::Replace {
                 repo,
                 pin: pin(),
                 note: Some(Note::Recreated { id: repo.id.into() }),
@@ -171,17 +178,14 @@ pub fn plan_checkouts<'a>(
                 pin: seen, paths, ..
             } if seen.same_commit(&locked.pin) && same_set(paths, &repo.repo.path_strings()) => {}
             Observed::At { dirty_files, .. } if dirty_files.is_empty() => {
-                repos.push(RepoAction::Materialise { repo, pin: pin() })
+                current.push(RepoAction::Materialise { repo, pin: pin() })
             }
-            Observed::At { .. } if force => repos.push(RepoAction::Replace {
+            Observed::At { .. } if force => current.push(RepoAction::Replace {
                 repo,
                 pin: pin(),
                 note: None,
             }),
-            Observed::At { dirty_files, .. } => refusals.push(Refusal::DirtyCheckout {
-                id: repo.id.into(),
-                files: dirty_files.clone(),
-            }),
+            Observed::At { dirty_files, .. } => refusals.push(dirty(repo.id, dirty_files)),
         }
     }
     // Names refs no longer manages. Only a checkout refs made (`At`) is touched; anything
@@ -189,12 +193,9 @@ pub fn plan_checkouts<'a>(
     for (name, observed) in checkouts.unmanaged(active) {
         match observed {
             Observed::At { dirty_files, .. } if !dirty_files.is_empty() && !force => {
-                refusals.push(Refusal::DirtyCheckout {
-                    id: name.clone(),
-                    files: dirty_files.clone(),
-                })
+                refusals.push(dirty(name, dirty_files))
             }
-            Observed::At { .. } => removals.push(RepoAction::Remove { id: name.clone() }),
+            Observed::At { .. } => stale.push(RepoAction::Remove { id: name.clone() }),
             _ => {}
         }
     }
@@ -224,9 +225,8 @@ pub fn plan_checkouts<'a>(
         Exclude::Missing => Some(ExcludeAction::Ensure),
         Exclude::NoGit => Some(ExcludeAction::NoGit),
     };
-    removals.extend(repos);
     Ok(Plan {
-        repos: removals,
+        repos: stale.into_iter().chain(current).collect(),
         writes,
         exclude,
         refusals,

@@ -417,3 +417,15 @@ fn a_failed_agent_file_write_does_not_stop_the_next_file() {
     assert_eq!(codes(&report), ["refs::block::write_failed"]);
     assert!(p.read("AGENTS.md").unwrap().contains("<!-- BEGIN:refs -->"));
 }
+
+#[test]
+fn a_failed_replace_reports_no_recreated_note() {
+    let p = synced(A);
+    p.source.seed("a", Observed::Dangling);
+    p.source.fail("a", Method::Materialise, "no space left");
+
+    let report = p.sync(&SyncFlags::default());
+
+    assert_eq!(report.outcome, Outcome::Failed);
+    assert_eq!(codes(&report), ["refs::git::failed"]);
+}
