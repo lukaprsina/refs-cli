@@ -310,6 +310,24 @@ mod verify {
     }
 
     #[test]
+    fn a_commit_id_that_could_be_an_option_never_reaches_git() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let pin = Pin::git(&remote.url(), "main", "--upload-pack=touch /tmp/x", None);
+        let repo = remote.repo(&[], &[]);
+        let source = env.source();
+
+        let err = source
+            .verify(at("r", &repo), &pin, VerifyOpts::default())
+            .unwrap_err();
+        assert_eq!(code(err), "refs::git::unsafe_input");
+        let err = source
+            .materialise(at("r", &repo), &pin, MaterialiseOpts::default())
+            .unwrap_err();
+        assert_eq!(code(err), "refs::git::unsafe_input");
+        assert!(!env.cache_repo(&remote).exists());
+    }
+
+    #[test]
     fn a_commit_the_remote_does_not_have_is_an_error() {
         let (remote, env) = (Remote::new(), Env::new());
         let pin = Pin::git(&remote.url(), "main", &"0123456789".repeat(4), None);
@@ -504,7 +522,7 @@ mod materialise {
     }
 
     #[test]
-    fn two_processes_on_one_cache_do_not_corrupt_it() {
+    fn concurrent_first_use_of_one_cache_is_serialised_by_its_lock() {
         let (remote, env) = (Remote::new(), Env::new());
         let repo_a = remote.repo(&["docs/guide"], &[]);
         let repo_b = remote.repo(&["src"], &[]);

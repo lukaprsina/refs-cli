@@ -5,25 +5,28 @@ use std::ffi::OsStr;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
+use super::remote::check_version;
 use crate::diagnostic::SourceError;
 
 /// Transports git may use; `ext::` and the like are refused (spec §7.7).
 const ALLOWED_PROTOCOLS: &str = "file:https:ssh:git";
 
+/// The outcome of the one `git --version` check, made before the first command (spec §7.5).
+static VERSION: OnceLock<Result<(), SourceError>> = OnceLock::new();
+
 /// A git command that failed to run or exited non-zero. `stderr` is kept so the caller can
 /// recognise the few failures the spec treats specially.
 #[derive(Debug)]
 pub struct Failure {
-    pub message: String,
+    pub error: SourceError,
     pub stderr: String,
 }
 
 impl From<Failure> for SourceError {
     fn from(failure: Failure) -> SourceError {
-        SourceError::Failed {
-            message: failure.message,
-        }
+        failure.error
     }
 }
 
@@ -90,8 +93,24 @@ impl Cmd {
 
     /// Run it and return its stdout.
     pub fn run(mut self) -> Result<String, Failure> {
-        let failed = |message: String, stderr: String| Failure { message, stderr };
+        let failed = |message: String, stderr: String| Failure {
+            error: SourceError::Failed { message },
+            stderr,
+        };
         let command = self.shown.join(" ");
+        if command != "--version" {
+            let version = VERSION.get_or_init(|| {
+                let out = Cmd::new()
+                    .arg("--version")
+                    .run()
+                    .map_err(SourceError::from)?;
+                check_version(&out)
+            });
+            version.clone().map_err(|error| Failure {
+                error,
+                stderr: String::new(),
+            })?;
+        }
         self.command
             .stdin(if self.stdin.is_some() {
                 Stdio::piped()

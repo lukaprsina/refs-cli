@@ -1,4 +1,4 @@
-//! `Source` backed by the system `git` binary. Every git command goes through `run`, which
+//! `Source` backed by the system `git` binary. Every git command goes through `command::Cmd`, which
 //! is where the safety rules of spec §7.7 and the version floor of §7.5 are enforced, so no
 //! call site can skip them.
 
@@ -7,7 +7,6 @@ mod command;
 pub mod remote;
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use crate::config::{RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
@@ -20,8 +19,6 @@ pub struct GitSource {
     cache: Cache,
     /// `<project>/<references_dir>`: where Checkouts are made.
     checkouts: PathBuf,
-    /// The outcome of the one `git --version` check, made before the first command.
-    version: OnceLock<Result<(), SourceError>>,
 }
 
 impl GitSource {
@@ -29,17 +26,7 @@ impl GitSource {
         GitSource {
             cache: Cache::new(&cache_root),
             checkouts,
-            version: OnceLock::new(),
         }
-    }
-
-    /// A git command, once the version is known to be new enough. `args` must already have
-    /// `--` before any user-supplied value.
-    fn git(&self) -> Result<Cmd, SourceError> {
-        self.version
-            .get_or_init(|| remote::check_version(&Cmd::new().arg("--version").run()?))
-            .clone()?;
-        Ok(Cmd::new())
     }
 }
 
@@ -52,8 +39,7 @@ impl Source for GitSource {
             return Ok(Pin::git(url, git_ref, git_ref, None));
         }
         if git_ref == "HEAD" {
-            let out = self
-                .git()?
+            let out = Cmd::new()
                 .args(["ls-remote", "--symref", "--"])
                 .arg(url)
                 .arg("HEAD")
@@ -66,8 +52,7 @@ impl Source for GitSource {
             format!("refs/tags/{git_ref}"),
             format!("refs/tags/{git_ref}^{{}}"),
         ];
-        let out = self
-            .git()?
+        let out = Cmd::new()
             .args(["ls-remote", "--"])
             .arg(url)
             .args(&patterns)
@@ -77,8 +62,8 @@ impl Source for GitSource {
     }
 
     fn verify(&self, repo: RepoRef, pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError> {
-        self.git()?;
         let PinKind::Git { url, sha, .. } = &pin.0;
+        remote::check_sha(sha)?;
         self.cache.with_repo(url, sha, opts.offline, |cache| {
             cache.ensure_commit(url, sha, opts.offline)?;
             for path in &repo.repo.paths {
@@ -121,19 +106,20 @@ impl Source for GitSource {
         pin: &Pin,
         opts: MaterialiseOpts,
     ) -> Result<(), SourceError> {
-        self.git()?;
         let PinKind::Git { url, sha, .. } = &pin.0;
+        remote::check_sha(sha)?;
         let dest = self.checkouts.join(repo.id);
-        if std::fs::symlink_metadata(&dest).is_ok() {
-            return Err(SourceError::Failed {
-                message: format!(
-                    "{} already exists; moving a Checkout lands in #8",
-                    dest.display()
-                ),
-            });
-        }
         let paths = repo.repo.path_strings();
         self.cache.with_repo(url, sha, opts.offline, |cache| {
+            // Checked under the lock, so what is discarded on failure is only what this call made.
+            if std::fs::symlink_metadata(&dest).is_ok() {
+                return Err(SourceError::Failed {
+                    message: format!(
+                        "{} already exists; moving a Checkout lands in #8",
+                        dest.display()
+                    ),
+                });
+            }
             cache.ensure_commit(url, sha, opts.offline)?;
             if !opts.offline {
                 cache.prefetch(sha, &paths)?;

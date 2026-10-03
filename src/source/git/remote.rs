@@ -113,6 +113,17 @@ pub fn check_input(url: &str, git_ref: &str) -> Result<(), SourceError> {
     Ok(())
 }
 
+/// Reject a commit id that is not 40 hex digits: it would reach git where an option could
+/// be read. A Lock read from disk is checked already; `GitSource` does not rely on that.
+pub fn check_sha(sha: &str) -> Result<(), SourceError> {
+    if is_full_sha(sha) {
+        return Ok(());
+    }
+    Err(SourceError::UnsafeInput {
+        reason: format!("`{sha}` is not a full 40-character commit id"),
+    })
+}
+
 /// The form of `url` the cache is keyed on: no trailing `/` or `.git`, lowercase host.
 /// Protocols are not unified: that would mean guessing each host's URL mapping.
 pub fn normalise_url(url: &str) -> String {
