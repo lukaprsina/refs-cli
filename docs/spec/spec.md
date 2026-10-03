@@ -234,7 +234,7 @@ A disabled repo behaves as if it were commented out of the config, but stays vis
 - **Block:** a disabled repo has no Entry. A group with no active repos renders no heading (this holds for enabled groups that simply have no repos too).
 - **Re-enabling** re-resolves the ref, exactly as uncommenting would. A floating ref may land on a newer commit than before; the old pin isn't kept.
 - **Validation still applies** to disabled entries (id, dangling group, `paths`, `start` syntax), but nothing is resolved or fetched for them. `list` shows them marked `disabled`; the later `doctor` reports how many are disabled (info).
-- `refs disable <id>` / `refs enable <id>` set `enabled` on a repo; `--group` targets a group id instead. Both edit via `toml_edit`, then `sync` unless `--no-sync`. `enable` removes the key rather than writing `enabled = true`.
+- `refs disable <id>` / `refs enable <id>` set `enabled` on a repo; `--group` targets a group id instead. Both edit via `toml_edit` and do not run `sync` yet (§10). `enable` removes the key rather than writing `enabled = true`.
 
 ---
 
@@ -403,10 +403,10 @@ Exit codes: `0` ok, `1` error, `2` usage error, `3` `--check` found something ou
 | Command | Behaviour |
 |---|---|
 | `refs init [--here]` | Create `refs.toml` (commented template) if absent, add the empty managed block to `agents_files`, add the exclude rule. Print the linter/formatter reminder and the CLAUDE.md note. Idempotent. Warns and stops if a parent directory already has a `refs.toml`, unless `--here` (§5). |
-| `refs add <url> [--id <id>] [--group <g>] [--ref <r>] [--paths <p>…] [--packages <p>…] [--start <p>…] [--description <d>] [--no-sync]` | Append a repo via `toml_edit`. Id defaults to the URL's last path segment. Creates the group stub if missing. Unless `--no-sync`, runs `lock` for that repo and then `sync`. |
-| `refs remove <id> [--no-sync]` | Remove the repo entry, leaving comments and other entries alone. Remove an empty group only if it has no description. Then `sync` unless `--no-sync`. |
-| `refs enable <id> [--group] [--no-sync]`, `refs disable <id> [--group] [--no-sync]` | Set or clear `enabled` on a repo, or on a group with `--group` (§6.4). Then `sync` unless `--no-sync`. |
-| `refs list` | Repos grouped: id, url, requested ref, locked SHA (short), checkout state (ok / missing / wrong SHA / not locked / disabled). |
+| `refs add <url> [--id <id>] [--group <g>] [--ref <r>] [--paths <p>…] [--packages <p>…] [--start <p>…] [--description <d>]` | Append a repo at the end of `refs.toml` via `toml_edit`. Id defaults to the URL's last path segment with a trailing `.git` stripped; a taken id is an error pointing at `--id`. An unknown `--group` is an error (no stub is created). Edits only: prints a note to run `refs sync`. Locking the new repo, running `sync` and `--no-sync` are deferred (#22). |
+| `refs remove <id>` | Remove the repo entry, leaving comments and other entries alone. Remove its group when this was the group's last repo (disabled repos count) and the group has no description. Edits only, like `add` (#22). |
+| `refs enable <id> [--group]`, `refs disable <id> [--group]` | Set or clear `enabled` on a repo, or on a group with `--group` (§6.4). Edits only, like `add` (#22). |
+| `refs list` | Repos grouped: id, url, requested ref, paths, and whether enabled (disabled ones marked). Reads the config only: no lock, no git. The locked SHA (short) and checkout state (ok / missing / wrong SHA / not locked / disabled) are deferred (#22). |
 | `refs lock [--upgrade [<id>…]]` | Resolve refs → SHAs and write `refs.lock`. Without `--upgrade`, an already-locked repo keeps its SHA (and `branch`) while its `url`, `ref` and `source` are unchanged; a changed `paths` only refreshes the lock entry's `paths`, so editing `paths` never moves a floating ref. A repo that was disabled and is enabled again is re-resolved (§6.4). With `--upgrade`, re-resolve floating refs (all, or the given ids), refreshing `branch` for `HEAD` refs. No checkouts touched. Also checks `start` paths (§7.2). |
 | `refs sync [--check] [--offline] [--force]` | See below. `--check`: use the existing lock only; never resolve refs, fetch, or write. Exit 3 if the lock, checkouts or blocks are out of date (CI, pre-commit). Floating-ref movement upstream is detected only by `lock --upgrade`. `--offline`: never contact the network; requires a current lock and all objects needed to materialise the desired checkouts, including the blobs for the sparse paths (§7.3 step 1b), already in the cache. Missing required objects are an error. Combined with `--check`, inspect existing state without fetching or materialising; out-of-date state exits 3. `--force`: discard local changes in checkouts (§7.3). |
 
