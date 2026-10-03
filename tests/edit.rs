@@ -250,3 +250,16 @@ url = \"https://github.com/o/c\"
 "
     );
 }
+
+#[test]
+fn remove_also_drops_a_stub_group_that_add_found_empty() {
+    // The one exception to the byte-identical round trip (spec §10): a group with no repos
+    // and no description renders nothing, and `remove` cleans it up with the repo.
+    let text = "[groups.g]\nname = \"G\"\n";
+    let req = AddRepo {
+        group: Some("g".into()),
+        ..new_repo("https://github.com/o/r")
+    };
+    let added = add(text, &req).unwrap();
+    assert_eq!(remove(&added, "r").unwrap(), "");
+}
