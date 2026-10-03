@@ -100,30 +100,41 @@ pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
             None => return Report::new(Outcome::OutOfDate, drift, vec![]),
         }
     } else {
-        let lock_flags = LockFlags {
-            offline: flags.offline,
-            ..LockFlags::default()
-        };
-        match stage_one(source, &active, old, &lock_flags, root) {
+        match stage_one(source, &active, old, &lock_flags(flags), root) {
             Ok(lock) => lock,
             Err(report) => return report.with_drift(drift),
         }
     };
-    let plan = match plan_stage_two(source, root, config, &active, &lock, flags.force) {
+    finish(source, root, config, &active, &lock, drift, flags)
+}
+
+/// Stage 1 as `sync` runs it: only `offline` carries over.
+fn lock_flags(flags: &SyncFlags) -> LockFlags {
+    LockFlags {
+        offline: flags.offline,
+        ..LockFlags::default()
+    }
+}
+
+/// Stage 2 against a Lock that stage 1 has just produced (or, with `--check`, the one on
+/// disk): plan the checkouts, then report on the plan or apply it.
+fn finish(
+    source: &dyn Source,
+    root: &Path,
+    config: &Config,
+    active: &ActiveSet,
+    lock: &Lock,
+    drift: Vec<Drift>,
+    flags: &SyncFlags,
+) -> Report {
+    let plan = match plan_stage_two(source, root, config, active, lock, flags.force) {
         Ok(plan) => plan,
         // Only `--check` can meet a Lock that does not cover the active set, and it does not
         // repair it: the Lock is what is out of date.
         Err(StageTwoError::NotLocked(_)) if flags.check => {
             return Report::new(Outcome::OutOfDate, drift, vec![]);
         }
-        // After stage 1 the Lock covers every active Repo, so this is a bug, not drift.
-        Err(StageTwoError::NotLocked(e)) => {
-            return Report::new(Outcome::Failed, drift, vec![e.into()]);
-        }
-        Err(StageTwoError::NotObserved(e)) => {
-            return Report::new(Outcome::Failed, drift, vec![e.into()]);
-        }
-        Err(StageTwoError::Read(errors)) => return Report::new(Outcome::Failed, drift, errors),
+        Err(e) => return Report::new(Outcome::Failed, drift, e.into_reports()),
     };
     if flags.check {
         check(plan, drift)
@@ -151,8 +162,8 @@ pub struct Edited {
 }
 
 /// `refs.toml` was `before` and has been edited to `after`: run stage 1 against that
-/// config, and only if it passes write `refs.toml` (stage 1 writes the Lock), then sync the
-/// project to it. A stage 2 failure keeps the edit and the Lock; `refs sync` retries it. An
+/// config, and only if it passes write `refs.toml` (stage 1 writes the Lock), then run stage 2
+/// on the Lock stage 1 produced, so each Repo is verified once. A stage 2 failure keeps the edit and the Lock; `refs sync` retries it. An
 /// edit that changes nothing writes nothing and just syncs. The Lock is written before
 /// `refs.toml`, so a failed write of `refs.toml` leaves a Lock with an entry the config does
 /// not have, which the next `sync` removes.
@@ -178,13 +189,24 @@ pub fn sync_edited(
             report: sync(source, root, &config, flags),
         };
     }
-    let staged = lock(source, root, &config, &LockFlags::default());
-    if staged.outcome != Outcome::InSync {
-        return Edited {
-            change: Change::Rejected,
-            report: staged,
-        };
-    }
+    let Preflight { active, old, drift } = match preflight(root, &config) {
+        Ok(preflight) => preflight,
+        Err(report) => {
+            return Edited {
+                change: Change::Rejected,
+                report,
+            };
+        }
+    };
+    let lock = match stage_one(source, &active, old, &lock_flags(flags), root) {
+        Ok(lock) => lock,
+        Err(report) => {
+            return Edited {
+                change: Change::Rejected,
+                report: report.with_drift(drift),
+            };
+        }
+    };
     if let Err(e) = project::write_config(root, after) {
         return Edited {
             change: Change::Rejected,
@@ -193,7 +215,7 @@ pub fn sync_edited(
     }
     Edited {
         change: Change::Written,
-        report: sync(source, root, &config, flags),
+        report: finish(source, root, &config, &active, &lock, drift, flags),
     }
 }
 
@@ -266,6 +288,17 @@ enum StageTwoError {
     NotObserved(NotObserved),
     /// Reading the project or the checkouts failed; every failure is collected.
     Read(Vec<miette::Report>),
+}
+
+impl StageTwoError {
+    /// After stage 1 the Lock covers every active Repo, so `NotLocked` here is a bug too.
+    fn into_reports(self) -> Vec<miette::Report> {
+        match self {
+            StageTwoError::NotLocked(e) => vec![e.into()],
+            StageTwoError::NotObserved(e) => vec![e.into()],
+            StageTwoError::Read(errors) => errors,
+        }
+    }
 }
 
 /// Read the project and what is on disk, then plan the checkouts.

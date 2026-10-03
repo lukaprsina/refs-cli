@@ -95,3 +95,32 @@ fn an_edit_that_changes_nothing_writes_nothing_but_still_syncs() {
     assert_eq!(edited.report.outcome, Outcome::InSync);
     assert!(read(&dir, "refs.lock").unwrap().contains("id = \"a\""));
 }
+
+#[test]
+fn an_edit_verifies_every_repo_once() {
+    let dir = project();
+    let source = FakeSource::new();
+
+    sync_edited(&source, dir.path(), BEFORE, AFTER, &SyncFlags::default());
+
+    let verified: Vec<_> = source
+        .calls()
+        .into_iter()
+        .filter_map(|c| match c {
+            Call::Verify { id, .. } => Some(id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(verified.len(), 2, "{verified:?}");
+}
+
+#[test]
+fn an_edit_reports_how_the_lock_differed_from_it() {
+    let dir = project();
+    let source = FakeSource::new();
+    sync_edited(&source, dir.path(), BEFORE, BEFORE, &SyncFlags::default());
+
+    let edited = sync_edited(&source, dir.path(), BEFORE, AFTER, &SyncFlags::default());
+
+    assert_eq!(edited.report.drift.len(), 1, "{:?}", edited.report.drift);
+}
