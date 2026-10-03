@@ -86,12 +86,21 @@ Caveat: one vendor, one framework that models already know changes often. Vercel
 
 Ranked:
 
-1. `add` infers `packages` from `package.json` `name`s under `paths`.
+1. `add` infers `packages` from `package.json` `name`s under `paths`. This becomes the default way `packages` gets filled; `--packages` (and the other `add` metadata flags) only override it.
 2. An optional inline tree as an add-on to the header lines (Vercel favoured one; revisit if evals show a gap).
 3. Per-file hints (titles, export names), if evals show a need. Markdown/MDX via a real parser (`pulldown-cmark` or `markdown`), never regex scraping.
 4. Linter/formatter exclusion: generating ignore entries for common tools. In the MVP this is the user's job; `init` says so.
 5. Ref resolution from package lockfiles (`package.json`/`pnpm-lock.yaml` version → git tag).
-6. `--json` output, `gc`/`clean` for the global cache.
+6. `--json` output.
+
+**CLI alignment with uv (ADR 0005), after the architecture polish and before rank 1.** One batch, no new features before it:
+
+- `--upgrade` takes no values; `--upgrade-package <id>` (repeatable) names repos.
+- `lock --check`; `sync --locked` and `--frozen`.
+- `--offline` global rather than on `sync` only; `-v`/`--color`, short flags where uv has them.
+- `remove`, `enable` and `disable` take several ids: one edit, one lock, one sync.
+- `add` input shorthand: an explicit `gh:owner/repo` (alias `github:`) prefix, never a bare `owner/repo`. Input sugar only: `refs.toml` stores the expanded URL. Further hosts later (`gl:`).
+- `refs cache clean`/`prune` for the global cache (formerly `gc`/`clean`, rank 6). Required before any release.
 
 ### 3.3 Considered and discarded (with reasons)
 
@@ -234,6 +243,7 @@ A disabled repo behaves as if it were commented out of the config, but stays vis
 - **Block:** a disabled repo has no Entry. A group with no active repos renders no heading (this holds for enabled groups that simply have no repos too).
 - **Re-enabling** re-resolves the ref, exactly as uncommenting would. A floating ref may land on a newer commit than before; the old pin isn't kept.
 - **Validation still applies** to disabled entries (id, dangling group, `paths`, `start` syntax), but nothing is resolved or fetched for them. `list` shows them marked `disabled`; the later `doctor` reports how many are disabled (info).
+- Disabling and groups stay despite having no `uv` counterpart (ADR 0005): Repos and Groups are not colocated in the TOML, so a switch on either is not the same as editing a line.
 - `refs disable <id>` / `refs enable <id>` set `enabled` on a repo; `--group` targets a group id instead. Both edit via `toml_edit`, then lock and sync like `add` (§10). `enable` removes the key rather than writing `enabled = true`.
 
 ---
@@ -395,7 +405,7 @@ Solid 2.0 release candidates, router and docs. Newer than your training data; ma
 
 ## 10. CLI
 
-Semantics follow `uv`: config is intent, the lock is resolution, `sync` makes the disk match the lock. Nothing updates behind the user's back.
+Semantics follow `uv` (ADR 0005): config is intent, the lock is resolution, `sync` makes the disk match the lock. Nothing updates behind the user's back.
 
 Global flags: `--project <dir>`, `-q/--quiet`, `--no-color`.
 Exit codes: `0` ok, `1` error, `2` usage error, `3` `--check` found something out of date. `--check` exits 1, not 3, for a refusal (a foreign or dirty checkout, malformed markers): `sync` would refuse it too, so "run `refs sync`" would be the wrong advice.
