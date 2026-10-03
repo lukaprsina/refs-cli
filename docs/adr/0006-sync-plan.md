@@ -25,7 +25,7 @@ Which Repos re-resolve is a pure decision, but the pins it produces exist only a
 ## The Plan is grouped by Repo
 
 ```
-Plan { repos: Vec<RepoAction>, writes: Vec<WriteAgentFile>, exclude: Option<…>, refusals, notes }
+Plan { repos: Vec<RepoAction>, writes: Vec<WriteAgentFile>, exclude: Option<ExcludeAction>, refusals: Vec<Refusal> }
 ```
 
 - A `RepoAction` is one unit per Repo: `Materialise { repo, pin }` (create or move; `Source` tells which), `Replace { repo, pin, note }` (remove, then materialise: a Dangling Checkout, or a dirty one under `--force`) and `Remove { id }` (a Checkout of a name that is no longer active; a Checkout can outlive its config entry, so this takes an id). Actions for active Repos carry the `RepoRef`, so the executor never looks a Repo up again.
