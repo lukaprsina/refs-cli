@@ -1,3 +1,7 @@
+---
+status: superseded by 0006
+---
+
 # `sync` plans in two stages: lock, then checkouts
 
 Which Repos re-resolve is a pure decision, but the pins it produces exist only after `resolve` has run, so one `plan` over (config, Lock, `Observed`) cannot also decide the checkouts. Planning is split into two pure functions with the executor between them.
