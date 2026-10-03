@@ -1,4 +1,5 @@
-//! Marker parsing and splicing for Agent files. Pure functions over text.
+//! Marker parsing and splicing for Agent files. `splice` is a pure function over text; `read`
+//! and `write` are the file's I/O.
 
 use std::io::ErrorKind;
 use std::path::Path;
