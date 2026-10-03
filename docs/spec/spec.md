@@ -305,7 +305,7 @@ Before 2.36.0, `sparse-checkout set` in a worktree of a bare repo enabled `exten
 
 ### 7.6 Exclusion
 
-- `sync` and `init` ensure `/<references_dir>/` is a line in `<git-dir>/info/exclude` (the common git dir for linked worktrees of the project). Per-clone, which is fine since every clone runs `sync`.
+- `sync` and `init` ensure `/<references_dir>/` is a line in `<git-dir>/info/exclude` (the common git dir for linked worktrees of the project). Found with `git rev-parse --git-common-dir`, so a linked worktree writes to the main repository's file. A project below the repository top gets the rule anchored there, `/<path from the top>/<references_dir>/`. Per-clone, which is fine since every clone runs `sync`.
 - If the project isn't in a git repo, `plan` emits an info note and continues; it is not drift.
 - Consequence we rely on: default searches (ripgrep) skip `.references/`, so a grep for `useEffect` finds only the user's code. When a search path is passed explicitly (e.g. `.references/solid`), ripgrep searches it anyway. Hidden entries inside a checkout (e.g. `.github/`) stay skipped.
 - Linters, formatters and type checkers are **the user's responsibility** in the MVP. `init` prints a reminder (and the later `doctor` repeats it).

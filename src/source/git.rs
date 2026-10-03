@@ -4,7 +4,7 @@
 
 pub mod cache;
 pub mod checkout;
-mod command;
+pub(crate) mod command;
 pub mod remote;
 
 use std::path::{Path, PathBuf};

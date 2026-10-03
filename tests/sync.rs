@@ -25,7 +25,12 @@ struct Project {
 impl Project {
     fn new(config: &str) -> Project {
         let dir = TempDir::new().unwrap();
-        fs::create_dir_all(dir.path().join(".git/info")).unwrap();
+        let status = std::process::Command::new("git")
+            .current_dir(dir.path())
+            .args(["init", "-q"])
+            .status()
+            .unwrap();
+        assert!(status.success());
         Project {
             dir,
             source: FakeSource::new(),
@@ -192,7 +197,7 @@ fn check_on_a_fresh_project_is_out_of_date_and_does_nothing() {
     assert_eq!(p.source.calls(), []);
     assert_eq!(p.lock(), None);
     assert_eq!(p.read("AGENTS.md"), None);
-    assert_eq!(p.read(".git/info/exclude"), None);
+    assert!(!p.read(".git/info/exclude").unwrap().contains(".references"));
 }
 
 #[test]

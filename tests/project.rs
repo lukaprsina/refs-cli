@@ -114,7 +114,7 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
 
     fn git_project() -> TempDir {
         let dir = TempDir::new().unwrap();
-        fs::create_dir_all(dir.path().join(".git/info")).unwrap();
+        git(dir.path(), &["init", "-q"]);
         dir
     }
 
@@ -160,10 +160,7 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
         assert_eq!(exclude(&dir), Exclude::Missing);
         ensure_exclude(dir.path(), "refs").unwrap();
         assert_eq!(exclude(&dir), Exclude::Present);
-        assert_eq!(
-            fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap(),
-            "/refs/\n"
-        );
+        assert_eq!(rule_count(&dir.path().join(".git"), "/refs/"), 1);
     }
 
     #[test]
@@ -187,6 +184,102 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
         let observed = observe(dir.path(), &parse(CONFIG).unwrap(), vec![]).unwrap();
 
         assert_eq!(observed.exclude, Exclude::Missing);
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    /// How many lines of `<git_dir>/info/exclude` are exactly `rule`.
+    fn rule_count(git_dir: &std::path::Path, rule: &str) -> usize {
+        fs::read_to_string(git_dir.join("info/exclude"))
+            .unwrap()
+            .lines()
+            .filter(|l| *l == rule)
+            .count()
+    }
+
+    /// A repository with one commit, so that it can have linked worktrees.
+    fn repo() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        git(dir.path(), &["init", "-q", "-b", "main"]);
+        git(dir.path(), &["commit", "-q", "--allow-empty", "-m", "x"]);
+        dir
+    }
+
+    #[test]
+    fn a_linked_worktree_gets_the_rule_in_the_common_git_dir() {
+        let main = repo();
+        let linked = TempDir::new().unwrap();
+        let linked_path = linked.path().join("wt");
+        git(
+            main.path(),
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                linked_path.to_str().unwrap(),
+            ],
+        );
+        let config = parse(CONFIG).unwrap();
+        let exclude = || observe(&linked_path, &config, vec![]).unwrap().exclude;
+
+        assert_eq!(exclude(), Exclude::Missing);
+        ensure_exclude(&linked_path, "refs").unwrap();
+
+        assert_eq!(exclude(), Exclude::Present);
+        assert_eq!(rule_count(&main.path().join(".git"), "/refs/"), 1);
+    }
+
+    #[test]
+    fn a_project_below_the_repository_top_gets_a_rule_anchored_to_the_top() {
+        let top = repo();
+        let project = top.path().join("packages/app");
+        fs::create_dir_all(&project).unwrap();
+        let config = parse(CONFIG).unwrap();
+        let exclude = || observe(&project, &config, vec![]).unwrap().exclude;
+
+        assert_eq!(exclude(), Exclude::Missing);
+        ensure_exclude(&project, "refs").unwrap();
+
+        assert_eq!(exclude(), Exclude::Present);
+        let git_dir = top.path().join(".git");
+        assert_eq!(rule_count(&git_dir, "/packages/app/refs/"), 1);
+        assert_eq!(rule_count(&git_dir, "/refs/"), 0);
+    }
+
+    #[test]
+    fn a_bare_repository_has_nowhere_for_the_rule() {
+        let dir = TempDir::new().unwrap();
+        git(dir.path(), &["init", "-q", "--bare"]);
+
+        let observed = observe(dir.path(), &parse(CONFIG).unwrap(), vec![]).unwrap();
+
+        assert_eq!(observed.exclude, Exclude::NoGit);
+        ensure_exclude(dir.path(), "refs").unwrap();
+        assert_eq!(rule_count(dir.path(), "/refs/"), 0);
+    }
+
+    #[test]
+    fn a_path_with_a_newline_gets_no_rule_rather_than_a_rule_in_the_wrong_place() {
+        let parent = TempDir::new().unwrap();
+        let dir = parent.path().join("a\nb");
+        fs::create_dir(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+
+        let observed = observe(&dir, &parse(CONFIG).unwrap(), vec![]).unwrap();
+
+        assert_eq!(observed.exclude, Exclude::NoGit);
+        ensure_exclude(&dir, "refs").unwrap();
+        assert_eq!(fs::read_dir(parent.path()).unwrap().count(), 1);
     }
 
     #[test]

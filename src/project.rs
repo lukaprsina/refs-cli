@@ -7,6 +7,7 @@ use crate::agent_file;
 use crate::config::{self, Config};
 use crate::diagnostic::ProjectError;
 use crate::plan::{AgentFileText, Exclude, ProjectObserved};
+use crate::source::git::command::Cmd;
 
 pub const CONFIG_FILE: &str = "refs.toml";
 
@@ -141,28 +142,57 @@ pub fn observe(
     })
 }
 
-fn exclude_line(references_dir: &str) -> String {
-    format!("/{references_dir}/")
+/// Where the exclude rule goes: the common git dir's `info/exclude`, and the project's
+/// path below the top of its worktree, which anchors the rule.
+struct ExcludeFile {
+    path: PathBuf,
+    prefix: String,
+}
+
+impl ExcludeFile {
+    /// Ask git, so a linked worktree or a project below the repository top is found too.
+    /// `None` when `root` is not in a git worktree (a bare repository or the inside of a
+    /// `.git` has no place for the rule), or when git's answer cannot be read back safely.
+    fn find(root: &Path) -> Option<ExcludeFile> {
+        let out = Cmd::new()
+            .own_repository()
+            .dir(root)
+            .args([
+                "rev-parse",
+                "--path-format=absolute",
+                "--is-inside-work-tree",
+            ])
+            .args(["--git-common-dir", "--show-prefix"])
+            .run()
+            .ok()?;
+        // A path with a newline in it would split into more lines, and so is not trusted.
+        let answer: Vec<&str> = out.strip_suffix('\n')?.split('\n').collect();
+        let [inside, common, prefix] = answer[..] else {
+            return None;
+        };
+        (inside == "true").then(|| ExcludeFile {
+            path: Path::new(common).join("info/exclude"),
+            prefix: prefix.to_string(),
+        })
+    }
+
+    fn line(&self, references_dir: &str) -> String {
+        format!("/{}{references_dir}/", self.prefix)
+    }
 }
 
 fn read_exclude(root: &Path, references_dir: &str) -> Result<Exclude, ProjectError> {
-    let git = root.join(".git");
-    if !git.is_dir() {
+    let Some(file) = ExcludeFile::find(root) else {
         return Ok(Exclude::NoGit);
-    }
-    let path = git.join("info/exclude");
-    match std::fs::read_to_string(&path) {
-        Ok(text)
-            if text
-                .lines()
-                .any(|l| l.trim() == exclude_line(references_dir)) =>
-        {
+    };
+    match std::fs::read_to_string(&file.path) {
+        Ok(text) if text.lines().any(|l| l.trim() == file.line(references_dir)) => {
             Ok(Exclude::Present)
         }
         Ok(_) => Ok(Exclude::Missing),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(Exclude::Missing),
         Err(source) => Err(ProjectError::Read {
-            path: path.display().to_string(),
+            path: file.path.display().to_string(),
             source,
         }),
     }
@@ -170,12 +200,15 @@ fn read_exclude(root: &Path, references_dir: &str) -> Result<Exclude, ProjectErr
 
 /// Add the exclude rule for `references_dir` to the Project's git exclude file.
 pub fn ensure_exclude(root: &Path, references_dir: &str) -> Result<(), ProjectError> {
-    let path = root.join(".git/info/exclude");
+    let Some(file) = ExcludeFile::find(root) else {
+        return Ok(());
+    };
+    let path = &file.path;
     let write = |source| ProjectError::Write {
         path: path.display().to_string(),
         source,
     };
-    let mut text = match std::fs::read_to_string(&path) {
+    let mut text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
         Err(source) => return Err(write(source)),
@@ -183,8 +216,8 @@ pub fn ensure_exclude(root: &Path, references_dir: &str) -> Result<(), ProjectEr
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
-    text.push_str(&exclude_line(references_dir));
+    text.push_str(&file.line(references_dir));
     text.push('\n');
     std::fs::create_dir_all(path.parent().expect("a file has a parent")).map_err(write)?;
-    crate::atomic::write(&path, &text).map_err(write)
+    crate::atomic::write(path, &text).map_err(write)
 }
