@@ -43,18 +43,19 @@ impl Cache {
         }
     }
 
-    /// Run `f` on the Cache repository for `url` while holding its lock, waiting for any
-    /// other holder. A missing repository is cloned, unless `offline`: then it is an error
-    /// naming `sha`, the commit the caller wanted.
-    pub fn with_repo<T>(
+    /// `<cache_root>/git`: where the Cache repositories are, and where a worktree's admin
+    /// directory must be to be one of ours.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Run `f` while holding the lock of the Cache entry `name`, waiting for any other holder.
+    fn locked<T>(
         &self,
-        url: &str,
-        sha: &str,
-        offline: bool,
-        f: impl FnOnce(&Repo) -> Result<T, SourceError>,
+        name: &str,
+        f: impl FnOnce() -> Result<T, SourceError>,
     ) -> Result<T, SourceError> {
         fs::create_dir_all(&self.root).map_err(|e| io("could not create", &self.root, e))?;
-        let name = cache_dir_name(url);
         let lock_path = self.root.join(format!("{name}.lock"));
         let file = OpenOptions::new()
             .create(true)
@@ -66,23 +67,55 @@ impl Cache {
         let _held = lock
             .write()
             .map_err(|e| io("could not lock", &lock_path, e))?;
-        let dir = self.root.join(&name);
-        let url_file = self.root.join(format!("{name}.url"));
-        if dir.exists() {
-            Self::check_url(&url_file, url)?;
-        } else if offline {
-            return Err(SourceError::NotCached {
-                url: url.into(),
-                sha: sha.into(),
-            });
-        } else {
-            self.clone_repo(url, &name)?;
-        }
-        if !url_file.exists() {
-            crate::atomic::write(&url_file, &format!("{url}\n"))
-                .map_err(|e| io("could not write", &url_file, e))?;
-        }
-        f(&Repo { dir })
+        f()
+    }
+
+    /// Run `f` on the Cache repository for `url` while holding its lock. A missing repository
+    /// is cloned, unless `offline`: then it is an error naming `sha`, the commit the caller
+    /// wanted.
+    pub fn with_repo<T>(
+        &self,
+        url: &str,
+        sha: &str,
+        offline: bool,
+        f: impl FnOnce(&Repo) -> Result<T, SourceError>,
+    ) -> Result<T, SourceError> {
+        let name = cache_dir_name(url);
+        self.locked(&name, || {
+            let dir = self.root.join(&name);
+            let url_file = self.root.join(format!("{name}.url"));
+            if dir.exists() {
+                Self::check_url(&url_file, url)?;
+            } else if offline {
+                return Err(SourceError::NotCached {
+                    url: url.into(),
+                    sha: sha.into(),
+                });
+            } else {
+                self.clone_repo(url, &name)?;
+            }
+            if !url_file.exists() {
+                crate::atomic::write(&url_file, &format!("{url}\n"))
+                    .map_err(|e| io("could not write", &url_file, e))?;
+            }
+            f(&Repo { dir })
+        })
+    }
+
+    /// Run `f` on the existing Cache repository `name` while holding its lock. For what a
+    /// Checkout needs without knowing a URL: the entry is the one its `.git` names.
+    pub fn with_entry<T>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&Repo) -> Result<T, SourceError>,
+    ) -> Result<T, SourceError> {
+        self.locked(name, || {
+            let dir = self.root.join(name);
+            if !dir.is_dir() {
+                return Err(failed(format!("the cache entry {} is gone", dir.display())));
+            }
+            f(&Repo { dir })
+        })
     }
 
     /// The file beside a Cache repository names the URL it was cloned from. Two URLs with

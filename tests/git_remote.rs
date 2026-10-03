@@ -4,8 +4,10 @@ use miette::Diagnostic;
 use refs_cli::source::git::cache::cache_root;
 use refs_cli::source::git::remote::{
     EntryKind, ancestor_dirs, cache_dir_name, check_input, check_version, commit_unavailable,
-    entry_kind, missing_object, missing_oids, normalise_url, select_head, select_ref, tree_blobs,
+    dirty_files, entry_kind, lexical_path, missing_object, missing_oids, normalise_url,
+    parse_gitdir, select_head, select_ref, tree_blobs, worktree_entry,
 };
+use std::path::Path;
 
 const URL: &str = "https://example.com/o/r";
 const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -331,5 +333,66 @@ mod cache_root {
     #[test]
     fn with_neither_there_is_no_cache() {
         assert_eq!(cache_root(None, None), None);
+    }
+}
+
+mod checkout_files {
+    use super::*;
+
+    const ROOT: &str = "/cache/refs/git";
+    const ENTRY: &str = "0123456789abcdef";
+
+    fn entry(admin: &str) -> Option<String> {
+        worktree_entry(Path::new(admin), Path::new(ROOT))
+    }
+
+    #[test]
+    fn the_gitdir_is_the_path_after_the_prefix() {
+        assert_eq!(parse_gitdir("gitdir: /a/b\n"), Some("/a/b"));
+        assert_eq!(parse_gitdir("gitdir:/a/b"), Some("/a/b"));
+        assert_eq!(parse_gitdir("ref: refs/heads/main\n"), None);
+        assert_eq!(parse_gitdir("gitdir: \n"), None);
+        assert_eq!(parse_gitdir(""), None);
+    }
+
+    #[test]
+    fn dots_are_resolved_by_name() {
+        assert_eq!(lexical_path(Path::new("/a/./b/../c")), Path::new("/a/c"));
+    }
+
+    #[test]
+    fn a_worktree_of_a_cache_entry_names_the_entry() {
+        assert_eq!(
+            entry(&format!("{ROOT}/{ENTRY}/worktrees/r1")),
+            Some(ENTRY.into())
+        );
+        assert_eq!(
+            entry(&format!("{ROOT}/x/../{ENTRY}/worktrees/r1")),
+            Some(ENTRY.into())
+        );
+    }
+
+    #[test]
+    fn anything_else_is_not_ours() {
+        for admin in [
+            "/elsewhere/0123456789abcdef/worktrees/r1".to_string(),
+            format!("{ROOT}/{ENTRY}"),
+            format!("{ROOT}/{ENTRY}/worktrees"),
+            format!("{ROOT}/{ENTRY}/worktrees/r1/extra"),
+            format!("{ROOT}/{ENTRY}/modules/r1"),
+            format!("{ROOT}/short/worktrees/r1"),
+            format!("{ROOT}/../outside/{ENTRY}/worktrees/r1"),
+        ] {
+            assert_eq!(entry(&admin), None, "{admin}");
+        }
+    }
+
+    #[test]
+    fn dirty_files_are_the_paths_of_the_status_entries() {
+        assert_eq!(
+            dirty_files(" M docs/a.md\0?? notes.txt\0?? with space.txt\0"),
+            ["docs/a.md", "notes.txt", "with space.txt"]
+        );
+        assert!(dirty_files("").is_empty());
     }
 }

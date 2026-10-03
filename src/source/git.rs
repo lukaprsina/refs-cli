@@ -3,6 +3,7 @@
 //! call site can skip them.
 
 pub mod cache;
+mod checkout;
 mod command;
 pub mod remote;
 
@@ -12,8 +13,9 @@ use crate::config::{RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
 use crate::source::{MaterialiseOpts, Observed, Pin, PinKind, Source, VerifyOpts};
 use cache::{Cache, Repo};
+use checkout::{Layout, Record};
 use command::Cmd;
-use remote::EntryKind;
+use remote::{EntryKind, cache_dir_name, dirty_files};
 
 pub struct GitSource {
     cache: Cache,
@@ -109,43 +111,157 @@ impl Source for GitSource {
         let PinKind::Git { url, sha, .. } = &pin.0;
         remote::check_sha(sha)?;
         let dest = self.checkouts.join(repo.id);
+        let entry = cache_dir_name(url);
         let paths = repo.repo.path_strings();
+        // A Checkout of another remote cannot move here: its objects are in another Cache.
+        if let Layout::Linked(link) = checkout::layout(&dest, self.cache.root())?
+            && link.entry != entry
+        {
+            self.remove(repo.id)?;
+        }
         self.cache.with_repo(url, sha, opts.offline, |cache| {
             // Checked under the lock, so what is discarded on failure is only what this call made.
-            if std::fs::symlink_metadata(&dest).is_ok() {
-                return Err(SourceError::Failed {
-                    message: format!(
-                        "{} already exists; moving a Checkout lands in #8",
-                        dest.display()
-                    ),
-                });
-            }
+            let moving = match checkout::layout(&dest, self.cache.root())? {
+                Layout::Absent => false,
+                Layout::Linked(link) if link.entry == entry => true,
+                _ => {
+                    return Err(SourceError::Failed {
+                        message: format!(
+                            "{} is not a Checkout of this Repo; refs leaves it alone",
+                            dest.display()
+                        ),
+                    });
+                }
+            };
             cache.ensure_commit(url, sha, opts.offline)?;
             if !opts.offline {
                 cache.prefetch(sha, &paths)?;
             }
-            add_worktree(cache, repo.id, &dest, sha, &paths).inspect_err(|_| discard(cache, &dest))
+            // A move is a fresh Checkout of the new commit: the blobs prefetched are exactly
+            // those it reads, which changing the sparse paths and the commit in place would
+            // not guarantee. Nothing of the old one is removed before they are here.
+            if moving {
+                remove_worktree(cache, &dest)?;
+            }
+            add_worktree(cache, repo.id, &dest, sha, &paths)
+                .and_then(|()| record(&self.cache, &dest, pin, paths))
+                .inspect_err(|_| discard(cache, &dest))
         })
     }
 
-    fn remove(&self, _: &str) -> Result<(), SourceError> {
-        not_implemented()
+    fn remove(&self, id: &str) -> Result<(), SourceError> {
+        let dest = self.checkouts.join(id);
+        match checkout::layout(&dest, self.cache.root())? {
+            Layout::Absent => Ok(()),
+            Layout::Foreign => Err(SourceError::Failed {
+                message: format!("{} was not made by refs; leaving it alone", dest.display()),
+            }),
+            // Its history is gone with the Cache, and `.git` says refs made it.
+            Layout::Dangling => std::fs::remove_dir_all(&dest).map_err(|e| SourceError::Failed {
+                message: format!("could not remove {}: {e}", dest.display()),
+            }),
+            Layout::Linked(link) => self
+                .cache
+                .with_entry(&link.entry, |cache| remove_worktree(cache, &dest)),
+        }
     }
 
-    fn inspect(&self, _: &str) -> Result<Observed, SourceError> {
-        not_implemented()
+    fn inspect(&self, id: &str) -> Result<Observed, SourceError> {
+        let dest = self.checkouts.join(id);
+        match checkout::layout(&dest, self.cache.root())? {
+            Layout::Absent => Ok(Observed::Absent),
+            Layout::Foreign => Ok(Observed::Foreign),
+            Layout::Dangling => Ok(Observed::Dangling),
+            Layout::Linked(link) => self
+                .cache
+                .with_entry(&link.entry, |cache| observe(cache, &dest, &link.admin)),
+        }
     }
 
     fn list(&self) -> Result<Vec<String>, SourceError> {
-        not_implemented()
+        let entries = match std::fs::read_dir(&self.checkouts) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+            Err(e) => {
+                return Err(SourceError::Failed {
+                    message: format!("could not read {}: {e}", self.checkouts.display()),
+                });
+            }
+        };
+        let mut names: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        Ok(names)
     }
 }
 
-/// Checkouts, inspection and removal land in #8.
-fn not_implemented<T>() -> Result<T, SourceError> {
-    Err(SourceError::Failed {
-        message: "git support is not implemented yet".into(),
+/// What is on disk at `dest`, a worktree of `cache`. First repairs the link a moved project
+/// directory broke (silently, spec §7.3), so that the next prune does not forget it.
+fn observe(cache: &Repo, dest: &Path, admin: &Path) -> Result<Observed, SourceError> {
+    let recorded = std::fs::read_to_string(admin.join("gitdir")).unwrap_or_default();
+    let here = dest.join(".git");
+    let here = here.canonicalize().unwrap_or(here);
+    if Path::new(recorded.trim()) != here {
+        // If it cannot be repaired the Checkout is read as it is; a pruned one is dangling.
+        let _ = cache.git().args(["worktree", "repair"]).arg(dest).run();
+    }
+    let head = Cmd::new()
+        .dir(dest)
+        .no_lazy_fetch()
+        .args(["rev-parse", "HEAD"])
+        .run()?
+        .trim()
+        .to_string();
+    // A record of another commit (someone moved HEAD by hand) is not what is checked out.
+    let record = Record::read(admin).filter(|r| {
+        let PinKind::Git { sha, .. } = &r.pin.0;
+        *sha == head
+    });
+    let (pin, paths) = match record {
+        Some(record) => (record.pin, record.paths),
+        None => (Pin::git("", "", &head, None), vec![]),
+    };
+    // `--no-optional-locks`: looking must not write, not even the index refresh.
+    let status = Cmd::new()
+        .dir(dest)
+        .no_lazy_fetch()
+        .args(["--no-optional-locks", "status", "--porcelain=v1", "-z"])
+        .arg("--no-renames")
+        .run()?;
+    Ok(Observed::At {
+        pin,
+        paths,
+        dirty_files: dirty_files(&status),
     })
+}
+
+/// Note what the Checkout at `dest` was made from, beside git's own record of it.
+fn record(cache: &Cache, dest: &Path, pin: &Pin, paths: Vec<String>) -> Result<(), SourceError> {
+    match checkout::layout(dest, cache.root())? {
+        Layout::Linked(link) => Record {
+            pin: pin.clone(),
+            paths,
+        }
+        .write(&link.admin),
+        _ => Err(SourceError::Failed {
+            message: format!("{} is not a worktree of the cache", dest.display()),
+        }),
+    }
+}
+
+/// Remove the worktree and forget its registration. `--force`: it holds generated copies, and
+/// whether edits in it matter is for `plan` to have decided.
+fn remove_worktree(cache: &Repo, dest: &Path) -> Result<(), SourceError> {
+    cache
+        .git()
+        .args(["worktree", "remove", "--force", "--"])
+        .arg(dest)
+        .run()?;
+    cache.git().args(["worktree", "prune"]).run()?;
+    Ok(())
 }
 
 /// Create the Checkout: a detached, sparse worktree of the Cache repository at `dest`, never

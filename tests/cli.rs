@@ -272,3 +272,71 @@ fn the_binary_locks_with_git_and_reports_an_unknown_ref() {
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("refs::git::ref_not_found"), "{stderr}");
 }
+
+fn git(dir: &std::path::Path, args: &[&str]) {
+    let status = Command::new("git")
+        .current_dir(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+#[test]
+fn the_binary_syncs_recreates_a_wiped_cache_and_guards_edits() {
+    let remote = TempDir::new().unwrap();
+    git(remote.path(), &["init", "-q", "-b", "main"]);
+    git(remote.path(), &["config", "uploadpack.allowFilter", "true"]);
+    fs::create_dir_all(remote.path().join("docs")).unwrap();
+    fs::write(remote.path().join("docs/a.md"), "a").unwrap();
+    git(remote.path(), &["add", "."]);
+    git(remote.path(), &["commit", "-q", "-m", "x"]);
+    let project = TempDir::new().unwrap();
+    git(project.path(), &["init", "-q"]);
+    fs::write(
+        project.path().join("refs.toml"),
+        format!(
+            "[repos.r]\nurl = \"file://{}\"\nref = \"main\"\npaths = [\"docs\"]\n",
+            remote.path().display()
+        ),
+    )
+    .unwrap();
+    let sync = |args: &[&str]| {
+        let out = binary(&project, &[&["--no-color", "sync"], args].concat());
+        (out.status.code(), String::from_utf8(out.stderr).unwrap())
+    };
+    let checkout = project.path().join(".references/r");
+
+    assert_eq!(sync(&[]).0, Some(0));
+    assert!(checkout.join("docs/a.md").exists());
+    assert_eq!(sync(&["--check"]).0, Some(0));
+
+    fs::remove_dir_all(project.path().join("cache")).unwrap();
+    let (code, stderr) = sync(&[]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(stderr.contains("refs::sync::recreated"), "{stderr}");
+    assert!(checkout.join("docs/a.md").exists());
+
+    fs::write(checkout.join("docs/a.md"), "edited").unwrap();
+    fs::write(
+        project.path().join("refs.toml"),
+        format!(
+            "[repos.r]\nurl = \"file://{}\"\nref = \"main\"\npaths = []\n",
+            remote.path().display()
+        ),
+    )
+    .unwrap();
+    let (code, stderr) = sync(&[]);
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(stderr.contains("refs::sync::dirty_checkout"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(checkout.join("docs/a.md")).unwrap(),
+        "edited"
+    );
+
+    let (code, stderr) = sync(&["--force"]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(fs::read_to_string(checkout.join("docs/a.md")).unwrap(), "a");
+}

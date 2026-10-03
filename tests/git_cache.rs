@@ -11,7 +11,7 @@ use refs_cli::config::{Repo, RepoRef, parse};
 use refs_cli::diagnostic::SourceError;
 use refs_cli::source::git::GitSource;
 use refs_cli::source::git::remote::cache_dir_name;
-use refs_cli::source::{MaterialiseOpts, Pin, Source, VerifyOpts};
+use refs_cli::source::{MaterialiseOpts, Observed, Pin, Source, VerifyOpts};
 use tempfile::TempDir;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -78,6 +78,17 @@ impl Remote {
 
     fn url(&self) -> String {
         format!("file://{}", self.dir.path().display())
+    }
+
+    /// A second commit: `docs/guide/a.md` and `src/lib.rs` change, `docs/guide/new.md` appears.
+    fn advance(&mut self) {
+        let p = self.dir.path();
+        fs::write(p.join("docs/guide/a.md"), "a, again").unwrap();
+        fs::write(p.join("docs/guide/new.md"), "new").unwrap();
+        fs::write(p.join("src/lib.rs"), "lib, again").unwrap();
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "two"]);
+        self.sha = git(p, &["rev-parse", "HEAD"]);
     }
 
     fn pin(&self) -> Pin {
@@ -537,6 +548,286 @@ mod materialise {
         assert_eq!((result_a, result_b), (Ok(()), Ok(())));
         assert!(env.files("a").contains("docs/guide/a.md"));
         assert!(env.files("b").contains("src/lib.rs"));
+    }
+}
+
+mod checkout {
+    use super::*;
+
+    fn clean_at(remote: &Remote, paths: &[&str]) -> Observed {
+        Observed::At {
+            pin: remote.pin(),
+            paths: paths.iter().map(|p| p.to_string()).collect(),
+            dirty_files: vec![],
+        }
+    }
+
+    #[test]
+    fn nothing_on_disk_is_absent() {
+        let env = Env::new();
+        let source = env.source();
+
+        assert_eq!(source.inspect("r").unwrap(), Observed::Absent);
+        assert_eq!(source.list().unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_fresh_checkout_is_observed_at_its_pin_and_listed() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        fs::create_dir_all(env.checkouts().join("stray")).unwrap();
+
+        assert_eq!(
+            source.inspect("r").unwrap(),
+            clean_at(&remote, &["docs/guide"])
+        );
+        assert_eq!(source.list().unwrap(), ["r", "stray"]);
+    }
+
+    #[test]
+    fn modified_and_untracked_files_are_dirty() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        let checkout = env.checkouts().join("r");
+        fs::write(checkout.join("docs/guide/a.md"), "edited").unwrap();
+        fs::write(checkout.join("notes.txt"), "mine").unwrap();
+
+        let Observed::At { dirty_files, .. } = source.inspect("r").unwrap() else {
+            panic!("a checkout with edits is still a checkout");
+        };
+
+        assert_eq!(dirty_files, ["docs/guide/a.md", "notes.txt"]);
+    }
+
+    #[test]
+    fn a_directory_refs_did_not_make_is_foreign() {
+        let env = Env::new();
+        let source = env.source();
+        let checkouts = env.checkouts();
+        fs::create_dir_all(checkouts.join("plain")).unwrap();
+        fs::create_dir_all(checkouts.join("clone")).unwrap();
+        git(&checkouts.join("clone"), &["init", "-q"]);
+        fs::create_dir_all(checkouts.join("elsewhere")).unwrap();
+        fs::write(
+            checkouts.join("elsewhere/.git"),
+            "gitdir: /somewhere/else/worktrees/x\n",
+        )
+        .unwrap();
+        fs::write(checkouts.join("file"), "not a directory").unwrap();
+
+        for id in ["plain", "clone", "elsewhere", "file"] {
+            assert_eq!(source.inspect(id).unwrap(), Observed::Foreign, "{id}");
+        }
+    }
+
+    #[test]
+    fn a_checkout_whose_cache_was_wiped_is_dangling() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        fs::remove_dir_all(env.cache()).unwrap();
+
+        assert_eq!(source.inspect("r").unwrap(), Observed::Dangling);
+    }
+    #[test]
+    fn remove_takes_the_checkout_and_its_registration() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        fs::write(env.checkouts().join("r/notes.txt"), "mine").unwrap();
+
+        source.remove("r").unwrap();
+
+        assert!(!env.checkouts().join("r").exists());
+        let worktrees = git(
+            &env.cache_repo(&remote),
+            &["worktree", "list", "--porcelain"],
+        );
+        assert_eq!(worktrees.matches("worktree ").count(), 1, "{worktrees}");
+        source.remove("r").unwrap();
+    }
+
+    #[test]
+    fn a_foreign_directory_is_never_removed_or_moved_onto() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        let theirs = env.checkouts().join("r");
+        fs::create_dir_all(&theirs).unwrap();
+        fs::write(theirs.join("keep.txt"), "theirs").unwrap();
+
+        assert!(source.remove("r").is_err());
+        assert!(
+            source
+                .materialise(at("r", &repo), &remote.pin(), MaterialiseOpts::default())
+                .is_err()
+        );
+
+        assert_eq!(
+            fs::read_to_string(theirs.join("keep.txt")).unwrap(),
+            "theirs"
+        );
+    }
+
+    #[test]
+    fn a_dangling_checkout_is_removed_and_made_again() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        fs::remove_dir_all(env.cache()).unwrap();
+
+        source.remove("r").unwrap();
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+
+        assert_eq!(
+            source.inspect("r").unwrap(),
+            clean_at(&remote, &["docs/guide"])
+        );
+        assert!(env.files("r").contains("docs/guide/a.md"));
+    }
+
+    #[test]
+    fn a_checkout_moves_to_another_commit() {
+        let (mut remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        remote.advance();
+
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+
+        assert_eq!(
+            source.inspect("r").unwrap(),
+            clean_at(&remote, &["docs/guide"])
+        );
+        let checkout = env.checkouts().join("r");
+        assert_eq!(
+            fs::read_to_string(checkout.join("docs/guide/a.md")).unwrap(),
+            "a, again"
+        );
+        assert!(checkout.join("docs/guide/new.md").exists());
+    }
+
+    #[test]
+    fn a_move_offline_works_from_what_an_earlier_run_prefetched() {
+        let (mut remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        remote.advance();
+        let other = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "warm", &remote, &other, ONLINE).unwrap();
+
+        materialise(&source, "r", &remote, &repo, OFFLINE).unwrap();
+
+        assert_eq!(env.files("r"), env.files("warm"));
+    }
+
+    #[test]
+    fn changing_the_paths_changes_the_files() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        materialise(
+            &source,
+            "r",
+            &remote,
+            &remote.repo(&["docs/guide"], &[]),
+            ONLINE,
+        )
+        .unwrap();
+        let wider = remote.repo(&["docs/guide", "src"], &[]);
+
+        materialise(&source, "r", &remote, &wider, ONLINE).unwrap();
+
+        assert!(env.files("r").contains("src/lib.rs"));
+        assert_eq!(
+            source.inspect("r").unwrap(),
+            clean_at(&remote, &["docs/guide", "src"])
+        );
+
+        let whole = remote.repo(&[], &[]);
+        materialise(&source, "r", &remote, &whole, ONLINE).unwrap();
+        assert!(env.files("r").contains("docs/api/c.md"));
+    }
+
+    #[test]
+    fn a_failed_move_offline_keeps_the_old_checkout_when_the_commit_is_missing() {
+        let (mut remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        let old = remote.pin();
+        remote.advance();
+
+        assert_eq!(
+            materialise(&source, "r", &remote, &repo, OFFLINE),
+            Err("refs::git::not_cached".into())
+        );
+
+        let Observed::At { pin, .. } = source.inspect("r").unwrap() else {
+            panic!("the old checkout stays");
+        };
+        assert_eq!(pin, old);
+    }
+
+    #[test]
+    fn a_checkout_of_another_remote_is_replaced() {
+        let (first, second, env) = (Remote::new(), Remote::new(), Env::new());
+        let source = env.source();
+        materialise(
+            &source,
+            "r",
+            &first,
+            &first.repo(&["docs/guide"], &[]),
+            ONLINE,
+        )
+        .unwrap();
+
+        materialise(&source, "r", &second, &second.repo(&["src"], &[]), ONLINE).unwrap();
+
+        assert_eq!(source.inspect("r").unwrap(), clean_at(&second, &["src"]));
+        let worktrees = git(
+            &env.cache_repo(&first),
+            &["worktree", "list", "--porcelain"],
+        );
+        assert_eq!(worktrees.matches("worktree ").count(), 1, "{worktrees}");
+    }
+
+    #[test]
+    fn a_moved_project_is_repaired_and_still_a_checkout() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&env.source(), "r", &remote, &repo, ONLINE).unwrap();
+        let moved = env.dir.path().join("moved/.references");
+        fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        fs::rename(env.checkouts(), &moved).unwrap();
+        let source = GitSource::new(env.cache(), moved.clone());
+
+        assert_eq!(
+            source.inspect("r").unwrap(),
+            clean_at(&remote, &["docs/guide"])
+        );
+
+        let worktrees = git(
+            &env.cache_repo(&remote),
+            &["worktree", "list", "--porcelain"],
+        );
+        assert!(
+            worktrees.contains(moved.join("r").to_str().unwrap()),
+            "{worktrees}"
+        );
+        git(&env.cache_repo(&remote), &["worktree", "prune"]);
+        assert_eq!(
+            source.inspect("r").unwrap(),
+            clean_at(&remote, &["docs/guide"])
+        );
     }
 }
 

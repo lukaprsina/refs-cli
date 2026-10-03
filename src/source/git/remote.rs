@@ -1,5 +1,7 @@
 //! Pure helpers for talking to a remote: what to ask, and how to read the answer.
 
+use std::path::{Component, Path, PathBuf};
+
 use sha2::{Digest, Sha256};
 
 use crate::config::{is_full_sha, url_problem};
@@ -229,6 +231,52 @@ pub fn missing_oids(batch_check: &str) -> Vec<String> {
     batch_check
         .lines()
         .filter_map(|line| line.strip_suffix(" missing"))
+        .map(String::from)
+        .collect()
+}
+
+/// The path in a Checkout's `.git` file (`gitdir: <path>`).
+pub fn parse_gitdir(dot_git: &str) -> Option<&str> {
+    let path = dot_git.lines().next()?.strip_prefix("gitdir:")?.trim();
+    (!path.is_empty()).then_some(path)
+}
+
+/// `path` with `.` and `..` resolved by name alone, so a gitdir that no longer exists can
+/// still be placed.
+pub fn lexical_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The Cache entry a worktree's admin directory belongs to, if it is where git puts one:
+/// `<cache_git_root>/<hash>/worktrees/<name>`.
+pub fn worktree_entry(admin: &Path, cache_git_root: &Path) -> Option<String> {
+    let rest = lexical_path(admin)
+        .strip_prefix(lexical_path(cache_git_root))
+        .ok()?
+        .to_path_buf();
+    let mut parts = rest.components().map(|c| c.as_os_str().to_str());
+    let (entry, worktrees, name) = (parts.next()??, parts.next()??, parts.next()??);
+    let is_entry = entry.len() == 16 && entry.bytes().all(|b| b.is_ascii_hexdigit());
+    (is_entry && worktrees == "worktrees" && !name.is_empty() && parts.next().is_none())
+        .then(|| entry.to_string())
+}
+
+/// The paths in `git status --porcelain=v1 -z` output (`XY <path>` entries, NUL separated).
+pub fn dirty_files(porcelain_z: &str) -> Vec<String> {
+    porcelain_z
+        .split('\0')
+        .filter_map(|entry| entry.get(3..))
+        .filter(|path| !path.is_empty())
         .map(String::from)
         .collect()
 }
