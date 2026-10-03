@@ -2,10 +2,11 @@
 
 use miette::Diagnostic;
 use refs_cli::source::git::cache::cache_root;
+use refs_cli::source::git::checkout::{lexical_path, parse_gitdir, worktree_entry};
 use refs_cli::source::git::remote::{
     EntryKind, ancestor_dirs, cache_dir_name, check_input, check_version, commit_unavailable,
-    dirty_files, entry_kind, lexical_path, missing_object, missing_oids, normalise_url,
-    parse_gitdir, select_head, select_ref, tree_blobs, worktree_entry,
+    dirty_files, entry_kind, missing_object, missing_oids, normalise_url, select_head, select_ref,
+    tree_blobs,
 };
 use std::path::Path;
 

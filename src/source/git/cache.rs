@@ -103,8 +103,8 @@ impl Cache {
     }
 
     /// Run `f` on the existing Cache repository `name` while holding its lock. For what a
-    /// Checkout needs without knowing a URL: the entry is the one its `.git` names.
-    pub fn with_entry<T>(
+    /// Checkout needs without knowing a URL: it is the one its `.git` names.
+    pub fn with_named<T>(
         &self,
         name: &str,
         f: impl FnOnce(&Repo) -> Result<T, SourceError>,
@@ -112,7 +112,10 @@ impl Cache {
         self.locked(name, || {
             let dir = self.root.join(name);
             if !dir.is_dir() {
-                return Err(failed(format!("the cache entry {} is gone", dir.display())));
+                return Err(failed(format!(
+                    "the cache repository {} is gone",
+                    dir.display()
+                )));
             }
             f(&Repo { dir })
         })

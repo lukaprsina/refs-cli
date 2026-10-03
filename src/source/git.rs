@@ -3,7 +3,7 @@
 //! call site can skip them.
 
 pub mod cache;
-mod checkout;
+pub mod checkout;
 mod command;
 pub mod remote;
 
@@ -111,11 +111,20 @@ impl Source for GitSource {
         let PinKind::Git { url, sha, .. } = &pin.0;
         remote::check_sha(sha)?;
         let dest = self.checkouts.join(repo.id);
-        let entry = cache_dir_name(url);
+        let cache_name = cache_dir_name(url);
         let paths = repo.repo.path_strings();
+        // Everything that can fail on the network comes first, so that a failure leaves an
+        // existing Checkout alone.
+        self.cache.with_repo(url, sha, opts.offline, |cache| {
+            cache.ensure_commit(url, sha, opts.offline)?;
+            if opts.offline {
+                return Ok(());
+            }
+            cache.prefetch(sha, &paths)
+        })?;
         // A Checkout of another remote cannot move here: its objects are in another Cache.
         if let Layout::Linked(link) = checkout::layout(&dest, self.cache.root())?
-            && link.entry != entry
+            && link.cache_name != cache_name
         {
             self.remove(repo.id)?;
         }
@@ -123,7 +132,7 @@ impl Source for GitSource {
             // Checked under the lock, so what is discarded on failure is only what this call made.
             let moving = match checkout::layout(&dest, self.cache.root())? {
                 Layout::Absent => false,
-                Layout::Linked(link) if link.entry == entry => true,
+                Layout::Linked(link) if link.cache_name == cache_name => true,
                 _ => {
                     return Err(SourceError::Failed {
                         message: format!(
@@ -133,13 +142,9 @@ impl Source for GitSource {
                     });
                 }
             };
-            cache.ensure_commit(url, sha, opts.offline)?;
-            if !opts.offline {
-                cache.prefetch(sha, &paths)?;
-            }
             // A move is a fresh Checkout of the new commit: the blobs prefetched are exactly
             // those it reads, which changing the sparse paths and the commit in place would
-            // not guarantee. Nothing of the old one is removed before they are here.
+            // not guarantee.
             if moving {
                 remove_worktree(cache, &dest)?;
             }
@@ -162,7 +167,7 @@ impl Source for GitSource {
             }),
             Layout::Linked(link) => self
                 .cache
-                .with_entry(&link.entry, |cache| remove_worktree(cache, &dest)),
+                .with_named(&link.cache_name, |cache| remove_worktree(cache, &dest)),
         }
     }
 
@@ -174,7 +179,7 @@ impl Source for GitSource {
             Layout::Dangling => Ok(Observed::Dangling),
             Layout::Linked(link) => self
                 .cache
-                .with_entry(&link.entry, |cache| observe(cache, &dest, &link.admin)),
+                .with_named(&link.cache_name, |cache| observe(cache, &dest, &link.admin)),
         }
     }
 

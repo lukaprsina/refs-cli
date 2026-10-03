@@ -801,6 +801,22 @@ mod checkout {
     }
 
     #[test]
+    fn a_failed_switch_to_another_remote_keeps_the_old_checkout() {
+        let (first, second, env) = (Remote::new(), Remote::new(), Env::new());
+        let source = env.source();
+        let guide = first.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &first, &guide, ONLINE).unwrap();
+
+        let result = materialise(&source, "r", &second, &second.repo(&["src"], &[]), OFFLINE);
+
+        assert_eq!(result, Err("refs::git::not_cached".into()));
+        assert_eq!(
+            source.inspect("r").unwrap(),
+            clean_at(&first, &["docs/guide"])
+        );
+    }
+
+    #[test]
     fn a_moved_project_is_repaired_and_still_a_checkout() {
         let (remote, env) = (Remote::new(), Env::new());
         let repo = remote.repo(&["docs/guide"], &[]);

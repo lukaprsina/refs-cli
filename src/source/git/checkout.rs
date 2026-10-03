@@ -1,15 +1,50 @@
 //! A Checkout on disk: how to tell one refs made from a stranger's directory, and the record
-//! kept of what it holds. Everything here reads; `GitSource` changes things.
+//! kept of what it holds. Only the record is written here; `GitSource` changes the rest.
 
 use std::fs;
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::remote::{lexical_path, parse_gitdir, worktree_entry};
 use crate::diagnostic::SourceError;
 use crate::source::Pin;
+
+/// The path in a Checkout's `.git` file (`gitdir: <path>`).
+pub fn parse_gitdir(dot_git: &str) -> Option<&str> {
+    let path = dot_git.lines().next()?.strip_prefix("gitdir:")?.trim();
+    (!path.is_empty()).then_some(path)
+}
+
+/// `path` with `.` and `..` resolved by name alone, so a gitdir that no longer exists can
+/// still be placed.
+pub fn lexical_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The Cache repository a worktree's admin directory belongs to, if it is where git puts one:
+/// `<cache_git_root>/<hash>/worktrees/<name>`.
+pub fn worktree_entry(admin: &Path, cache_git_root: &Path) -> Option<String> {
+    let rest = lexical_path(admin)
+        .strip_prefix(lexical_path(cache_git_root))
+        .ok()?
+        .to_path_buf();
+    let mut parts = rest.components().map(|c| c.as_os_str().to_str());
+    let (entry, worktrees, name) = (parts.next()??, parts.next()??, parts.next()??);
+    let is_entry = entry.len() == 16 && entry.bytes().all(|b| b.is_ascii_hexdigit());
+    (is_entry && worktrees == "worktrees" && !name.is_empty() && parts.next().is_none())
+        .then(|| entry.to_string())
+}
 
 /// What kind of thing is at a Checkout's path (spec §7.3 step 4).
 pub enum Layout {
@@ -23,8 +58,8 @@ pub enum Layout {
 
 /// A worktree of a Cache repository.
 pub struct Link {
-    /// The Cache entry (its directory name under the Cache root).
-    pub entry: String,
+    /// The Cache repository's directory name under the Cache root.
+    pub cache_name: String,
     /// `<cache repo>/worktrees/<name>`, where git keeps what is private to this worktree.
     pub admin: PathBuf,
 }
@@ -59,14 +94,14 @@ pub fn layout(dest: &Path, cache_root: &Path) -> Result<Layout, SourceError> {
     };
     // A relative path is relative to the Checkout (git can be told to write them).
     let admin = lexical_path(&dest.join(path));
-    let entry = worktree_entry(&admin, cache_root).or_else(|| {
+    let cache_name = worktree_entry(&admin, cache_root).or_else(|| {
         let canonical = cache_root.canonicalize().ok()?;
         worktree_entry(&admin, &canonical)
     });
-    Ok(match entry {
+    Ok(match cache_name {
         None => Layout::Foreign,
         Some(_) if !admin.is_dir() => Layout::Dangling,
-        Some(entry) => Layout::Linked(Link { entry, admin }),
+        Some(cache_name) => Layout::Linked(Link { cache_name, admin }),
     })
 }
 
