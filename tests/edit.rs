@@ -317,3 +317,16 @@ fn the_round_trip_holds_with_crlf_and_without_a_final_newline() {
         assert_eq!(enable(&off, Target::Repo("solid")).unwrap(), text);
     }
 }
+
+#[test]
+fn a_repo_not_written_as_a_table_is_refused_with_a_hint() {
+    let text = "repos = { a = { url = \"https://github.com/o/a\" } }\n";
+    for err in [
+        remove(text, "a").unwrap_err(),
+        disable(text, Target::Repo("a")).unwrap_err(),
+        enable(text, Target::Repo("a")).unwrap_err(),
+    ] {
+        assert_eq!(codes(&err), ["refs::config::unreadable"]);
+        assert!(err.to_string().contains("rewrite it as one"), "{err}");
+    }
+}

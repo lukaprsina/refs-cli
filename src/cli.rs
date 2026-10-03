@@ -39,24 +39,39 @@ pub struct Cli {
     command: Command,
 }
 
+/// The commands, by what they need: `init` runs where there may be no project yet, the
+/// config commands read and edit `refs.toml` and never get a `Source`, and the rest act on
+/// the project through one.
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Resolve refs to commits and write refs.lock
-    Lock(LockArgs),
-    /// Make the checkouts and the managed block match refs.lock
-    Sync(SyncArgs),
+    /// Set up a project: refs.toml, the managed block and the git exclude rule
+    Init(InitArgs),
+    #[command(flatten)]
+    Config(ConfigCommand),
+    #[command(flatten)]
+    Source(SourceCommand),
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommand {
     /// List the repos in refs.toml
     List,
     /// Add a repo to refs.toml
-    Add(AddArgs),
+    Add(AddRepo),
     /// Remove a repo from refs.toml
     Remove(RemoveArgs),
     /// Stop tracking a repo, or a group, without removing it
     Disable(ToggleArgs),
     /// Track a disabled repo or group again
     Enable(ToggleArgs),
-    /// Set up a project: refs.toml, the managed block and the git exclude rule
-    Init(InitArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum SourceCommand {
+    /// Resolve refs to commits and write refs.lock
+    Lock(LockArgs),
+    /// Make the checkouts and the managed block match refs.lock
+    Sync(SyncArgs),
 }
 
 #[derive(Debug, Args)]
@@ -83,33 +98,6 @@ struct InitArgs {
     /// Create a project here even below a directory that already has a refs.toml
     #[arg(long)]
     here: bool,
-}
-
-#[derive(Debug, Args)]
-struct AddArgs {
-    /// The repository to add
-    url: String,
-    /// The repo's id, instead of the last segment of the URL
-    #[arg(long)]
-    id: Option<String>,
-    /// The group to put it in; it must exist
-    #[arg(long)]
-    group: Option<String>,
-    /// A branch, tag or full commit id; the remote's default branch when absent
-    #[arg(long = "ref", value_name = "REF")]
-    git_ref: Option<String>,
-    /// Repo-relative directories to check out
-    #[arg(long, num_args = 1.., value_name = "PATH")]
-    paths: Vec<String>,
-    /// Names, as imported in code, of the packages the repo documents or implements
-    #[arg(long, num_args = 1.., value_name = "PACKAGE")]
-    packages: Vec<String>,
-    /// Repo-relative files worth reading first
-    #[arg(long, num_args = 1.., value_name = "PATH")]
-    start: Vec<String>,
-    /// One line on what the repo is
-    #[arg(long)]
-    description: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -165,39 +153,58 @@ pub fn run<'a>(
     };
     install_report_handler(cli.no_color);
     let start = cli.project.as_deref().unwrap_or(cwd);
-    if let Command::Init(args) = &cli.command {
-        return init(start, args.here, cli.quiet);
+    let quiet = cli.quiet;
+    match cli.command {
+        Command::Init(args) => init(start, args.here, quiet),
+        Command::Config(command) => match load(start) {
+            Ok((root, config)) => run_config(&command, &root, &config, quiet),
+            Err(code) => code,
+        },
+        Command::Source(command) => match load(start) {
+            Ok((root, config)) => run_source(&command, &root, &config, quiet, make_source),
+            Err(code) => code,
+        },
     }
-    let (root, config) = match project::load(start) {
-        Ok(loaded) => loaded,
-        Err(reports) => {
-            for report in reports {
-                eprintln!("{report:?}");
-            }
-            return EXIT_ERROR;
+}
+
+/// The project at or above `start`; on failure the problems are printed and the exit code
+/// returned.
+fn load(start: &Path) -> Result<(PathBuf, Config), u8> {
+    project::load(start).map_err(|reports| {
+        for report in reports {
+            eprintln!("{report:?}");
         }
-    };
-    // These commands read and edit `refs.toml` only, so they never get a `Source`.
-    match &cli.command {
-        Command::List => {
-            print!("{}", list(&config));
-            return 0;
+        EXIT_ERROR
+    })
+}
+
+fn run_config(command: &ConfigCommand, root: &Path, config: &Config, quiet: bool) -> u8 {
+    match command {
+        ConfigCommand::List => {
+            print!("{}", list(config));
+            0
         }
-        Command::Add(args) => {
-            return edit_config(&root, cli.quiet, |text| edit::add(text, &args.into()));
+        ConfigCommand::Add(repo) => edit_config(root, quiet, |text| edit::add(text, repo)),
+        ConfigCommand::Remove(args) => {
+            edit_config(root, quiet, |text| edit::remove(text, &args.id))
         }
-        Command::Remove(args) => {
-            return edit_config(&root, cli.quiet, |text| edit::remove(text, &args.id));
+        ConfigCommand::Disable(args) => {
+            edit_config(root, quiet, |text| edit::disable(text, args.target()))
         }
-        Command::Disable(args) => {
-            return edit_config(&root, cli.quiet, |text| edit::disable(text, args.target()));
+        ConfigCommand::Enable(args) => {
+            edit_config(root, quiet, |text| edit::enable(text, args.target()))
         }
-        Command::Enable(args) => {
-            return edit_config(&root, cli.quiet, |text| edit::enable(text, args.target()));
-        }
-        Command::Lock(_) | Command::Sync(_) | Command::Init(_) => {}
     }
-    let source = match make_source(&root, &config) {
+}
+
+fn run_source<'a>(
+    command: &SourceCommand,
+    root: &Path,
+    config: &Config,
+    quiet: bool,
+    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+) -> u8 {
+    let source = match make_source(root, config) {
         Ok(source) => source,
         Err(e) => {
             eprintln!("{:?}", miette::Report::new(e));
@@ -205,48 +212,25 @@ pub fn run<'a>(
         }
     };
     let source = &*source;
-    let report = match &cli.command {
-        Command::Lock(args) => {
+    let report = match command {
+        SourceCommand::Lock(args) => {
             let flags = LockFlags {
                 upgrade: args.upgrade(),
                 offline: false,
             };
-            sync::lock(source, &root, &config, &flags)
+            sync::lock(source, root, config, &flags)
         }
-        Command::Sync(args) => {
+        SourceCommand::Sync(args) => {
             let flags = SyncFlags {
                 offline: args.offline,
                 force: args.force,
                 check: args.check,
             };
-            sync::sync(source, &root, &config, &flags)
-        }
-        Command::List
-        | Command::Add(_)
-        | Command::Remove(_)
-        | Command::Enable(_)
-        | Command::Disable(_)
-        | Command::Init(_) => {
-            unreachable!("handled before the Source is made")
+            sync::sync(source, root, config, &flags)
         }
     };
-    print(&report, cli.quiet);
+    print(&report, quiet);
     exit_code(report.outcome)
-}
-
-impl From<&AddArgs> for AddRepo {
-    fn from(args: &AddArgs) -> AddRepo {
-        AddRepo {
-            url: args.url.clone(),
-            id: args.id.clone(),
-            group: args.group.clone(),
-            git_ref: args.git_ref.clone(),
-            description: args.description.clone(),
-            paths: args.paths.clone(),
-            packages: args.packages.clone(),
-            start: args.start.clone(),
-        }
-    }
 }
 
 /// Apply `edit` to the text of `<root>/refs.toml` and write the result. A rejected edit

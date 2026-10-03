@@ -9,16 +9,32 @@ use toml_edit::{Array, Document, DocumentMut, Item, Table, value};
 use crate::config;
 use crate::diagnostic::EditError;
 
-/// What `refs add` was asked for. Only `url` is required; the rest follow spec §6.1.
-#[derive(Debug, Default)]
+/// What `refs add` was asked for. Only `url` is required; the rest follow spec §6.1. It is
+/// also the shape of the command line, so the CLI parses straight into it.
+#[derive(Debug, Default, clap::Args)]
 pub struct AddRepo {
+    /// The repository to add
     pub url: String,
+    /// The repo's id, instead of the last segment of the URL
+    #[arg(long)]
     pub id: Option<String>,
+    /// The group to put it in; it must exist
+    #[arg(long)]
     pub group: Option<String>,
+    /// A branch, tag or full commit id; the remote's default branch when absent
+    #[arg(long = "ref", value_name = "REF")]
     pub git_ref: Option<String>,
+    /// One line on what the repo is
+    #[arg(long)]
     pub description: Option<String>,
+    /// Repo-relative directories to check out
+    #[arg(long, num_args = 1.., value_name = "PATH")]
     pub paths: Vec<String>,
+    /// Names, as imported in code, of the packages the repo documents or implements
+    #[arg(long, num_args = 1.., value_name = "PACKAGE")]
     pub packages: Vec<String>,
+    /// Repo-relative files worth reading first
+    #[arg(long, num_args = 1.., value_name = "PATH")]
     pub start: Vec<String>,
 }
 
@@ -89,7 +105,7 @@ pub fn remove(text: &str, id: &str) -> Result<String, EditError> {
         .repos
         .get(id)
         .ok_or_else(|| EditError::UnknownRepo { id: id.into() })?;
-    let mut out = cut_table(text, "repos", id)?;
+    let mut out = cut_table(text, Target::Repo(id))?;
     if let Some(group) = repo.group.as_ref().map(|g| g.as_ref().as_str()) {
         let has_members = config.repos.iter().any(|(other, r)| {
             other.as_ref() != id && r.group.as_ref().is_some_and(|g| g.as_ref() == group)
@@ -99,31 +115,47 @@ pub fn remove(text: &str, id: &str) -> Result<String, EditError> {
             .get(group)
             .is_some_and(|g| g.description.is_some());
         if !has_members && !described {
-            out = cut_table(&out, "groups", group)?;
+            out = cut_table(&out, Target::Group(group))?;
         }
     }
     config::parse(&out)?;
     Ok(out)
 }
 
-/// What `enable` and `disable` act on.
+/// A repo or a group: what `enable`, `disable` and the cuts act on.
 #[derive(Debug, Clone, Copy)]
 pub enum Target<'a> {
     Repo(&'a str),
     Group(&'a str),
 }
 
+impl<'a> Target<'a> {
+    /// The table's name in `refs.toml`: `[repos.<id>]` or `[groups.<id>]`.
+    fn parent(self) -> &'static str {
+        match self {
+            Target::Repo(_) => "repos",
+            Target::Group(_) => "groups",
+        }
+    }
+
+    fn id(self) -> &'a str {
+        match self {
+            Target::Repo(id) | Target::Group(id) => id,
+        }
+    }
+}
+
 /// Set `enabled = false` on the repo or group, or on its existing `enabled` key.
 pub fn disable(text: &str, target: Target) -> Result<String, EditError> {
-    let (parent, key) = locate(text, target)?;
+    check_exists(text, target)?;
     let doc = parse(text)?;
-    let table = table_of(&doc, parent, key)?;
+    let table = table_of(&doc, target)?;
     let mut out = text.to_owned();
     if let Some(span) = table.get("enabled").and_then(Item::span) {
         out.replace_range(span, "false");
     } else {
         let at = line_end(text, body_end(table));
-        let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+        let eol = eol(text);
         let line = if text[..at].ends_with('\n') {
             format!("enabled = false{eol}")
         } else {
@@ -137,9 +169,9 @@ pub fn disable(text: &str, target: Target) -> Result<String, EditError> {
 
 /// Remove the `enabled` key of the repo or group (spec §6.4: absent means enabled).
 pub fn enable(text: &str, target: Target) -> Result<String, EditError> {
-    let (parent, key) = locate(text, target)?;
+    check_exists(text, target)?;
     let doc = parse(text)?;
-    let table = table_of(&doc, parent, key)?;
+    let table = table_of(&doc, target)?;
     let Some(span) = table.get("enabled").and_then(Item::span) else {
         return Ok(text.to_owned());
     };
@@ -161,24 +193,30 @@ pub fn enable(text: &str, target: Target) -> Result<String, EditError> {
     Ok(out)
 }
 
-/// The table name and key of `target`, once it is known to exist in `text`.
-fn locate<'a>(text: &str, target: Target<'a>) -> Result<(&'static str, &'a str), EditError> {
+/// `target` must be a repo or group of the config in `text`.
+fn check_exists(text: &str, target: Target) -> Result<(), EditError> {
     let config = open(text)?;
     match target {
-        Target::Repo(id) if config.repos.contains_key(id) => Ok(("repos", id)),
-        Target::Repo(id) => Err(EditError::UnknownRepo { id: id.into() }),
-        Target::Group(id) if config.groups.contains_key(id) => Ok(("groups", id)),
-        Target::Group(id) => Err(EditError::UnknownGroup { id: id.into() }),
+        Target::Repo(id) if !config.repos.contains_key(id) => {
+            Err(EditError::UnknownRepo { id: id.into() })
+        }
+        Target::Group(id) if !config.groups.contains_key(id) => {
+            Err(EditError::UnknownGroup { id: id.into() })
+        }
+        _ => Ok(()),
     }
 }
 
-fn table_of<'d>(doc: &'d Document<&str>, parent: &str, key: &str) -> Result<&'d Table, EditError> {
+/// The `[repos.<id>]` or `[groups.<id>]` table. Another spelling of the same data (an inline
+/// table, dotted keys) is not edited by text.
+fn table_of<'d>(doc: &'d Document<&str>, target: Target) -> Result<&'d Table, EditError> {
+    let (parent, id) = (target.parent(), target.id());
     doc.get(parent)
-        .and_then(|p| p.get(key))
+        .and_then(|p| p.get(id))
         .and_then(Item::as_table)
         .ok_or_else(|| {
             EditError::Unreadable(format!(
-                "`{parent}.{key}` is not a `[{parent}.{key}]` table"
+                "`{parent}.{id}` is not written as a `[{parent}.{id}]` table; rewrite it as one"
             ))
         })
 }
@@ -198,13 +236,18 @@ fn line_end(text: &str, at: usize) -> usize {
     text[at..].find('\n').map_or(text.len(), |i| at + i + 1)
 }
 
-/// Cut the table `[<parent>.<key>]` out of `text`: its header, its comment lines directly
+/// The line ending `text` uses.
+fn eol(text: &str) -> &'static str {
+    if text.contains("\r\n") { "\r\n" } else { "\n" }
+}
+
+/// Cut the table `target` out of `text`: its header, its comment lines directly
 /// above, the blank line before those, and every line up to its last key. What follows the
 /// last key (blank lines, comments for the next table) stays. Cutting by text, not through
 /// the document, leaves every other byte alone.
-fn cut_table(text: &str, parent: &str, key: &str) -> Result<String, EditError> {
+fn cut_table(text: &str, target: Target) -> Result<String, EditError> {
     let doc = parse(text)?;
-    let table = table_of(&doc, parent, key)?;
+    let table = table_of(&doc, target)?;
     let header = table.span().map_or(0, |span| span.start);
     let end = line_end(text, body_end(table));
 
@@ -249,7 +292,7 @@ fn parse(text: &str) -> Result<Document<&str>, EditError> {
 
 /// Give `text` the `\r\n` line endings of `original` if it used them.
 fn match_line_endings(text: &mut String, original: &str) {
-    if original.contains("\r\n") {
+    if eol(original) == "\r\n" {
         *text = text.replace("\r\n", "\n").replace('\n', "\r\n");
     }
 }

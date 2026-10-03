@@ -25,18 +25,24 @@ pub struct Section<'a> {
     pub repos: Vec<RepoRef<'a>>,
 }
 
+/// Whether `repo` is active (spec §6.4): not disabled itself, and not in a disabled group.
+pub fn is_active(config: &Config, repo: &Repo) -> bool {
+    let group_enabled = repo
+        .group
+        .as_ref()
+        .and_then(|g| config.groups.get(g.as_ref().as_str()))
+        .is_none_or(|group| group.enabled.unwrap_or(true));
+    repo.enabled.unwrap_or(true) && group_enabled
+}
+
 pub fn active(config: &Config) -> ActiveSet<'_> {
-    let repo_active = |repo: &Repo| repo.enabled.unwrap_or(true);
     let mut sections = Vec::new();
     for (group_id, group) in &config.groups {
-        if !group.enabled.unwrap_or(true) {
-            continue;
-        }
         let repos: Vec<_> = config
             .repos
             .iter()
             .filter(|(_, r)| {
-                repo_active(r)
+                is_active(config, r)
                     && r.group
                         .as_ref()
                         .is_some_and(|g| g.as_ref() == group_id.as_ref())
@@ -56,7 +62,7 @@ pub fn active(config: &Config) -> ActiveSet<'_> {
     let ungrouped: Vec<_> = config
         .repos
         .iter()
-        .filter(|(_, r)| repo_active(r) && r.group.is_none())
+        .filter(|(_, r)| is_active(config, r) && r.group.is_none())
         .map(|(id, repo)| RepoRef {
             id: id.as_ref().as_str(),
             repo,

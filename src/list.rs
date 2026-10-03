@@ -3,6 +3,7 @@
 
 use std::fmt::Write;
 
+use crate::active::is_active;
 use crate::config::{Config, RepoRef};
 
 pub fn list(config: &Config) -> String {
@@ -14,8 +15,11 @@ pub fn list(config: &Config) -> String {
         .unwrap_or(0);
     let mut out = String::new();
     for (group_id, group) in &config.groups {
-        let group_enabled = group.enabled.unwrap_or(true);
-        let disabled = if group_enabled { "" } else { " disabled" };
+        let disabled = if group.enabled.unwrap_or(true) {
+            ""
+        } else {
+            " disabled"
+        };
         let _ = writeln!(
             out,
             "{} ({}){disabled}",
@@ -28,22 +32,16 @@ pub fn list(config: &Config) -> String {
                 .as_ref()
                 .is_some_and(|g| g.as_ref() == group_id.as_ref())
         };
-        repos(&mut out, config, width, in_group, group_enabled);
+        repos(&mut out, config, width, in_group);
     }
     if config.repos.values().any(|r| r.group.is_none()) {
         out.push_str("ungrouped\n");
-        repos(&mut out, config, width, |r| r.repo.group.is_none(), true);
+        repos(&mut out, config, width, |r| r.repo.group.is_none());
     }
     out
 }
 
-fn repos(
-    out: &mut String,
-    config: &Config,
-    width: usize,
-    wanted: impl Fn(&RepoRef) -> bool,
-    group_enabled: bool,
-) {
+fn repos(out: &mut String, config: &Config, width: usize, wanted: impl Fn(&RepoRef) -> bool) {
     let repos = config.repos.iter().map(|(id, repo)| RepoRef {
         id: id.as_ref().as_str(),
         repo,
@@ -54,7 +52,7 @@ fn repos(
         } else {
             r.repo.path_strings().join(", ")
         };
-        let disabled = if group_enabled && r.repo.enabled.unwrap_or(true) {
+        let disabled = if is_active(config, r.repo) {
             ""
         } else {
             "  disabled"
