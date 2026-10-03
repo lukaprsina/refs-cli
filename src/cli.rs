@@ -6,6 +6,7 @@
 //! feature), and `main` builds a `GitSource`. There is no hidden flag, so the shipped binary
 //! cannot be pointed at a fake.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -14,7 +15,8 @@ use clap::{Args, Parser, Subcommand};
 use crate::config::Config;
 use crate::diagnostic::{EditError, SourceError};
 use crate::edit::{self, AddRepo, Target};
-use crate::list::list;
+use crate::list::{Status, list};
+use crate::lock::Lock;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::source::Source;
@@ -40,8 +42,9 @@ pub struct Cli {
 }
 
 /// The commands, by what they need: `init` runs where there may be no project yet, the
-/// config commands read and edit `refs.toml` and never get a `Source`, and the rest act on
-/// the project through one.
+/// config commands read and edit `refs.toml` and ask for a `Source` only to sync after an
+/// edit (unless `--no-sync`) or to show `list --status`, and the rest act on the project
+/// through one.
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Set up a project: refs.toml, the managed block and the git exclude rule
@@ -55,9 +58,14 @@ enum Command {
 #[derive(Debug, Subcommand)]
 enum ConfigCommand {
     /// List the repos in refs.toml
-    List,
-    /// Add a repo to refs.toml
-    Add(AddRepo),
+    List(ListArgs),
+    /// Add a repo to refs.toml, lock it and sync
+    Add {
+        #[command(flatten)]
+        repo: AddRepo,
+        #[command(flatten)]
+        flags: EditFlags,
+    },
     /// Remove a repo from refs.toml
     Remove(RemoveArgs),
     /// Stop tracking a repo, or a group, without removing it
@@ -75,7 +83,24 @@ enum SourceCommand {
 }
 
 #[derive(Debug, Args)]
+struct ListArgs {
+    /// Also show the locked commit and the state of each checkout
+    #[arg(long)]
+    status: bool,
+}
+
+/// What every command that edits `refs.toml` takes.
+#[derive(Debug, Args)]
+struct EditFlags {
+    /// Only edit refs.toml; do not lock or sync
+    #[arg(long)]
+    no_sync: bool,
+}
+
+#[derive(Debug, Args)]
 struct ToggleArgs {
+    #[command(flatten)]
+    flags: EditFlags,
     /// The id of the repo, or of the group with --group
     id: String,
     /// The id names a group
@@ -104,6 +129,8 @@ struct InitArgs {
 struct RemoveArgs {
     /// The id of the repo to remove
     id: String,
+    #[command(flatten)]
+    flags: EditFlags,
 }
 
 #[derive(Debug, Args)]
@@ -157,7 +184,7 @@ pub fn run<'a>(
     match cli.command {
         Command::Init(args) => init(start, args.here, quiet),
         Command::Config(command) => match load(start) {
-            Ok((root, config)) => run_config(&command, &root, &config, quiet),
+            Ok((root, config)) => run_config(&command, &root, &config, quiet, make_source),
             Err(code) => code,
         },
         Command::Source(command) => match load(start) {
@@ -178,21 +205,65 @@ fn load(start: &Path) -> Result<(PathBuf, Config), u8> {
     })
 }
 
-fn run_config(command: &ConfigCommand, root: &Path, config: &Config, quiet: bool) -> u8 {
-    match command {
-        ConfigCommand::List => {
+fn run_config<'a>(
+    command: &ConfigCommand,
+    root: &Path,
+    config: &Config,
+    quiet: bool,
+    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+) -> u8 {
+    type Edit<'e> = Box<dyn Fn(&str) -> Result<String, EditError> + 'e>;
+    let (flags, edit): (&EditFlags, Edit) = match command {
+        ConfigCommand::List(args) if args.status => {
+            return list_status(root, config, make_source);
+        }
+        ConfigCommand::List(_) => {
             print!("{}", list(config));
+            return 0;
+        }
+        ConfigCommand::Add { repo, flags } => (flags, Box::new(|text| edit::add(text, repo))),
+        ConfigCommand::Remove(args) => (&args.flags, Box::new(|text| edit::remove(text, &args.id))),
+        ConfigCommand::Disable(args) => (
+            &args.flags,
+            Box::new(|text| edit::disable(text, args.target())),
+        ),
+        ConfigCommand::Enable(args) => (
+            &args.flags,
+            Box::new(|text| edit::enable(text, args.target())),
+        ),
+    };
+    edit_config(root, config, quiet, flags, make_source, &*edit)
+}
+
+/// `refs list --status`: the config, the Lock and what `inspect` finds for every repo.
+fn list_status<'a>(
+    root: &Path,
+    config: &Config,
+    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+) -> u8 {
+    let result = (|| -> Result<String, miette::Report> {
+        let source = make_source(root, config).map_err(miette::Report::new)?;
+        let lock = Lock::read(&Lock::path(root)).map_err(miette::Report::new)?;
+        let mut observed = HashMap::new();
+        for id in config.repos.keys() {
+            let id = id.as_ref().as_str();
+            let seen = source.inspect(id).map_err(miette::Report::new)?;
+            observed.insert(id.to_string(), seen);
+        }
+        let status = Status {
+            lock: lock.as_ref(),
+            observed: &observed,
+        };
+        Ok(crate::list::list_status(config, &status))
+    })();
+    match result {
+        Ok(text) => {
+            print!("{text}");
             0
         }
-        ConfigCommand::Add(repo) => edit_config(root, quiet, |text| edit::add(text, repo)),
-        ConfigCommand::Remove(args) => {
-            edit_config(root, quiet, |text| edit::remove(text, &args.id))
-        }
-        ConfigCommand::Disable(args) => {
-            edit_config(root, quiet, |text| edit::disable(text, args.target()))
-        }
-        ConfigCommand::Enable(args) => {
-            edit_config(root, quiet, |text| edit::enable(text, args.target()))
+        Err(report) => {
+            eprintln!("{report:?}");
+            EXIT_ERROR
         }
     }
 }
@@ -233,39 +304,73 @@ fn run_source<'a>(
     exit_code(report.outcome)
 }
 
-/// Apply `edit` to the text of `<root>/refs.toml` and write the result. A rejected edit
-/// writes nothing.
-fn edit_config(
+/// Apply `edit` to the text of `<root>/refs.toml`. With `--no-sync` write the result and say
+/// to run `refs sync`; otherwise lock the edited config first and write it only if that
+/// passes, then sync (`sync::sync_edited`). A rejected edit writes nothing.
+fn edit_config<'a>(
     root: &Path,
+    config: &Config,
     quiet: bool,
-    edit: impl FnOnce(&str) -> Result<String, EditError>,
+    flags: &EditFlags,
+    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    edit: &dyn Fn(&str) -> Result<String, EditError>,
 ) -> u8 {
-    let result = project::read_config(root)
+    let edited = project::read_config(root)
         .map_err(miette::Report::new)
-        .and_then(|text| {
-            let edited = edit(&text).map_err(miette::Report::new)?;
-            if edited == text {
-                return Ok(false);
-            }
-            project::write_config(root, &edited).map_err(miette::Report::new)?;
-            Ok(true)
-        });
-    match result {
-        Ok(changed) => {
+        .and_then(|text| Ok((edit(&text).map_err(miette::Report::new)?, text)));
+    let (edited, text) = match edited {
+        Ok(both) => both,
+        Err(report) => {
+            eprintln!("{report:?}");
+            return EXIT_ERROR;
+        }
+    };
+    if flags.no_sync {
+        return write_only(root, quiet, &text, &edited);
+    }
+    let source = match make_source(root, config) {
+        Ok(source) => source,
+        Err(e) => {
+            eprintln!("{:?}", miette::Report::new(e));
+            return EXIT_ERROR;
+        }
+    };
+    let (written, report) = sync::sync_edited(&*source, root, &edited, &SyncFlags::default());
+    if written && !quiet {
+        println!("updated {}", project::CONFIG_FILE);
+    }
+    print(&report, quiet);
+    let failed = matches!(report.outcome, Outcome::Failed | Outcome::Refused);
+    if failed && written {
+        eprintln!(
+            "{} and refs.lock were updated; run `refs sync` once the problem is fixed",
+            project::CONFIG_FILE
+        );
+    } else if failed {
+        eprintln!("{} was not changed", project::CONFIG_FILE);
+    }
+    exit_code(report.outcome)
+}
+
+fn write_only(root: &Path, quiet: bool, text: &str, edited: &str) -> u8 {
+    if edited == text {
+        if !quiet {
+            println!("{} already says that", project::CONFIG_FILE);
+        }
+        return 0;
+    }
+    match project::write_config(root, edited) {
+        Ok(()) => {
             if !quiet {
-                if changed {
-                    println!(
-                        "updated {}; run `refs sync` to bring the project up to date",
-                        project::CONFIG_FILE
-                    );
-                } else {
-                    println!("{} already says that", project::CONFIG_FILE);
-                }
+                println!(
+                    "updated {}; run `refs sync` to bring the project up to date",
+                    project::CONFIG_FILE
+                );
             }
             0
         }
-        Err(report) => {
-            eprintln!("{report:?}");
+        Err(e) => {
+            eprintln!("{:?}", miette::Report::new(e));
             EXIT_ERROR
         }
     }

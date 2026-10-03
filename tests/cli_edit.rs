@@ -47,7 +47,16 @@ fn add_then_remove_leave_refs_toml_byte_identical() {
     assert_eq!(
         refs(
             dir.path(),
-            &["add", url, "--ref", "next", "--paths", "src", "docs"]
+            &[
+                "add",
+                url,
+                "--ref",
+                "next",
+                "--paths",
+                "src",
+                "docs",
+                "--no-sync"
+            ]
         ),
         0
     );
@@ -57,7 +66,10 @@ fn add_then_remove_leave_refs_toml_byte_identical() {
         "{added}"
     );
 
-    assert_eq!(refs(dir.path(), &["remove", "solid-router"]), 0);
+    assert_eq!(
+        refs(dir.path(), &["remove", "solid-router", "--no-sync"]),
+        0
+    );
     assert_eq!(config_text(&dir), CONFIG);
 }
 
@@ -91,9 +103,9 @@ fn list_reads_the_config_only() {
 fn disable_then_enable_leave_refs_toml_byte_identical() {
     let dir = project(CONFIG);
 
-    assert_eq!(refs(dir.path(), &["disable", "solid"]), 0);
+    assert_eq!(refs(dir.path(), &["disable", "solid", "--no-sync"]), 0);
     assert!(config_text(&dir).contains("enabled = false"));
-    assert_eq!(refs(dir.path(), &["enable", "solid"]), 0);
+    assert_eq!(refs(dir.path(), &["enable", "solid", "--no-sync"]), 0);
     assert_eq!(config_text(&dir), CONFIG);
 }
 
@@ -101,9 +113,16 @@ fn disable_then_enable_leave_refs_toml_byte_identical() {
 fn group_targets_a_group_and_an_unknown_id_exits_1() {
     let dir = project("[groups.g]\nname = \"G\"\n");
 
-    assert_eq!(refs(dir.path(), &["disable", "g", "--group"]), 0);
+    assert_eq!(
+        refs(dir.path(), &["disable", "g", "--group", "--no-sync"]),
+        0
+    );
     assert!(config_text(&dir).contains("enabled = false"));
-    assert_eq!(refs(dir.path(), &["disable", "g"]), 1, "g is not a repo");
+    assert_eq!(
+        refs(dir.path(), &["disable", "g", "--no-sync"]),
+        1,
+        "g is not a repo"
+    );
     assert_eq!(refs(dir.path(), &["enable", "nope", "--group"]), 1);
 }
 
@@ -151,7 +170,7 @@ fn enabling_what_is_already_enabled_succeeds_and_writes_nothing() {
         .modified()
         .unwrap();
 
-    assert_eq!(refs(dir.path(), &["enable", "solid"]), 0);
+    assert_eq!(refs(dir.path(), &["enable", "solid", "--no-sync"]), 0);
 
     assert_eq!(config_text(&dir), CONFIG);
     let after = fs::metadata(dir.path().join("refs.toml"))

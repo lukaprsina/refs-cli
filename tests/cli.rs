@@ -351,8 +351,7 @@ url = "https://github.com/o/b"
     assert!(block.contains("[a @") && block.contains("[b @") && block.contains("Group G"));
 
     assert_eq!(p.run(&["disable", "b"]), 0);
-    assert_eq!(p.run(&["sync", "--check"]), 3, "the lock still has b");
-    assert_eq!(p.run(&["sync"]), 0);
+    assert_eq!(p.run(&["sync", "--check"]), 0, "disable synced already");
     let (lock, block) = (
         p.lock_text().unwrap(),
         fs::read_to_string(p.path("AGENTS.md")).unwrap(),
@@ -362,7 +361,6 @@ url = "https://github.com/o/b"
     assert!(!block.contains("[b @") && block.contains("[a @"), "{block}");
 
     assert_eq!(p.run(&["disable", "g", "--group"]), 0);
-    assert_eq!(p.run(&["sync"]), 0);
     let (lock, block) = (
         p.lock_text().unwrap(),
         fs::read_to_string(p.path("AGENTS.md")).unwrap(),
@@ -411,4 +409,80 @@ fn init_then_sync_check_passes_with_no_user_level_config() {
     assert_eq!(run(&["init"]), Some(0));
     assert_eq!(run(&["sync"]), Some(0));
     assert_eq!(run(&["sync", "--check"]), Some(0));
+}
+
+#[test]
+fn add_locks_and_syncs_the_new_repo_in_one_step() {
+    let p = Project::new(AB);
+    assert_eq!(p.run(&["sync"]), 0);
+
+    assert_eq!(
+        p.run(&["add", "https://github.com/o/c", "--ref", "next"]),
+        0
+    );
+
+    assert!(
+        fs::read_to_string(p.path("refs.toml"))
+            .unwrap()
+            .contains("[repos.c]")
+    );
+    assert!(p.lock_text().unwrap().contains("id = \"c\""));
+    assert!(
+        fs::read_to_string(p.path("AGENTS.md"))
+            .unwrap()
+            .contains("[c @")
+    );
+    assert_eq!(p.run(&["sync", "--check"]), 0);
+}
+
+#[test]
+fn an_add_that_fails_to_lock_exits_1_and_changes_no_file() {
+    let p = Project::new(AB);
+    assert_eq!(p.run(&["sync"]), 0);
+    let (config, lock) = (fs::read(p.path("refs.toml")).unwrap(), p.lock_text());
+    p.source.fail("c", Method::Resolve, "no such ref");
+
+    assert_eq!(p.run(&["add", "https://github.com/o/c"]), 1);
+
+    assert_eq!(fs::read(p.path("refs.toml")).unwrap(), config);
+    assert_eq!(p.lock_text(), lock);
+}
+
+#[test]
+fn an_add_whose_checkout_fails_keeps_the_edit_and_exits_1() {
+    let p = Project::new(AB);
+    assert_eq!(p.run(&["sync"]), 0);
+    p.source.fail("c", Method::Materialise, "network down");
+
+    assert_eq!(p.run(&["add", "https://github.com/o/c"]), 1);
+
+    assert!(
+        fs::read_to_string(p.path("refs.toml"))
+            .unwrap()
+            .contains("[repos.c]")
+    );
+    assert!(p.lock_text().unwrap().contains("id = \"c\""));
+    p.source.heal("c", Method::Materialise);
+    assert_eq!(p.run(&["sync"]), 0);
+}
+
+#[test]
+fn remove_syncs_too_and_no_sync_leaves_that_to_the_user() {
+    let p = Project::new(AB);
+    assert_eq!(p.run(&["sync"]), 0);
+
+    assert_eq!(p.run(&["remove", "a", "--no-sync"]), 0);
+    assert_eq!(p.run(&["sync", "--check"]), 3, "the lock still has a");
+
+    assert_eq!(p.run(&["remove", "b"]), 0);
+    assert_eq!(p.run(&["sync", "--check"]), 0);
+    assert!(!p.lock_text().unwrap().contains("id = "));
+}
+
+#[test]
+fn list_status_reads_the_lock_and_inspects_through_the_source() {
+    let p = Project::new(AB);
+    assert_eq!(p.run(&["sync"]), 0);
+    assert_eq!(p.run(&["list", "--status"]), 0);
+    assert_eq!(p.run(&["list"]), 0);
 }

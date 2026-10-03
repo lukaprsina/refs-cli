@@ -1,12 +1,32 @@
 //! `refs list`: every repo in the config, grouped, with its ref, paths and whether it is
 //! enabled. Reads the config only (no lock, no git).
 
+use std::collections::HashMap;
 use std::fmt::Write;
 
 use crate::active::is_active;
 use crate::config::{Config, RepoRef};
+use crate::lock::Lock;
+use crate::source::Observed;
+
+/// What `refs list --status` adds to the config: the Lock and what is on disk, by repo id
+/// (an id with no entry counts as absent).
+pub struct Status<'a> {
+    pub lock: Option<&'a Lock>,
+    pub observed: &'a HashMap<String, Observed>,
+}
 
 pub fn list(config: &Config) -> String {
+    render(config, None)
+}
+
+/// `list` with the locked SHA (short) and the state of each checkout: ok, missing, wrong
+/// SHA, foreign, not locked, or disabled.
+pub fn list_status(config: &Config, status: &Status) -> String {
+    render(config, Some(status))
+}
+
+fn render(config: &Config, status: Option<&Status>) -> String {
     let width = config
         .repos
         .keys()
@@ -32,16 +52,22 @@ pub fn list(config: &Config) -> String {
                 .as_ref()
                 .is_some_and(|g| g.as_ref() == group_id.as_ref())
         };
-        repos(&mut out, config, width, in_group);
+        repos(&mut out, config, width, status, in_group);
     }
     if config.repos.values().any(|r| r.group.is_none()) {
         out.push_str("ungrouped\n");
-        repos(&mut out, config, width, |r| r.repo.group.is_none());
+        repos(&mut out, config, width, status, |r| r.repo.group.is_none());
     }
     out
 }
 
-fn repos(out: &mut String, config: &Config, width: usize, wanted: impl Fn(&RepoRef) -> bool) {
+fn repos(
+    out: &mut String,
+    config: &Config,
+    width: usize,
+    status: Option<&Status>,
+    wanted: impl Fn(&RepoRef) -> bool,
+) {
     let repos = config.repos.iter().map(|(id, repo)| RepoRef {
         id: id.as_ref().as_str(),
         repo,
@@ -52,17 +78,36 @@ fn repos(out: &mut String, config: &Config, width: usize, wanted: impl Fn(&RepoR
         } else {
             r.repo.path_strings().join(", ")
         };
-        let disabled = if is_active(config, r.repo) {
-            ""
-        } else {
-            "  disabled"
+        let tail = match status {
+            Some(status) => status_columns(config, status, &r),
+            None if is_active(config, r.repo) => String::new(),
+            None => "  disabled".to_string(),
         };
         let _ = writeln!(
             out,
-            "  {:width$}  {}  {}  {paths}{disabled}",
+            "  {:width$}  {}  {}  {paths}{tail}",
             r.id,
             r.repo.url.as_ref(),
             r.repo.effective_ref(),
         );
     }
+}
+
+/// `  <short locked SHA or ->  <state>` for one repo.
+fn status_columns(config: &Config, status: &Status, r: &RepoRef) -> String {
+    let locked = status
+        .lock
+        .and_then(|lock| lock.repo.iter().find(|l| l.id == r.id));
+    let sha = locked.map_or("-", |l| l.pin.short_id());
+    let state = match (is_active(config, r.repo), locked) {
+        (false, _) => "disabled",
+        (true, None) => "not locked",
+        (true, Some(locked)) => match status.observed.get(r.id) {
+            None | Some(Observed::Absent | Observed::Dangling) => "missing",
+            Some(Observed::Foreign) => "foreign",
+            Some(Observed::At { pin, .. }) if pin.same_commit(&locked.pin) => "ok",
+            Some(Observed::At { .. }) => "wrong SHA",
+        },
+    };
+    format!("  {sha}  {state}")
 }

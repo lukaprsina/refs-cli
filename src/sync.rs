@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::active::{ActiveSet, active};
 use crate::agent_file;
-use crate::config::Config;
+use crate::config::{self, Config};
 use crate::diagnostic::NotLocked;
 use crate::lock::{Lock, LockedRepo};
 use crate::plan::{Action, Drift, LockFlags, Plan, Step, lock_drift, plan_checkouts, plan_lock};
@@ -124,6 +124,34 @@ pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
         let dir = config.settings.references_dir();
         apply(source, root, &active, dir, plan, flags, drift)
     }
+}
+
+/// `refs.toml` has been edited to `text`: run stage 1 against that config, and only if it
+/// passes write `refs.toml` (the Lock is written by stage 1), then sync the project to it.
+/// Returns whether `refs.toml` was written, and the report of the run. A stage 2 failure
+/// keeps the edit and the Lock; `refs sync` retries it.
+pub fn sync_edited(
+    source: &dyn Source,
+    root: &Path,
+    text: &str,
+    flags: &SyncFlags,
+) -> (bool, Report) {
+    let config = match config::parse(text) {
+        Ok(config) => config,
+        Err(e) => return (false, Report::failed(e)),
+    };
+    let lock_flags = LockFlags {
+        offline: flags.offline,
+        ..LockFlags::default()
+    };
+    let staged = lock(source, root, &config, &lock_flags);
+    if staged.outcome != Outcome::InSync {
+        return (false, staged);
+    }
+    if let Err(e) = project::write_config(root, text) {
+        return (false, Report::failed(e));
+    }
+    (true, sync(source, root, &config, flags))
 }
 
 /// Resolve or reuse every Repo, verify them all, and write the Lock if it changed. Every
