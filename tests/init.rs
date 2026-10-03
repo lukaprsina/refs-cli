@@ -94,3 +94,14 @@ fn init_refuses_an_agent_file_with_broken_markers_and_writes_no_block() {
         "<!-- BEGIN:refs -->\n"
     );
 }
+
+#[test]
+fn a_second_init_does_not_rewrite_the_agent_file() {
+    let dir = TempDir::new().unwrap();
+    init(dir.path()).unwrap();
+    let path = dir.path().join("AGENTS.md");
+    let before = fs::metadata(&path).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    init(dir.path()).unwrap();
+    assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), before);
+}

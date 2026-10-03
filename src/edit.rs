@@ -143,10 +143,10 @@ pub fn enable(text: &str, target: Target) -> Result<String, EditError> {
     let Some(span) = table.get("enabled").and_then(Item::span) else {
         return Ok(text.to_owned());
     };
-    let (key_start, _) = table
+    let key_start = table
         .key("enabled")
         .and_then(toml_edit::Key::span)
-        .map_or((span.start, span.end), |k| (k.start, k.end));
+        .map_or(span.start, |k| k.start);
     let start = text[..key_start].rfind('\n').map_or(0, |i| i + 1);
     let end = line_end(text, span.end);
     let mut out = format!("{}{}", &text[..start], &text[end..]);

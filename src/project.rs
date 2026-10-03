@@ -45,7 +45,8 @@ pub fn init_root(start: &Path, here: bool) -> Result<PathBuf, ProjectError> {
             start: canonical.display().to_string(),
             root: root.display().to_string(),
         }),
-        Err(_) => Ok(git_top(&canonical).unwrap_or(canonical)),
+        Err(ProjectError::NoConfig { .. }) => Ok(git_top(&canonical).unwrap_or(canonical)),
+        Err(e) => Err(e),
     }
 }
 

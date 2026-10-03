@@ -51,7 +51,10 @@ pub fn init(root: &Path) -> Result<Initialised, InitError> {
     for file in config.settings.agents_files() {
         let path = root.join(file);
         let text = agent_file::read(&path)?.unwrap_or_default();
-        agent_file::write(&path, &agent_file::splice(&text, &block)?)?;
+        let spliced = agent_file::splice(&text, &block)?;
+        if spliced != text {
+            agent_file::write(&path, &spliced)?;
+        }
     }
     project::ensure_exclude(root, dir)?;
     Ok(Initialised { config_created })

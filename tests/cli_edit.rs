@@ -142,3 +142,21 @@ fn init_below_a_project_stops_unless_here() {
     assert!(sub.join("refs.toml").is_file());
     assert_eq!(config_text(&dir), CONFIG);
 }
+
+#[test]
+fn enabling_what_is_already_enabled_succeeds_and_writes_nothing() {
+    let dir = project(CONFIG);
+    let before = fs::metadata(dir.path().join("refs.toml"))
+        .unwrap()
+        .modified()
+        .unwrap();
+
+    assert_eq!(refs(dir.path(), &["enable", "solid"]), 0);
+
+    assert_eq!(config_text(&dir), CONFIG);
+    let after = fs::metadata(dir.path().join("refs.toml"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(before, after);
+}

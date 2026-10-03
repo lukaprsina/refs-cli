@@ -12,7 +12,7 @@ use std::process::Command;
 
 use refs_cli::cli::run;
 use refs_cli::source::Observed;
-use refs_cli::source::fake::{FakeSource, Method};
+use refs_cli::source::fake::{Call, FakeSource, Method};
 use tempfile::TempDir;
 
 const AB: &str = r#"
@@ -358,6 +358,7 @@ url = "https://github.com/o/b"
         fs::read_to_string(p.path("AGENTS.md")).unwrap(),
     );
     assert!(!lock.contains("\"b\"") && lock.contains("\"a\""), "{lock}");
+    assert!(p.source.calls().contains(&Call::Remove("b".into())));
     assert!(!block.contains("[b @") && block.contains("[a @"), "{block}");
 
     assert_eq!(p.run(&["disable", "g", "--group"]), 0);
@@ -372,4 +373,42 @@ url = "https://github.com/o/b"
         "{block}"
     );
     assert_eq!(p.run(&["sync", "--check"]), 0);
+}
+
+#[test]
+fn a_group_whose_repos_are_all_disabled_has_no_heading() {
+    let p = Project::new(
+        "[groups.g]\nname = \"Group G\"\n[repos.a]\nurl = \"https://github.com/o/a\"\ngroup = \"g\"\nenabled = false\n[repos.b]\nurl = \"https://github.com/o/b\"\n",
+    );
+    assert_eq!(p.run(&["sync"]), 0);
+    let block = fs::read_to_string(p.path("AGENTS.md")).unwrap();
+    assert!(
+        !block.contains("Group G") && block.contains("[b @"),
+        "{block}"
+    );
+}
+
+#[test]
+fn init_then_sync_check_passes_with_no_user_level_config() {
+    let dir = TempDir::new().unwrap();
+    let home = dir.path().join("home");
+    fs::create_dir(&home).unwrap();
+    let project = dir.path().join("project");
+    fs::create_dir(&project).unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_refs"))
+            .args(args)
+            .current_dir(&project)
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_CACHE_HOME", home.join(".cache"))
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap()
+            .code()
+    };
+    assert_eq!(run(&["init"]), Some(0));
+    assert_eq!(run(&["sync"]), Some(0));
+    assert_eq!(run(&["sync", "--check"]), Some(0));
 }

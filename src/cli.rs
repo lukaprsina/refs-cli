@@ -258,15 +258,25 @@ fn edit_config(
 ) -> u8 {
     let result = project::read_config(root)
         .map_err(miette::Report::new)
-        .and_then(|text| edit(&text).map_err(miette::Report::new))
-        .and_then(|text| project::write_config(root, &text).map_err(miette::Report::new));
+        .and_then(|text| {
+            let edited = edit(&text).map_err(miette::Report::new)?;
+            if edited == text {
+                return Ok(false);
+            }
+            project::write_config(root, &edited).map_err(miette::Report::new)?;
+            Ok(true)
+        });
     match result {
-        Ok(()) => {
+        Ok(changed) => {
             if !quiet {
-                println!(
-                    "updated {}; run `refs sync` to bring the project up to date",
-                    project::CONFIG_FILE
-                );
+                if changed {
+                    println!(
+                        "updated {}; run `refs sync` to bring the project up to date",
+                        project::CONFIG_FILE
+                    );
+                } else {
+                    println!("{} already says that", project::CONFIG_FILE);
+                }
             }
             0
         }
