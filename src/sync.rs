@@ -8,6 +8,7 @@ use crate::active::{ActiveSet, active};
 use crate::agent_file;
 use crate::config::{self, Config};
 use crate::diagnostic::NotLocked;
+use crate::list::Status;
 use crate::lock::{Lock, LockedRepo};
 use crate::plan::{Action, Drift, LockFlags, Plan, Step, lock_drift, plan_checkouts, plan_lock};
 use crate::project;
@@ -126,32 +127,80 @@ pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
     }
 }
 
-/// `refs.toml` has been edited to `text`: run stage 1 against that config, and only if it
-/// passes write `refs.toml` (the Lock is written by stage 1), then sync the project to it.
-/// Returns whether `refs.toml` was written, and the report of the run. A stage 2 failure
-/// keeps the edit and the Lock; `refs sync` retries it.
+/// What happened to `refs.toml` in `sync_edited`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Change {
+    /// The edit gave the text it already had; nothing was written.
+    Unchanged,
+    /// `refs.toml` (and, by stage 1, `refs.lock`) was written.
+    Written,
+    /// Stage 1 failed against the edit, or the text is invalid: nothing was written.
+    Rejected,
+}
+
+#[derive(Debug)]
+pub struct Edited {
+    pub change: Change,
+    pub report: Report,
+}
+
+/// `refs.toml` was `before` and has been edited to `after`: run stage 1 against that
+/// config, and only if it passes write `refs.toml` (stage 1 writes the Lock), then sync the
+/// project to it. A stage 2 failure keeps the edit and the Lock; `refs sync` retries it. An
+/// edit that changes nothing writes nothing and just syncs. The Lock is written before
+/// `refs.toml`, so a failed write of `refs.toml` leaves a Lock with an entry the config does
+/// not have, which the next `sync` removes.
 pub fn sync_edited(
     source: &dyn Source,
     root: &Path,
-    text: &str,
+    before: &str,
+    after: &str,
     flags: &SyncFlags,
-) -> (bool, Report) {
-    let config = match config::parse(text) {
+) -> Edited {
+    let config = match config::parse(after) {
         Ok(config) => config,
-        Err(e) => return (false, Report::failed(e)),
+        Err(e) => {
+            return Edited {
+                change: Change::Rejected,
+                report: Report::failed(e),
+            };
+        }
     };
-    let lock_flags = LockFlags {
-        offline: flags.offline,
-        ..LockFlags::default()
-    };
-    let staged = lock(source, root, &config, &lock_flags);
+    if after == before {
+        return Edited {
+            change: Change::Unchanged,
+            report: sync(source, root, &config, flags),
+        };
+    }
+    let staged = lock(source, root, &config, &LockFlags::default());
     if staged.outcome != Outcome::InSync {
-        return (false, staged);
+        return Edited {
+            change: Change::Rejected,
+            report: staged,
+        };
     }
-    if let Err(e) = project::write_config(root, text) {
-        return (false, Report::failed(e));
+    if let Err(e) = project::write_config(root, after) {
+        return Edited {
+            change: Change::Rejected,
+            report: Report::failed(e),
+        };
     }
-    (true, sync(source, root, &config, flags))
+    Edited {
+        change: Change::Written,
+        report: sync(source, root, &config, flags),
+    }
+}
+
+/// The Lock and what `inspect` finds for every repo of the config, for `list --status`.
+pub fn status(source: &dyn Source, root: &Path, config: &Config) -> Result<Status, miette::Report> {
+    let lock = Lock::read(&Lock::path(root)).map_err(miette::Report::new)?;
+    let mut observed = HashMap::new();
+    for id in config.repos.keys() {
+        let id = id.as_ref().as_str();
+        let seen = source.inspect(id).map_err(miette::Report::new)?;
+        observed.insert(id.to_string(), seen);
+    }
+    Ok(Status { lock, observed })
 }
 
 /// Resolve or reuse every Repo, verify them all, and write the Lock if it changed. Every

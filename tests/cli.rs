@@ -480,9 +480,52 @@ fn remove_syncs_too_and_no_sync_leaves_that_to_the_user() {
 }
 
 #[test]
-fn list_status_reads_the_lock_and_inspects_through_the_source() {
+fn list_status_succeeds_through_the_source_and_plain_list_does_too() {
     let p = Project::new(AB);
     assert_eq!(p.run(&["sync"]), 0);
     assert_eq!(p.run(&["list", "--status"]), 0);
     assert_eq!(p.run(&["list"]), 0);
+}
+
+#[test]
+fn enabling_what_is_enabled_changes_no_config_and_still_syncs() {
+    let p = Project::new(AB);
+    let config = fs::read(p.path("refs.toml")).unwrap();
+
+    assert_eq!(p.run(&["enable", "a"]), 0);
+
+    assert_eq!(fs::read(p.path("refs.toml")).unwrap(), config);
+    assert!(
+        p.lock_text().unwrap().contains("id = \"a\""),
+        "it caught the project up"
+    );
+}
+
+#[test]
+fn an_enable_whose_repo_cannot_be_locked_exits_1_and_changes_no_file() {
+    let p = Project::new(&format!("{AB}enabled = false\n"));
+    assert_eq!(p.run(&["sync"]), 0);
+    let (config, lock) = (fs::read(p.path("refs.toml")).unwrap(), p.lock_text());
+    p.source.fail("b", Method::Resolve, "gone");
+
+    assert_eq!(p.run(&["enable", "b"]), 1);
+
+    assert_eq!(fs::read(p.path("refs.toml")).unwrap(), config);
+    assert_eq!(p.lock_text(), lock);
+}
+
+#[test]
+fn quiet_still_syncs_after_an_edit() {
+    let p = Project::new(AB);
+
+    assert_eq!(p.run(&["-q", "add", "https://github.com/o/c"]), 0);
+
+    assert!(p.lock_text().unwrap().contains("id = \"c\""));
+}
+
+#[test]
+fn list_status_works_with_no_lock_yet() {
+    let p = Project::new(AB);
+    assert_eq!(p.run(&["list", "--status"]), 0);
+    assert_eq!(p.lock_text(), None, "list writes nothing");
 }

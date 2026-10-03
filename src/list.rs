@@ -1,5 +1,6 @@
 //! `refs list`: every repo in the config, grouped, with its ref, paths and whether it is
-//! enabled. Reads the config only (no lock, no git).
+//! enabled. Pure: `list` reads the config only; `list_status` also takes the Lock and what is
+//! on disk, which `sync::status` collects.
 
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -11,9 +12,9 @@ use crate::source::Observed;
 
 /// What `refs list --status` adds to the config: the Lock and what is on disk, by repo id
 /// (an id with no entry counts as absent).
-pub struct Status<'a> {
-    pub lock: Option<&'a Lock>,
-    pub observed: &'a HashMap<String, Observed>,
+pub struct Status {
+    pub lock: Option<Lock>,
+    pub observed: HashMap<String, Observed>,
 }
 
 pub fn list(config: &Config) -> String {
@@ -93,21 +94,53 @@ fn repos(
     }
 }
 
+/// Where one repo stands against the Lock and the disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckoutState {
+    Ok,
+    /// Locked, but nothing (or a dangling directory) is checked out.
+    Missing,
+    WrongSha,
+    /// A directory that is not one of ours is in the way.
+    Foreign,
+    NotLocked,
+    Disabled,
+}
+
+impl std::fmt::Display for CheckoutState {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(match self {
+            CheckoutState::Ok => "ok",
+            CheckoutState::Missing => "missing",
+            CheckoutState::WrongSha => "wrong SHA",
+            CheckoutState::Foreign => "foreign",
+            CheckoutState::NotLocked => "not locked",
+            CheckoutState::Disabled => "disabled",
+        })
+    }
+}
+
+fn checkout_state(config: &Config, status: &Status, r: &RepoRef) -> CheckoutState {
+    if !is_active(config, r.repo) {
+        return CheckoutState::Disabled;
+    }
+    let Some(locked) = status.lock.as_ref().and_then(|lock| lock.get(r.id)) else {
+        return CheckoutState::NotLocked;
+    };
+    match status.observed.get(r.id) {
+        None | Some(Observed::Absent | Observed::Dangling) => CheckoutState::Missing,
+        Some(Observed::Foreign) => CheckoutState::Foreign,
+        Some(Observed::At { pin, .. }) if pin.same_commit(&locked.pin) => CheckoutState::Ok,
+        Some(Observed::At { .. }) => CheckoutState::WrongSha,
+    }
+}
+
 /// `  <short locked SHA or ->  <state>` for one repo.
 fn status_columns(config: &Config, status: &Status, r: &RepoRef) -> String {
-    let locked = status
+    let sha = status
         .lock
-        .and_then(|lock| lock.repo.iter().find(|l| l.id == r.id));
-    let sha = locked.map_or("-", |l| l.pin.short_id());
-    let state = match (is_active(config, r.repo), locked) {
-        (false, _) => "disabled",
-        (true, None) => "not locked",
-        (true, Some(locked)) => match status.observed.get(r.id) {
-            None | Some(Observed::Absent | Observed::Dangling) => "missing",
-            Some(Observed::Foreign) => "foreign",
-            Some(Observed::At { pin, .. }) if pin.same_commit(&locked.pin) => "ok",
-            Some(Observed::At { .. }) => "wrong SHA",
-        },
-    };
-    format!("  {sha}  {state}")
+        .as_ref()
+        .and_then(|lock| lock.get(r.id))
+        .map_or("-", |l| l.pin.short_id());
+    format!("  {sha}  {}", checkout_state(config, status, r))
 }

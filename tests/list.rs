@@ -66,6 +66,8 @@ url = "https://github.com/o/r"
 url = "https://github.com/o/r"
 [repos.new]
 url = "https://github.com/o/r"
+[repos.hollow]
+url = "https://github.com/o/r"
 [repos.alien]
 url = "https://github.com/o/r"
 [repos.off]
@@ -85,6 +87,7 @@ enabled = false
         entry("moved", '2'),
         entry("gone", '3'),
         entry("alien", '4'),
+        entry("hollow", '5'),
     ]);
     let at = |c| Observed::At {
         pin: pin(&sha(c)),
@@ -96,22 +99,37 @@ enabled = false
         ("moved".to_string(), at('9')),
         ("gone".to_string(), Observed::Absent),
         ("alien".to_string(), Observed::Foreign),
+        ("hollow".to_string(), Observed::Dangling),
     ]);
     let status = Status {
-        lock: Some(&lock),
-        observed: &observed,
+        lock: Some(lock),
+        observed,
     };
 
     assert_eq!(
         list_status(&config, &status),
         "\
 ungrouped
-  ok     https://github.com/o/r  HEAD  all  1111111  ok
-  moved  https://github.com/o/r  HEAD  all  2222222  wrong SHA
-  gone   https://github.com/o/r  HEAD  all  3333333  missing
-  new    https://github.com/o/r  HEAD  all  -  not locked
-  alien  https://github.com/o/r  HEAD  all  4444444  foreign
-  off    https://github.com/o/r  HEAD  all  -  disabled
+  ok      https://github.com/o/r  HEAD  all  1111111  ok
+  moved   https://github.com/o/r  HEAD  all  2222222  wrong SHA
+  gone    https://github.com/o/r  HEAD  all  3333333  missing
+  new     https://github.com/o/r  HEAD  all  -  not locked
+  hollow  https://github.com/o/r  HEAD  all  5555555  missing
+  alien   https://github.com/o/r  HEAD  all  4444444  foreign
+  off     https://github.com/o/r  HEAD  all  -  disabled
 "
+    );
+}
+
+#[test]
+fn status_without_a_lock_says_not_locked() {
+    let config = parse("[repos.a]\nurl = \"https://github.com/o/r\"\n").unwrap();
+    let status = Status {
+        lock: None,
+        observed: HashMap::new(),
+    };
+    assert_eq!(
+        list_status(&config, &status),
+        "ungrouped\n  a  https://github.com/o/r  HEAD  all  -  not locked\n"
     );
 }

@@ -6,7 +6,6 @@
 //! feature), and `main` builds a `GitSource`. There is no hidden flag, so the shipped binary
 //! cannot be pointed at a fake.
 
-use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -15,12 +14,11 @@ use clap::{Args, Parser, Subcommand};
 use crate::config::Config;
 use crate::diagnostic::{EditError, SourceError};
 use crate::edit::{self, AddRepo, Target};
-use crate::list::{Status, list};
-use crate::lock::Lock;
+use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::source::Source;
-use crate::sync::{self, Outcome, Report, SyncFlags};
+use crate::sync::{self, Change, Outcome, Report, SyncFlags};
 
 const EXIT_ERROR: u8 = 1;
 const EXIT_OUT_OF_DATE: u8 = 3;
@@ -241,30 +239,15 @@ fn list_status<'a>(
     config: &Config,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
 ) -> u8 {
-    let result = (|| -> Result<String, miette::Report> {
-        let source = make_source(root, config).map_err(miette::Report::new)?;
-        let lock = Lock::read(&Lock::path(root)).map_err(miette::Report::new)?;
-        let mut observed = HashMap::new();
-        for id in config.repos.keys() {
-            let id = id.as_ref().as_str();
-            let seen = source.inspect(id).map_err(miette::Report::new)?;
-            observed.insert(id.to_string(), seen);
-        }
-        let status = Status {
-            lock: lock.as_ref(),
-            observed: &observed,
-        };
-        Ok(crate::list::list_status(config, &status))
-    })();
+    let result = make_source(root, config)
+        .map_err(miette::Report::new)
+        .and_then(|source| sync::status(&*source, root, config));
     match result {
-        Ok(text) => {
-            print!("{text}");
+        Ok(status) => {
+            print!("{}", crate::list::list_status(config, &status));
             0
         }
-        Err(report) => {
-            eprintln!("{report:?}");
-            EXIT_ERROR
-        }
+        Err(report) => fail(report),
     }
 }
 
@@ -277,10 +260,7 @@ fn run_source<'a>(
 ) -> u8 {
     let source = match make_source(root, config) {
         Ok(source) => source,
-        Err(e) => {
-            eprintln!("{:?}", miette::Report::new(e));
-            return EXIT_ERROR;
-        }
+        Err(e) => return fail(e),
     };
     let source = &*source;
     let report = match command {
@@ -318,38 +298,35 @@ fn edit_config<'a>(
     let edited = project::read_config(root)
         .map_err(miette::Report::new)
         .and_then(|text| Ok((edit(&text).map_err(miette::Report::new)?, text)));
-    let (edited, text) = match edited {
+    let (after, before) = match edited {
         Ok(both) => both,
-        Err(report) => {
-            eprintln!("{report:?}");
-            return EXIT_ERROR;
-        }
+        Err(report) => return fail(report),
     };
     if flags.no_sync {
-        return write_only(root, quiet, &text, &edited);
+        return write_only(root, quiet, &before, &after);
     }
     let source = match make_source(root, config) {
         Ok(source) => source,
-        Err(e) => {
-            eprintln!("{:?}", miette::Report::new(e));
-            return EXIT_ERROR;
-        }
+        Err(e) => return fail(e),
     };
-    let (written, report) = sync::sync_edited(&*source, root, &edited, &SyncFlags::default());
-    if written && !quiet {
-        println!("updated {}", project::CONFIG_FILE);
+    let edited = sync::sync_edited(&*source, root, &before, &after, &SyncFlags::default());
+    match edited.change {
+        Change::Written if !quiet => println!("updated {}", project::CONFIG_FILE),
+        Change::Unchanged if !quiet => println!("{} already says that", project::CONFIG_FILE),
+        _ => {}
     }
-    print(&report, quiet);
-    let failed = matches!(report.outcome, Outcome::Failed | Outcome::Refused);
-    if failed && written {
-        eprintln!(
-            "{} and refs.lock were updated; run `refs sync` once the problem is fixed",
-            project::CONFIG_FILE
-        );
-    } else if failed {
-        eprintln!("{} was not changed", project::CONFIG_FILE);
+    print(&edited.report, quiet);
+    if matches!(edited.report.outcome, Outcome::Failed | Outcome::Refused) {
+        match edited.change {
+            Change::Written => eprintln!(
+                "{} and refs.lock were updated; run `refs sync` once the problem is fixed",
+                project::CONFIG_FILE
+            ),
+            Change::Rejected => eprintln!("{} was not changed", project::CONFIG_FILE),
+            Change::Unchanged => {}
+        }
     }
-    exit_code(report.outcome)
+    exit_code(edited.report.outcome)
 }
 
 fn write_only(root: &Path, quiet: bool, text: &str, edited: &str) -> u8 {
@@ -369,10 +346,7 @@ fn write_only(root: &Path, quiet: bool, text: &str, edited: &str) -> u8 {
             }
             0
         }
-        Err(e) => {
-            eprintln!("{:?}", miette::Report::new(e));
-            EXIT_ERROR
-        }
+        Err(e) => fail(e),
     }
 }
 
@@ -401,6 +375,12 @@ fn init(start: &Path, here: bool, quiet: bool) -> u8 {
 const REMINDERS: &str = "Add a repo with `refs add <url>`, then run `refs sync`.
 Linters, formatters and type checkers are yours to configure: exclude the references dir from them.
 Claude Code reads AGENTS.md only when there is no CLAUDE.md; to use CLAUDE.md, list it in `agents_files`.";
+
+/// Print `error` as a report and give the exit code for a failure.
+fn fail(error: impl Into<miette::Report>) -> u8 {
+    eprintln!("{:?}", error.into());
+    EXIT_ERROR
+}
 
 fn exit_code(outcome: Outcome) -> u8 {
     match outcome {
