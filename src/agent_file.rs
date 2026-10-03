@@ -1,5 +1,6 @@
 //! Marker parsing and splicing for Agent files. Pure functions over text.
 
+use std::io::ErrorKind;
 use std::path::Path;
 
 use crate::diagnostic::BlockError;
@@ -53,6 +54,18 @@ fn find_region(text: &str) -> Result<Option<std::ops::Range<usize>>, BlockError>
         [(false, _), ..] => Err(BlockError::Reversed),
         [(true, _), (true, _), ..] => Err(BlockError::Nested),
         _ => Err(BlockError::Duplicated),
+    }
+}
+
+/// The text of the Agent file at `path`, `None` when it does not exist.
+pub fn read(path: &Path) -> Result<Option<String>, BlockError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(BlockError::Read {
+            path: path.display().to_string(),
+            source,
+        }),
     }
 }
 

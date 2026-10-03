@@ -1,4 +1,5 @@
-use refs_cli::agent_file::splice;
+use miette::Diagnostic;
+use refs_cli::agent_file::{read, splice};
 
 const BEGIN: &str = "<!-- BEGIN:refs -->";
 const END: &str = "<!-- END:refs -->";
@@ -144,4 +145,35 @@ mod write {
 fn a_file_with_one_stray_crlf_still_round_trips_its_lf_block() {
     let text = format!("a\r\nb\n{}\nc\n", block("x"));
     assert_eq!(splice(&text, &block("x")).unwrap(), text);
+}
+
+mod read {
+    use super::*;
+
+    #[test]
+    fn a_missing_file_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert_eq!(read(&dir.path().join("AGENTS.md")).unwrap(), None);
+    }
+
+    #[test]
+    fn an_existing_file_is_its_text() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "# Notes\r\n").unwrap();
+
+        assert_eq!(
+            read(&dir.path().join("AGENTS.md")).unwrap().as_deref(),
+            Some("# Notes\r\n")
+        );
+    }
+
+    #[test]
+    fn an_unreadable_file_is_reported_with_a_code() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("AGENTS.md")).unwrap();
+
+        let err = read(&dir.path().join("AGENTS.md")).unwrap_err();
+        assert_eq!(err.code().unwrap().to_string(), "refs::block::read_failed");
+    }
 }

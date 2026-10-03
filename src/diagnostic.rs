@@ -182,6 +182,14 @@ pub enum LockError {
     )]
     Invalid { message: String },
 
+    #[error("could not read {path}")]
+    #[diagnostic(code(refs::lock::read_failed))]
+    Read {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[error("could not write {path}")]
     #[diagnostic(code(refs::lock::write_failed))]
     Write {
@@ -193,7 +201,7 @@ pub enum LockError {
 
 /// A problem with an Agent file. The marker variants mean the markers are not exactly one
 /// BEGIN then one END, so `sync` refuses rather than guess which text belongs to refs;
-/// `Write` is an I/O failure.
+/// `Read` and `Write` are I/O failures.
 #[derive(Debug, Error, Diagnostic)]
 pub enum BlockError {
     #[error("a marker has no partner")]
@@ -211,6 +219,14 @@ pub enum BlockError {
     #[error("the markers appear more than once")]
     #[diagnostic(code(refs::block::duplicated))]
     Duplicated,
+
+    #[error("could not read {path}")]
+    #[diagnostic(code(refs::block::read_failed))]
+    Read {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 
     #[error("could not write {path}")]
     #[diagnostic(code(refs::block::write_failed))]

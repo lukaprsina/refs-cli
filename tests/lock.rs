@@ -107,3 +107,42 @@ mod untrusted_lock {
         assert_eq!(code(&text), "refs::lock::invalid");
     }
 }
+
+mod read {
+    use super::*;
+
+    #[test]
+    fn a_missing_lock_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert_eq!(Lock::read(&Lock::path(dir.path())).unwrap(), None);
+    }
+
+    #[test]
+    fn the_lock_lives_in_refs_lock_at_the_project_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = Lock::parse(LOCK).unwrap();
+        lock.write(&Lock::path(dir.path())).unwrap();
+
+        assert!(dir.path().join("refs.lock").is_file());
+        assert_eq!(Lock::read(&Lock::path(dir.path())).unwrap(), Some(lock));
+    }
+
+    #[test]
+    fn an_invalid_lock_is_reported_not_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(Lock::path(dir.path()), "version = 2\n").unwrap();
+
+        let err = Lock::read(&Lock::path(dir.path())).unwrap_err();
+        assert_eq!(err.code().unwrap().to_string(), "refs::lock::invalid");
+    }
+
+    #[test]
+    fn an_unreadable_lock_is_reported_with_a_code() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(Lock::path(dir.path())).unwrap();
+
+        let err = Lock::read(&Lock::path(dir.path())).unwrap_err();
+        assert_eq!(err.code().unwrap().to_string(), "refs::lock::read_failed");
+    }
+}

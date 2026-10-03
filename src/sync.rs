@@ -2,21 +2,15 @@
 //! Decisions live in `plan`; this module only does what the plans say and collects failures.
 
 use std::collections::{HashMap, HashSet};
-use std::io::ErrorKind;
 use std::path::Path;
 
 use crate::active::{ActiveSet, active};
 use crate::agent_file;
 use crate::config::Config;
-use crate::diagnostic::ProjectError;
 use crate::lock::{Lock, LockedRepo};
-use crate::plan::{
-    Action, AgentFileText, Drift, Exclude, LockFlags, Plan, ProjectObserved, Step, lock_drift,
-    plan_checkouts, plan_lock,
-};
+use crate::plan::{Action, Drift, LockFlags, Plan, Step, lock_drift, plan_checkouts, plan_lock};
+use crate::project;
 use crate::source::{MaterialiseOpts, Observed, Source};
-
-const LOCK_FILE: &str = "refs.lock";
 
 #[derive(Debug, Default)]
 pub struct SyncFlags {
@@ -60,9 +54,9 @@ impl Report {
 /// `refs lock`: stage 1 and a write.
 pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags) -> Report {
     let active = active(config);
-    let old = match read_lock(root) {
+    let old = match Lock::read(&Lock::path(root)) {
         Ok(old) => old,
-        Err(e) => return Report::new(Outcome::Failed, vec![], vec![e]),
+        Err(e) => return Report::failed(e),
     };
     let drift = lock_drift(&active, old.as_ref());
     match stage_one(source, &active, old, flags, root) {
@@ -74,9 +68,9 @@ pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags
 /// `refs sync`. With `check`, nothing is resolved, verified, fetched or written.
 pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
     let active = active(config);
-    let old = match read_lock(root) {
+    let old = match Lock::read(&Lock::path(root)) {
         Ok(old) => old,
-        Err(e) => return Report::new(Outcome::Failed, vec![], vec![e]),
+        Err(e) => return Report::failed(e),
     };
     let drift = lock_drift(&active, old.as_ref());
     let lock = if flags.check {
@@ -112,18 +106,6 @@ pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
         }
         // `--check` without a Lock to plan against: the Lock is what is out of date.
         None => Report::new(Outcome::OutOfDate, drift, diagnostics),
-    }
-}
-
-fn read_lock(root: &Path) -> Result<Option<Lock>, miette::Report> {
-    match std::fs::read_to_string(root.join(LOCK_FILE)) {
-        Ok(text) => Ok(Some(Lock::parse(&text)?)),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(ProjectError::Read {
-            path: LOCK_FILE.into(),
-            source,
-        }
-        .into()),
     }
 }
 
@@ -166,7 +148,7 @@ fn stage_one(
     }
     let lock = Lock::new(entries);
     if old.as_ref() != Some(&lock)
-        && let Err(e) = lock.write(&root.join(LOCK_FILE))
+        && let Err(e) = lock.write(&Lock::path(root))
     {
         return Err(Report::failed(e));
     }
@@ -200,7 +182,7 @@ fn plan_stage_two(
             Err(e) => errors.push(e.into()),
         }
     }
-    let project = match read_project(root, config, listing) {
+    let project = match project::observe(root, config, listing) {
         Ok(project) => Some(project),
         Err(e) => {
             errors.push(e);
@@ -213,79 +195,6 @@ fn plan_stage_two(
     // A Lock that does not cover the active set can only be seen by `--check`, which does
     // not repair it: the Lock is what is out of date.
     Ok(plan_checkouts(active, lock, &observed, &project, force).ok())
-}
-
-fn read_project(
-    root: &Path,
-    config: &Config,
-    listing: Vec<String>,
-) -> Result<ProjectObserved, miette::Report> {
-    let references_dir = config.settings.references_dir().to_string();
-    let files = config.settings.agents_files();
-    let mut agent_files = Vec::new();
-    for path in files {
-        let text = match std::fs::read_to_string(root.join(&path)) {
-            Ok(text) => Some(text),
-            Err(e) if e.kind() == ErrorKind::NotFound => None,
-            Err(source) => return Err(ProjectError::Read { path, source }.into()),
-        };
-        agent_files.push(AgentFileText { path, text });
-    }
-    let exclude = read_exclude(root, &references_dir)?;
-    Ok(ProjectObserved {
-        references_dir,
-        agent_files,
-        listing,
-        exclude,
-    })
-}
-
-fn exclude_line(references_dir: &str) -> String {
-    format!("/{references_dir}/")
-}
-
-fn read_exclude(root: &Path, references_dir: &str) -> Result<Exclude, miette::Report> {
-    let git = root.join(".git");
-    if !git.is_dir() {
-        return Ok(Exclude::NoGit);
-    }
-    let path = git.join("info/exclude");
-    match std::fs::read_to_string(&path) {
-        Ok(text)
-            if text
-                .lines()
-                .any(|l| l.trim() == exclude_line(references_dir)) =>
-        {
-            Ok(Exclude::Present)
-        }
-        Ok(_) => Ok(Exclude::Missing),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(Exclude::Missing),
-        Err(source) => Err(ProjectError::Read {
-            path: path.display().to_string(),
-            source,
-        }
-        .into()),
-    }
-}
-
-fn ensure_exclude(root: &Path, references_dir: &str) -> Result<(), ProjectError> {
-    let path = root.join(".git/info/exclude");
-    let write = |source| ProjectError::Write {
-        path: path.display().to_string(),
-        source,
-    };
-    let mut text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
-        Err(source) => return Err(write(source)),
-    };
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    text.push_str(&exclude_line(references_dir));
-    text.push('\n');
-    std::fs::create_dir_all(path.parent().expect("a file has a parent")).map_err(write)?;
-    crate::atomic::write(&path, &text).map_err(write)
 }
 
 /// `--check`: report what applying the plan would do.
@@ -365,7 +274,7 @@ fn apply(
                 }
             }
             Action::EnsureExclude => {
-                if let Err(e) = ensure_exclude(root, references_dir) {
+                if let Err(e) = project::ensure_exclude(root, references_dir) {
                     diagnostics.push(e.into());
                     failed = true;
                 }

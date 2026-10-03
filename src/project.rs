@@ -3,8 +3,10 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use crate::agent_file;
 use crate::config::{self, Config};
 use crate::diagnostic::ProjectError;
+use crate::plan::{AgentFileText, Exclude, ProjectObserved};
 
 pub const CONFIG_FILE: &str = "refs.toml";
 
@@ -114,4 +116,75 @@ fn check_inside(
         }
     }
     true
+}
+
+/// What the Project's own files say before stage 2 plans against them: the Agent files'
+/// text, whether the exclude rule is in place, and `listing`, the directory names `sync`
+/// found in the references directory.
+pub fn observe(
+    root: &Path,
+    config: &Config,
+    listing: Vec<String>,
+) -> Result<ProjectObserved, miette::Report> {
+    let references_dir = config.settings.references_dir().to_string();
+    let mut agent_files = Vec::new();
+    for path in config.settings.agents_files() {
+        let text = agent_file::read(&root.join(&path))?;
+        agent_files.push(AgentFileText { path, text });
+    }
+    let exclude = read_exclude(root, &references_dir)?;
+    Ok(ProjectObserved {
+        references_dir,
+        agent_files,
+        listing,
+        exclude,
+    })
+}
+
+fn exclude_line(references_dir: &str) -> String {
+    format!("/{references_dir}/")
+}
+
+fn read_exclude(root: &Path, references_dir: &str) -> Result<Exclude, ProjectError> {
+    let git = root.join(".git");
+    if !git.is_dir() {
+        return Ok(Exclude::NoGit);
+    }
+    let path = git.join("info/exclude");
+    match std::fs::read_to_string(&path) {
+        Ok(text)
+            if text
+                .lines()
+                .any(|l| l.trim() == exclude_line(references_dir)) =>
+        {
+            Ok(Exclude::Present)
+        }
+        Ok(_) => Ok(Exclude::Missing),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(Exclude::Missing),
+        Err(source) => Err(ProjectError::Read {
+            path: path.display().to_string(),
+            source,
+        }),
+    }
+}
+
+/// Add the exclude rule for `references_dir` to the Project's git exclude file.
+pub fn ensure_exclude(root: &Path, references_dir: &str) -> Result<(), ProjectError> {
+    let path = root.join(".git/info/exclude");
+    let write = |source| ProjectError::Write {
+        path: path.display().to_string(),
+        source,
+    };
+    let mut text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
+        Err(source) => return Err(write(source)),
+    };
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(&exclude_line(references_dir));
+    text.push('\n');
+    std::fs::create_dir_all(path.parent().expect("a file has a parent")).map_err(write)?;
+    crate::atomic::write(&path, &text).map_err(write)
 }
