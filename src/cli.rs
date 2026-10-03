@@ -1,15 +1,18 @@
 //! The command line: parsing, output and exit codes. No logic (architecture.md): every
 //! decision is made by `sync` and `plan`.
 //!
-//! The `Source` is injected as an argument to `run`: tests pass the fake in-process (the
-//! `testing` feature), and `main` passes a stub until `GitSource` exists. There is no
-//! hidden flag, so the shipped binary cannot be pointed at a fake.
+//! The `Source` is injected into `run` as a function of the loaded project (the real one
+//! needs its root and `references_dir`): tests return the fake in-process (the `testing`
+//! feature), and `main` builds a `GitSource`. There is no hidden flag, so the shipped binary
+//! cannot be pointed at a fake.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 
+use crate::config::Config;
+use crate::diagnostic::SourceError;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::source::Source;
@@ -73,8 +76,13 @@ impl LockArgs {
 }
 
 /// Run `refs` with `args` (the first is the program name) from `cwd`, and return the exit
-/// code: 0 in sync, 1 error or refusal, 2 usage, 3 `--check` found drift.
-pub fn run(args: impl IntoIterator<Item = OsString>, cwd: &Path, source: &dyn Source) -> u8 {
+/// code: 0 in sync, 1 error or refusal, 2 usage, 3 `--check` found drift. `make_source` is
+/// given the project root and config once they are loaded.
+pub fn run<'a>(
+    args: impl IntoIterator<Item = OsString>,
+    cwd: &Path,
+    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+) -> u8 {
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(e) => {
@@ -93,6 +101,14 @@ pub fn run(args: impl IntoIterator<Item = OsString>, cwd: &Path, source: &dyn So
             return EXIT_ERROR;
         }
     };
+    let source = match make_source(&root, &config) {
+        Ok(source) => source,
+        Err(e) => {
+            eprintln!("{:?}", miette::Report::new(e));
+            return EXIT_ERROR;
+        }
+    };
+    let source = &*source;
     let report = match &cli.command {
         Command::Lock(args) => {
             let flags = LockFlags {

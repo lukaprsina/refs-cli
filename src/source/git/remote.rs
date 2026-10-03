@@ -29,7 +29,7 @@ fn single<'a>(mut shas: Vec<&'a str>, git_ref: &str) -> Result<Option<&'a str>, 
 ///
 /// A tag with no `^{}` line is taken as lightweight: the output cannot tell it from an
 /// annotated tag the server failed to peel. Rejecting a tag object (`refs::git::unpeeled_tag`)
-/// needs the object type, so it belongs to `verify` once the cache exists (#7).
+/// needs the object type, so `verify` does it once the Cache has the object.
 pub fn select_ref(url: &str, git_ref: &str, ls_remote: &str) -> Result<String, SourceError> {
     let named = |name: String| -> Vec<&str> {
         lines(ls_remote)
@@ -143,5 +143,81 @@ pub fn cache_dir_name(url: &str) -> String {
         .iter()
         .take(8)
         .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// What `git ls-tree <commit> -- <path>` found at `path`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryKind {
+    Missing,
+    Tree,
+    /// A file, a symlink or a submodule: anything that is not a directory.
+    Other,
+}
+
+/// The kind of the first entry of `git ls-tree` output (`<mode> <type> <oid>\t<path>`).
+pub fn entry_kind(ls_tree: &str) -> EntryKind {
+    match ls_tree.split_whitespace().nth(1) {
+        None => EntryKind::Missing,
+        Some("tree") => EntryKind::Tree,
+        Some(_) => EntryKind::Other,
+    }
+}
+
+/// The distinct blob ids in `git ls-tree` output, in order. Submodule entries are skipped:
+/// their commits are not in this repository.
+pub fn tree_blobs(ls_tree: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    ls_tree
+        .lines()
+        .filter_map(|line| line.split_once('\t').map(|(meta, _)| meta))
+        .filter_map(|meta| {
+            let mut fields = meta.split_whitespace().skip(1);
+            (fields.next() == Some("blob")).then(|| fields.next())?
+        })
+        .filter(|oid| seen.insert(*oid))
+        .map(String::from)
+        .collect()
+}
+
+/// Whether a failed `git fetch <sha>` means the remote will not send that commit: it does not
+/// have it, or refuses to serve a commit by its id. Git gives no other signal.
+pub fn commit_unavailable(stderr: &str) -> bool {
+    stderr.contains("not our ref") || stderr.contains("unadvertised object")
+}
+
+/// The object a checkout could not get, from `could not fetch <oid> from promisor remote`.
+pub fn missing_object(stderr: &str) -> Option<String> {
+    let rest = stderr.split_once("could not fetch ")?.1;
+    let oid = rest.split_whitespace().next()?;
+    (rest[oid.len()..]
+        .trim_start()
+        .starts_with("from promisor remote")
+        && oid.len() >= 40
+        && oid.bytes().all(|b| b.is_ascii_hexdigit()))
+    .then(|| oid.to_string())
+}
+
+/// The directories above each of `paths`, as `ls-tree` wants them (`docs/`, `docs/guide/`),
+/// each once, in order. Cone mode checks out the files directly inside them.
+pub fn ancestor_dirs(paths: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    paths
+        .iter()
+        .flat_map(|path| {
+            path.match_indices('/')
+                .map(|(i, _)| format!("{}/", &path[..i]))
+                .collect::<Vec<_>>()
+        })
+        .filter(|dir| seen.insert(dir.clone()))
+        .collect()
+}
+
+/// The ids `git cat-file --batch-check` reported as missing.
+pub fn missing_oids(batch_check: &str) -> Vec<String> {
+    batch_check
+        .lines()
+        .filter_map(|line| line.strip_suffix(" missing"))
+        .map(String::from)
         .collect()
 }

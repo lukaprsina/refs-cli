@@ -43,7 +43,9 @@ impl Project {
         let sub = self.dir.path().join("sub");
         fs::create_dir_all(&sub).unwrap();
         let args = std::iter::once("refs").chain(args.iter().copied());
-        run(args.map(Into::into), &sub, &self.source)
+        run(args.map(Into::into), &sub, |_, _| {
+            Ok(Box::new(&self.source))
+        })
     }
 
     fn path(&self, name: &str) -> PathBuf {
@@ -155,11 +157,9 @@ fn a_config_error_exits_1_and_writes_nothing() {
 fn a_missing_refs_toml_exits_1() {
     let dir = TempDir::new().unwrap();
 
-    let code = run(
-        ["refs", "sync"].map(Into::into),
-        dir.path(),
-        &FakeSource::new(),
-    );
+    let code = run(["refs", "sync"].map(Into::into), dir.path(), |_, _| {
+        Ok(Box::new(FakeSource::new()))
+    });
 
     assert_eq!(code, 1);
 }
@@ -186,7 +186,7 @@ fn project_flag_overrides_the_directory_search() {
     let code = run(
         ["refs", "--project", root, "lock"].map(Into::into),
         elsewhere.path(),
-        &p.source,
+        |_, _| Ok(Box::new(&p.source)),
     );
 
     assert_eq!(code, 0);
@@ -197,6 +197,8 @@ fn binary(dir: &TempDir, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_refs"))
         .args(args)
         .current_dir(dir.path())
+        // The real `GitSource` fills a Cache; keep it out of the user's.
+        .env("XDG_CACHE_HOME", dir.path().join("cache"))
         .output()
         .unwrap()
 }
@@ -226,7 +228,7 @@ fn the_binary_exits_2_on_a_usage_error_and_0_on_help() {
 }
 
 #[test]
-fn the_binary_resolves_with_git_and_stops_at_verify_until_the_cache_exists() {
+fn the_binary_locks_with_git_and_reports_an_unknown_ref() {
     let remote = TempDir::new().unwrap();
     for args in [
         &["init", "-q", "-b", "main"][..],
@@ -262,9 +264,8 @@ fn the_binary_resolves_with_git_and_stops_at_verify_until_the_cache_exists() {
     config("main");
     let out = binary(&project, &["--no-color", "lock"]);
     let stderr = String::from_utf8(out.stderr).unwrap();
-    assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert!(stderr.contains("not implemented yet"), "{stderr}");
-    assert!(!project.path().join("refs.lock").exists());
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(project.path().join("refs.lock").exists());
 
     config("nope");
     let out = binary(&project, &["--no-color", "lock"]);

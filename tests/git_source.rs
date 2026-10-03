@@ -1,6 +1,6 @@
 //! `GitSource::resolve` against real git, on local repositories.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use miette::Diagnostic;
@@ -66,7 +66,7 @@ impl Remote {
 
     fn resolve(&self, git_ref: Option<&str>) -> Result<Pin, refs_cli::diagnostic::SourceError> {
         let repo = self.repo(git_ref);
-        GitSource::new().resolve(RepoRef {
+        GitSource::new(PathBuf::new(), PathBuf::new()).resolve(RepoRef {
             id: "r",
             repo: &repo,
         })

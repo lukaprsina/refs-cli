@@ -11,7 +11,7 @@ use crate::diagnostic::NotLocked;
 use crate::lock::{Lock, LockedRepo};
 use crate::plan::{Action, Drift, LockFlags, Plan, Step, lock_drift, plan_checkouts, plan_lock};
 use crate::project;
-use crate::source::{MaterialiseOpts, Observed, Source};
+use crate::source::{MaterialiseOpts, Observed, Source, VerifyOpts};
 
 #[derive(Debug, Default)]
 pub struct SyncFlags {
@@ -152,11 +152,14 @@ fn stage_one(
             },
         }
     }
+    let verify_opts = VerifyOpts {
+        offline: flags.offline,
+    };
     for entry in &entries {
         let repo = active
             .get(&entry.id)
             .expect("a step is made per active Repo");
-        if let Err(e) = source.verify(repo, &entry.pin) {
+        if let Err(e) = source.verify(repo, &entry.pin, verify_opts) {
             errors.push(e.into());
         }
     }

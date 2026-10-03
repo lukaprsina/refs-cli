@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use super::{MaterialiseOpts, Observed, Pin, Source};
+use super::{MaterialiseOpts, Observed, Pin, Source, VerifyOpts};
 use crate::config::RepoRef;
 use crate::diagnostic::SourceError;
 
@@ -20,7 +20,7 @@ pub enum Method {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Call {
     Resolve(String),
-    Verify(String),
+    Verify { id: String, offline: bool },
     Materialise { id: String, offline: bool },
     Remove(String),
 }
@@ -92,8 +92,11 @@ impl Source for FakeSource {
         ))
     }
 
-    fn verify(&self, repo: RepoRef, _pin: &Pin) -> Result<(), SourceError> {
-        self.record(Call::Verify(repo.id.into()));
+    fn verify(&self, repo: RepoRef, _pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError> {
+        self.record(Call::Verify {
+            id: repo.id.into(),
+            offline: opts.offline,
+        });
         self.check(repo.id, Method::Verify)
     }
 

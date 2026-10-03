@@ -1,8 +1,10 @@
 //! The pure half of git resolution, tested as data: no git is run.
 
 use miette::Diagnostic;
+use refs_cli::source::git::cache::cache_root;
 use refs_cli::source::git::remote::{
-    cache_dir_name, check_input, check_version, normalise_url, select_head, select_ref,
+    EntryKind, ancestor_dirs, cache_dir_name, check_input, check_version, commit_unavailable,
+    entry_kind, missing_object, missing_oids, normalise_url, select_head, select_ref, tree_blobs,
 };
 
 const URL: &str = "https://example.com/o/r";
@@ -194,5 +196,140 @@ mod urls {
             cache_dir_name("https://github.com/o/r"),
             cache_dir_name("https://github.com/o/r/")
         );
+    }
+}
+
+mod tree_blobs {
+    use super::*;
+
+    #[test]
+    fn lists_blob_ids_once_in_order_and_skips_trees_and_submodules() {
+        let out = format!(
+            "100644 blob {A}\tREADME.md\n\
+             040000 tree {B}\tdocs\n\
+             160000 commit {C}\tvendor\n\
+             100755 blob {B}\tbin/run\n\
+             100644 blob {A}\tcopy.md\n"
+        );
+        assert_eq!(tree_blobs(&out), [A, B]);
+    }
+
+    #[test]
+    fn no_output_is_no_blobs() {
+        assert!(tree_blobs("").is_empty());
+    }
+}
+
+mod entry_kind {
+    use super::*;
+
+    #[test]
+    fn a_tree_a_file_and_nothing() {
+        assert_eq!(
+            entry_kind(&format!("040000 tree {A}\tdocs\n")),
+            EntryKind::Tree
+        );
+        assert_eq!(
+            entry_kind(&format!("100644 blob {A}\tREADME.md\n")),
+            EntryKind::Other
+        );
+        assert_eq!(entry_kind(""), EntryKind::Missing);
+    }
+}
+
+mod fetch_failures {
+    use super::*;
+
+    #[test]
+    fn a_refused_commit_is_recognised() {
+        assert!(commit_unavailable(
+            "fatal: remote error: upload-pack: not our ref aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ));
+        assert!(commit_unavailable(
+            "error: Server does not allow request for unadvertised object aaaa"
+        ));
+    }
+
+    #[test]
+    fn other_failures_are_not_a_refused_commit() {
+        assert!(!commit_unavailable(
+            "fatal: unable to access 'https://x/': Could not resolve host"
+        ));
+    }
+
+    #[test]
+    fn the_missing_object_is_named_from_a_promisor_failure() {
+        let stderr = format!("fatal: could not fetch {A} from promisor remote\n");
+        assert_eq!(missing_object(&stderr), Some(A.to_string()));
+    }
+
+    #[test]
+    fn another_failure_names_no_object() {
+        assert_eq!(missing_object("fatal: not a git repository"), None);
+    }
+}
+
+mod ancestor_dirs {
+    use super::*;
+
+    fn dirs(paths: &[&str]) -> Vec<String> {
+        ancestor_dirs(&paths.iter().map(|p| p.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn a_top_level_path_has_no_ancestors() {
+        assert!(dirs(&["docs"]).is_empty());
+    }
+
+    #[test]
+    fn every_directory_above_a_path_counts_once() {
+        assert_eq!(
+            dirs(&["docs/guide/sub", "docs/api", "src"]),
+            ["docs/", "docs/guide/"]
+        );
+    }
+}
+
+mod missing_oids {
+    use super::*;
+
+    #[test]
+    fn only_the_missing_ones() {
+        let out = format!("{A} missing\n{B} blob 12\n{C} missing\n");
+        assert_eq!(missing_oids(&out), [A, C]);
+    }
+}
+
+mod cache_root {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn xdg_cache_home_wins() {
+        assert_eq!(
+            cache_root(Some("/x/cache"), Some("/home/u")),
+            Some(PathBuf::from("/x/cache/refs"))
+        );
+    }
+
+    #[test]
+    fn the_default_is_dot_cache_in_home() {
+        assert_eq!(
+            cache_root(None, Some("/home/u")),
+            Some(PathBuf::from("/home/u/.cache/refs"))
+        );
+    }
+
+    #[test]
+    fn a_relative_xdg_cache_home_is_ignored() {
+        assert_eq!(
+            cache_root(Some("cache"), Some("/home/u")),
+            Some(PathBuf::from("/home/u/.cache/refs"))
+        );
+    }
+
+    #[test]
+    fn with_neither_there_is_no_cache() {
+        assert_eq!(cache_root(None, None), None);
     }
 }

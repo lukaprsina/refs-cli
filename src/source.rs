@@ -117,11 +117,19 @@ pub struct MaterialiseOpts {
     pub offline: bool,
 }
 
+/// Options for `verify`: `offline` forbids network access, so a Commit missing from the
+/// Cache is an error instead of a fetch.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VerifyOpts {
+    pub offline: bool,
+}
+
 pub trait Source {
     /// Ref to commit. Asks the remote; never creates a Checkout.
     fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError>;
-    /// Check that `paths` and `start` exist at the pinned commit, using cached objects only.
-    fn verify(&self, repo: RepoRef, pin: &Pin) -> Result<(), SourceError>;
+    /// Check that `paths` and `start` exist at the pinned commit. Fetches the commit and its
+    /// trees on a Cache miss, unless `opts.offline`.
+    fn verify(&self, repo: RepoRef, pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError>;
     /// Fetch the pinned commit and create or move the Checkout to it.
     fn materialise(
         &self,
@@ -133,4 +141,31 @@ pub trait Source {
     fn inspect(&self, id: &str) -> Result<Observed, SourceError>;
     /// The names of the directories in the references directory, whatever made them.
     fn list(&self) -> Result<Vec<String>, SourceError>;
+}
+
+/// A borrowed `Source` is a `Source`, so a caller can lend one to `cli::run`.
+impl<S: Source + ?Sized> Source for &S {
+    fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError> {
+        (**self).resolve(repo)
+    }
+    fn verify(&self, repo: RepoRef, pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError> {
+        (**self).verify(repo, pin, opts)
+    }
+    fn materialise(
+        &self,
+        repo: RepoRef,
+        pin: &Pin,
+        opts: MaterialiseOpts,
+    ) -> Result<(), SourceError> {
+        (**self).materialise(repo, pin, opts)
+    }
+    fn remove(&self, id: &str) -> Result<(), SourceError> {
+        (**self).remove(id)
+    }
+    fn inspect(&self, id: &str) -> Result<Observed, SourceError> {
+        (**self).inspect(id)
+    }
+    fn list(&self) -> Result<Vec<String>, SourceError> {
+        (**self).list()
+    }
 }

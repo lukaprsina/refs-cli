@@ -170,6 +170,65 @@ pub enum SourceError {
     #[error("{reason}")]
     #[diagnostic(code(refs::git::unsafe_input))]
     UnsafeInput { reason: String },
+
+    #[error("`{path}` does not exist in `{repo}` at {sha}")]
+    #[diagnostic(code(refs::git::path_missing))]
+    PathMissing {
+        repo: String,
+        path: String,
+        sha: String,
+    },
+
+    #[error("`{path}` in `{repo}` at {sha} is not a directory")]
+    #[diagnostic(
+        code(refs::git::path_not_dir),
+        help("`paths` entries name directories; a file can be listed in `start`")
+    )]
+    PathNotDir {
+        repo: String,
+        path: String,
+        sha: String,
+    },
+
+    #[error("`start` file `{path}` does not exist in `{repo}` at {sha}")]
+    #[diagnostic(code(refs::git::start_missing))]
+    StartMissing {
+        repo: String,
+        path: String,
+        sha: String,
+    },
+
+    #[error("{sha} is a tag object, not a commit")]
+    #[diagnostic(
+        code(refs::git::unpeeled_tag),
+        help(
+            "the server did not peel this annotated tag; pin a commit id, or a ref the server can peel"
+        )
+    )]
+    UnpeeledTag { sha: String },
+
+    #[error("{url} does not serve commit {sha}")]
+    #[diagnostic(
+        code(refs::git::commit_unavailable),
+        help(
+            "the commit may not exist, or the server may refuse to send a commit by its id (see spec 7.4)"
+        )
+    )]
+    CommitUnavailable { url: String, sha: String },
+
+    #[error("{url} at {sha} is not in the cache, and `--offline` forbids fetching it")]
+    #[diagnostic(
+        code(refs::git::not_cached),
+        help("run `refs sync` without `--offline` once to fill the cache")
+    )]
+    NotCached { url: String, sha: String },
+
+    #[error("object {oid} of `{repo}` is not in the cache, and `--offline` forbids fetching it")]
+    #[diagnostic(
+        code(refs::git::object_missing),
+        help("run `refs sync` without `--offline` once to fill the cache")
+    )]
+    ObjectMissing { repo: String, oid: String },
 }
 
 /// A problem reading or writing `refs.lock`.

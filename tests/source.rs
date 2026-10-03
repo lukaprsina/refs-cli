@@ -1,7 +1,7 @@
 use miette::Diagnostic;
 use refs_cli::config::{Repo, RepoRef, parse};
 use refs_cli::source::fake::{FakeSource, Method};
-use refs_cli::source::{MaterialiseOpts, Observed, Pin, Source};
+use refs_cli::source::{MaterialiseOpts, Observed, Pin, Source, VerifyOpts};
 
 fn at<'a>(id: &'a str, repo: &'a Repo) -> RepoRef<'a> {
     RepoRef { id, repo }
@@ -79,9 +79,15 @@ fn an_injected_failure_hits_only_that_repo_and_method() {
     let pin = source.resolve(at("ok", &repo)).unwrap();
     source.fail("bad", Method::Verify, "boom");
 
-    let err = source.verify(at("bad", &repo), &pin).unwrap_err();
+    let err = source
+        .verify(at("bad", &repo), &pin, VerifyOpts::default())
+        .unwrap_err();
     assert_eq!(err.code().unwrap().to_string(), "refs::git::failed");
-    assert!(source.verify(at("ok", &repo), &pin).is_ok());
+    assert!(
+        source
+            .verify(at("ok", &repo), &pin, VerifyOpts::default())
+            .is_ok()
+    );
     // Other methods on the failing repo still work.
     assert!(source.resolve(at("bad", &repo)).is_ok());
     assert!(source.materialise(at("bad", &repo), &pin, opts).is_ok());
@@ -102,7 +108,11 @@ fn every_method_can_fail() {
         source.fail("a", method, "boom");
     }
     assert!(source.resolve(at("a", &repo)).is_err());
-    assert!(source.verify(at("a", &repo), &pin).is_err());
+    assert!(
+        source
+            .verify(at("a", &repo), &pin, VerifyOpts::default())
+            .is_err()
+    );
     assert!(source.materialise(at("a", &repo), &pin, opts).is_err());
     assert!(source.remove("a").is_err());
 }

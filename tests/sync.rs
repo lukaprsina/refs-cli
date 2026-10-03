@@ -114,7 +114,16 @@ fn a_second_sync_resolves_and_writes_nothing_but_still_verifies() {
     assert_eq!(before, (mtime(&p, "refs.lock"), mtime(&p, "AGENTS.md")));
     assert_eq!(
         p.source.calls()[seen..],
-        [Call::Verify("a".into()), Call::Verify("b".into())]
+        [
+            Call::Verify {
+                id: "a".into(),
+                offline: false
+            },
+            Call::Verify {
+                id: "b".into(),
+                offline: false
+            }
+        ]
     );
 }
 
@@ -303,6 +312,25 @@ fn offline_is_passed_to_materialise() {
     };
     assert_eq!(p.sync(&offline).outcome, Outcome::InSync);
     assert!(p.source.calls().contains(&Call::Materialise {
+        id: "a".into(),
+        offline: true
+    }));
+}
+
+#[test]
+fn offline_is_passed_to_verify() {
+    let p = Project::new(A);
+    assert_eq!(
+        lock(&p.source, p.dir.path(), &p.config, &LockFlags::default()).outcome,
+        Outcome::InSync
+    );
+    let seen = p.source.calls().len();
+    let offline = SyncFlags {
+        offline: true,
+        ..SyncFlags::default()
+    };
+    assert_eq!(p.sync(&offline).outcome, Outcome::InSync);
+    assert!(p.source.calls()[seen..].contains(&Call::Verify {
         id: "a".into(),
         offline: true
     }));
