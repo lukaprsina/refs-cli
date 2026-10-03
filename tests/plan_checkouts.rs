@@ -5,7 +5,9 @@ use refs_cli::active::{ActiveSet, active};
 use refs_cli::config::parse;
 use refs_cli::diagnostic::Refusal;
 use refs_cli::lock::{Lock, LockedRepo};
-use refs_cli::plan::{Action, AgentFileText, Exclude, Plan, ProjectObserved, plan_checkouts};
+use refs_cli::plan::{
+    Action, AgentFileText, Checkouts, Exclude, Plan, ProjectObserved, plan_checkouts,
+};
 use refs_cli::render::render;
 use refs_cli::source::fake::FakeSource;
 use refs_cli::source::{Observed, Pin, Source};
@@ -43,13 +45,15 @@ fn at(sha: &str, paths: &[&str], dirty: &[&str]) -> Observed {
     }
 }
 
-/// What `sync` would read: every active repo and every listed name, inspected.
-fn observe(source: &FakeSource, set: &ActiveSet, listing: &[&str]) -> HashMap<String, Observed> {
-    set.repos()
+/// What `sync` would read: every active repo and every `extra` name in the references
+/// directory, inspected.
+fn observe(source: &FakeSource, set: &ActiveSet, extra: &[&str]) -> Checkouts {
+    let seen = set
+        .repos()
         .map(|r| r.id)
-        .chain(listing.iter().copied())
-        .map(|id| (id.to_string(), source.inspect(id).unwrap()))
-        .collect()
+        .chain(extra.iter().copied())
+        .map(|id| (id.to_string(), source.inspect(id).unwrap()));
+    Checkouts::new(set, seen).unwrap()
 }
 
 /// The agent file as it is after a clean `sync`.
@@ -64,16 +68,19 @@ fn project(set: &ActiveSet) -> ProjectObserved {
             path: "AGENTS.md".into(),
             text: Some(synced_text(set)),
         }],
-        listing: vec!["a".into()],
         exclude: Exclude::Present,
     }
 }
 
 fn plan(source: &FakeSource, project: &ProjectObserved, force: bool) -> Plan {
+    plan_with(source, &[], project, force)
+}
+
+/// As `plan`, with `extra` names found in the references directory.
+fn plan_with(source: &FakeSource, extra: &[&str], project: &ProjectObserved, force: bool) -> Plan {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
-    let listing: Vec<&str> = project.listing.iter().map(String::as_str).collect();
-    let observed = observe(source, &set, &listing);
+    let observed = observe(source, &set, extra);
     plan_checkouts(&set, &lock(), &observed, project, force).unwrap()
 }
 
@@ -146,7 +153,7 @@ fn no_paths_in_the_config_equals_no_sparse_patterns_on_disk() {
     let text = format!("{}\n", render(&set, &locked, ".references").unwrap());
     let mut project = project(&set);
     project.agent_files[0].text = Some(text);
-    let observed = observe(&source, &set, &["a"]);
+    let observed = observe(&source, &set, &[]);
     let plan = plan_checkouts(&set, &locked, &observed, &project, false).unwrap();
     assert!(plan.actions.is_empty(), "{:?}", plan.actions);
 }
@@ -262,19 +269,13 @@ fn a_dirty_checkout_already_in_sync_is_left_alone() {
     assert!(plan(&source, &project(&set), false).actions.is_empty());
 }
 
-fn with_listing(set: &ActiveSet, names: &[&str]) -> ProjectObserved {
-    let mut project = project(set);
-    project.listing = names.iter().map(|n| n.to_string()).collect();
-    project
-}
-
 #[test]
 fn a_non_active_checkout_is_removed_before_anything_is_materialised() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
     let source = FakeSource::new();
     source.seed("old", at(OTHER_SHA, &[], &[]));
-    let plan = plan(&source, &with_listing(&set, &["old"]), false);
+    let plan = plan_with(&source, &["old"], &project(&set), false);
     assert!(
         matches!(
             plan.actions.as_slice(),
@@ -292,8 +293,8 @@ fn a_dirty_non_active_checkout_is_refused_unless_forced() {
     let source = FakeSource::new();
     source.seed("a", at(SHA, &["docs", "src"], &[]));
     source.seed("old", at(OTHER_SHA, &[], &["node_modules"]));
-    let project = with_listing(&set, &["a", "old"]);
-    let first = plan(&source, &project, false);
+    let project = project(&set);
+    let first = plan_with(&source, &["old"], &project, false);
     assert!(
         matches!(
             first.actions.as_slice(),
@@ -303,7 +304,7 @@ fn a_dirty_non_active_checkout_is_refused_unless_forced() {
         "{:?}",
         first.actions
     );
-    let forced = plan(&source, &project, true);
+    let forced = plan_with(&source, &["old"], &project, true);
     assert!(matches!(forced.actions.as_slice(), [Action::Remove { id }] if id == "old"));
 }
 
@@ -313,8 +314,12 @@ fn a_foreign_or_absent_non_active_name_is_ignored() {
     let set = active(&config);
     let source = in_sync_source();
     source.seed("notes", Observed::Foreign);
-    let project = with_listing(&set, &["a", "notes", "gone"]);
-    assert!(plan(&source, &project, false).actions.is_empty());
+    let project = project(&set);
+    assert!(
+        plan_with(&source, &["notes", "gone"], &project, false)
+            .actions
+            .is_empty()
+    );
 }
 
 fn with_agent_files(set: &ActiveSet, files: &[(&str, Option<&str>)]) -> ProjectObserved {
@@ -441,8 +446,7 @@ fn applying_a_plan_to_the_fake_and_replanning_gives_an_empty_plan() {
     let source = FakeSource::new();
     source.seed("old", at(OTHER_SHA, &[], &[]));
     let mut project = with_agent_files(&set, &[("AGENTS.md", None)]);
-    project.listing = vec!["old".into()];
-    let first = plan(&source, &project, false);
+    let first = plan_with(&source, &["old"], &project, false);
     assert!(first.is_drift());
     for action in &first.actions {
         match action {
@@ -462,7 +466,6 @@ fn applying_a_plan_to_the_fake_and_replanning_gives_an_empty_plan() {
             other => panic!("unexpected {other:?}"),
         }
     }
-    project.listing = vec!["a".into()];
     assert!(plan(&source, &project, false).actions.is_empty());
 }
 
@@ -474,7 +477,14 @@ fn a_repo_missing_from_the_lock_is_an_error() {
         version: 1,
         repo: vec![],
     };
-    let err = plan_checkouts(&set, &empty, &HashMap::new(), &project(&set), false).unwrap_err();
+    let err = plan_checkouts(
+        &set,
+        &empty,
+        &observe(&FakeSource::new(), &set, &[]),
+        &project(&set),
+        false,
+    )
+    .unwrap_err();
     assert_eq!(err.ids, vec!["a".to_string()]);
 }
 
@@ -491,7 +501,7 @@ fn force_leaves_the_clean_rows_unchanged() {
         source.seed("a", observed);
         let project = project(&set);
         let plain = plan(&source, &project, false);
-        let forced = plan(&source, &project, true);
+        let forced = plan_with(&source, &["old"], &project, true);
         assert_eq!(plain.is_drift(), drift);
         assert_eq!(
             format!("{:?}", plain.actions),
@@ -517,6 +527,26 @@ fn a_dangling_non_active_name_is_left_for_doctor() {
     let set = active(&config);
     let source = in_sync_source();
     source.seed("old", Observed::Dangling);
-    let project = with_listing(&set, &["a", "old"]);
-    assert!(plan(&source, &project, false).actions.is_empty());
+    let project = project(&set);
+    assert!(
+        plan_with(&source, &["old"], &project, false)
+            .actions
+            .is_empty()
+    );
+}
+
+#[test]
+fn an_observation_missing_an_active_repo_is_an_error() {
+    let config = parse(CONFIG).unwrap();
+    let set = active(&config);
+    let err = Checkouts::new(&set, HashMap::<String, Observed>::new()).unwrap_err();
+    assert_eq!(err.ids, vec!["a".to_string()]);
+}
+
+#[test]
+fn a_name_that_is_not_active_does_not_satisfy_an_active_repo() {
+    let config = parse(CONFIG).unwrap();
+    let set = active(&config);
+    let seen = [("other".to_string(), Observed::Absent)];
+    assert!(Checkouts::new(&set, seen).is_err());
 }

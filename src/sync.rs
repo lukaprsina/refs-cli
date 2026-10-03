@@ -7,10 +7,12 @@ use std::path::Path;
 use crate::active::{ActiveSet, active};
 use crate::agent_file;
 use crate::config::{self, Config};
-use crate::diagnostic::NotLocked;
+use crate::diagnostic::{NotLocked, NotObserved};
 use crate::list::Status;
 use crate::lock::{Lock, LockedRepo};
-use crate::plan::{Action, Drift, LockFlags, Plan, Step, lock_drift, plan_checkouts, plan_lock};
+use crate::plan::{
+    Action, Checkouts, Drift, LockFlags, Plan, Step, lock_drift, plan_checkouts, plan_lock,
+};
 use crate::project;
 use crate::source::{MaterialiseOpts, Observed, Source, VerifyOpts};
 
@@ -115,6 +117,9 @@ pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
         }
         // After stage 1 the Lock covers every active Repo, so this is a bug, not drift.
         Err(StageTwoError::NotLocked(e)) => {
+            return Report::new(Outcome::Failed, drift, vec![e.into()]);
+        }
+        Err(StageTwoError::NotObserved(e)) => {
             return Report::new(Outcome::Failed, drift, vec![e.into()]);
         }
         Err(StageTwoError::Read(errors)) => return Report::new(Outcome::Failed, drift, errors),
@@ -256,6 +261,8 @@ fn stage_one(
 enum StageTwoError {
     /// The Lock does not cover every active Repo.
     NotLocked(NotLocked),
+    /// A bug: `plan_stage_two` inspects every active Repo.
+    NotObserved(NotObserved),
     /// Reading the project or the checkouts failed; every failure is collected.
     Read(Vec<miette::Report>),
 }
@@ -274,7 +281,7 @@ fn plan_stage_two(
         errors.push(e.into());
         vec![]
     });
-    let mut observed: HashMap<String, Observed> = HashMap::new();
+    let mut observed: Vec<(String, Observed)> = Vec::new();
     let names = active
         .repos()
         .map(|r| r.id.to_string())
@@ -282,12 +289,12 @@ fn plan_stage_two(
     for name in names {
         match source.inspect(&name) {
             Ok(o) => {
-                observed.insert(name, o);
+                observed.push((name, o));
             }
             Err(e) => errors.push(e.into()),
         }
     }
-    let project = match project::observe(root, config, listing) {
+    let project = match project::observe(root, config) {
         Ok(project) => Some(project),
         Err(e) => {
             errors.push(e);
@@ -297,7 +304,8 @@ fn plan_stage_two(
     let Some(project) = project.filter(|_| errors.is_empty()) else {
         return Err(StageTwoError::Read(errors));
     };
-    plan_checkouts(active, lock, &observed, &project, force).map_err(StageTwoError::NotLocked)
+    let checkouts = Checkouts::new(active, observed).map_err(StageTwoError::NotObserved)?;
+    plan_checkouts(active, lock, &checkouts, &project, force).map_err(StageTwoError::NotLocked)
 }
 
 /// `--check`: report what applying the plan would do.

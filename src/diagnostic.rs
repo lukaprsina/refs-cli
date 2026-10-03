@@ -337,6 +337,18 @@ pub struct NotLocked {
     pub ids: Vec<String>,
 }
 
+/// Stage 2 was given an observation that does not cover every active Repo: a bug in the
+/// caller, not drift.
+#[derive(Debug, Error, Diagnostic)]
+#[error("no checkout was observed for: {}", ids.join(", "))]
+#[diagnostic(
+    code(refs::plan::not_observed),
+    help("this is a bug in refs; please report it")
+)]
+pub struct NotObserved {
+    pub ids: Vec<String>,
+}
+
 /// `plan_lock` was asked for something it must not do.
 #[derive(Debug, Error, Diagnostic)]
 pub enum LockRefusal {

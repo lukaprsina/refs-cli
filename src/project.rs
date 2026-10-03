@@ -163,13 +163,8 @@ fn check_inside(
 }
 
 /// What the Project's own files say before stage 2 plans against them: the Agent files'
-/// text, whether the exclude rule is in place, and `listing`, the directory names `sync`
-/// found in the references directory.
-pub fn observe(
-    root: &Path,
-    config: &Config,
-    listing: Vec<String>,
-) -> Result<ProjectObserved, miette::Report> {
+/// text and whether the exclude rule is in place.
+pub fn observe(root: &Path, config: &Config) -> Result<ProjectObserved, miette::Report> {
     let references_dir = config.settings.references_dir().to_string();
     let mut agent_files = Vec::new();
     for path in config.settings.agents_files() {
@@ -180,7 +175,6 @@ pub fn observe(
     Ok(ProjectObserved {
         references_dir,
         agent_files,
-        listing,
         exclude,
     })
 }

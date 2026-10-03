@@ -1,10 +1,10 @@
 //! Stage 2 (ADR 0006): what to do to the checkouts, the Agent files and the exclude rule.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::active::ActiveSet;
 use crate::agent_file::splice;
-use crate::diagnostic::{NotLocked, Note, Refusal};
+use crate::diagnostic::{NotLocked, NotObserved, Note, Refusal};
 use crate::lock::Lock;
 use crate::render::render;
 use crate::source::{Observed, Pin};
@@ -25,13 +25,48 @@ pub enum Exclude {
     NoGit,
 }
 
+/// What `inspect` found for every Repo stage 2 has to judge: each active Repo, and each
+/// other name found in the references directory. The one constructor checks that no active
+/// Repo is missing, so an omitted entry cannot be read as `Absent`.
+#[derive(Debug, Clone)]
+pub struct Checkouts(BTreeMap<String, Observed>);
+
+impl Checkouts {
+    pub fn new(
+        active: &ActiveSet,
+        observed: impl IntoIterator<Item = (String, Observed)>,
+    ) -> Result<Checkouts, NotObserved> {
+        let observed: BTreeMap<String, Observed> = observed.into_iter().collect();
+        let ids: Vec<String> = active
+            .repos()
+            .filter(|r| !observed.contains_key(r.id))
+            .map(|r| r.id.to_string())
+            .collect();
+        if ids.is_empty() {
+            Ok(Checkouts(observed))
+        } else {
+            Err(NotObserved { ids })
+        }
+    }
+
+    fn of(&self, id: &str) -> &Observed {
+        self.0.get(id).expect("`new` checked every active Repo")
+    }
+
+    /// The names in the references directory that are not active Repos.
+    fn unmanaged<'a>(
+        &'a self,
+        active: &'a ActiveSet,
+    ) -> impl Iterator<Item = (&'a String, &'a Observed)> {
+        self.0.iter().filter(|(name, _)| active.get(name).is_none())
+    }
+}
+
 /// What `sync` read of the project before stage 2: plain data, no trait.
 #[derive(Debug, Clone)]
 pub struct ProjectObserved {
     pub references_dir: String,
     pub agent_files: Vec<AgentFileText>,
-    /// The directory names found in `references_dir`.
-    pub listing: Vec<String>,
     pub exclude: Exclude,
 }
 
@@ -85,12 +120,11 @@ fn same_set(a: &[String], b: &[String]) -> bool {
 }
 
 /// Stage 2 (ADR 0004): what to do to the checkouts, the Agent files and the exclude rule,
-/// in the order removals, materialisations, Agent file writes, exclude rule. `observed`
-/// holds every active Repo and every name in `project.listing`.
+/// in the order removals, materialisations, Agent file writes, exclude rule.
 pub fn plan_checkouts(
     active: &ActiveSet,
     lock: &Lock,
-    observed: &HashMap<String, Observed>,
+    checkouts: &Checkouts,
     project: &ProjectObserved,
     force: bool,
 ) -> Result<Plan, NotLocked> {
@@ -105,7 +139,7 @@ pub fn plan_checkouts(
             id: id(),
             pin: locked.pin.clone(),
         };
-        match observed.get(repo.id).unwrap_or(&Observed::Absent) {
+        match checkouts.of(repo.id) {
             Observed::Absent => materialisations.push(materialise),
             Observed::Dangling => {
                 removals.push(Action::Remove { id: id() });
@@ -132,14 +166,15 @@ pub fn plan_checkouts(
     }
     // Names refs no longer manages. Only a checkout refs made (`At`) is touched; anything
     // else is for `doctor` to report.
-    for name in project.listing.iter().filter(|n| active.get(n).is_none()) {
-        match observed.get(name) {
-            Some(Observed::At { dirty_files, .. }) if !dirty_files.is_empty() && !force => refusals
-                .push(Action::Refuse(Refusal::DirtyCheckout {
+    for (name, observed) in checkouts.unmanaged(active) {
+        match observed {
+            Observed::At { dirty_files, .. } if !dirty_files.is_empty() && !force => {
+                refusals.push(Action::Refuse(Refusal::DirtyCheckout {
                     id: name.clone(),
                     files: dirty_files.clone(),
-                })),
-            Some(Observed::At { .. }) => removals.push(Action::Remove { id: name.clone() }),
+                }))
+            }
+            Observed::At { .. } => removals.push(Action::Remove { id: name.clone() }),
             _ => {}
         }
     }

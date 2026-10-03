@@ -126,10 +126,9 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
         let dir = git_project();
         fs::write(dir.path().join("AGENTS.md"), "# Notes\n").unwrap();
 
-        let observed = observe(dir.path(), &parse(CONFIG).unwrap(), vec!["a".into()]).unwrap();
+        let observed = observe(dir.path(), &parse(CONFIG).unwrap()).unwrap();
 
         assert_eq!(observed.references_dir, "refs");
-        assert_eq!(observed.listing, ["a"]);
         let files: Vec<_> = observed
             .agent_files
             .iter()
@@ -146,7 +145,7 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
         let dir = git_project();
         fs::create_dir(dir.path().join("AGENTS.md")).unwrap();
 
-        let error = observe(dir.path(), &parse(CONFIG).unwrap(), vec![]).unwrap_err();
+        let error = observe(dir.path(), &parse(CONFIG).unwrap()).unwrap_err();
 
         assert_eq!(
             miette::Diagnostic::code(&*error).unwrap().to_string(),
@@ -158,7 +157,7 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
     fn the_exclude_rule_is_missing_then_present_once_ensured() {
         let dir = git_project();
         let config = parse(CONFIG).unwrap();
-        let exclude = |dir: &TempDir| observe(dir.path(), &config, vec![]).unwrap().exclude;
+        let exclude = |dir: &TempDir| observe(dir.path(), &config).unwrap().exclude;
 
         assert_eq!(exclude(&dir), Exclude::Missing);
         ensure_exclude(dir.path(), "refs").unwrap();
@@ -184,7 +183,7 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
         let dir = git_project();
         fs::write(dir.path().join(".git/info/exclude"), "/other/\n").unwrap();
 
-        let observed = observe(dir.path(), &parse(CONFIG).unwrap(), vec![]).unwrap();
+        let observed = observe(dir.path(), &parse(CONFIG).unwrap()).unwrap();
 
         assert_eq!(observed.exclude, Exclude::Missing);
     }
@@ -222,7 +221,7 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
             ],
         );
         let config = parse(CONFIG).unwrap();
-        let exclude = || observe(&linked_path, &config, vec![]).unwrap().exclude;
+        let exclude = || observe(&linked_path, &config).unwrap().exclude;
 
         assert_eq!(exclude(), Exclude::Missing);
         ensure_exclude(&linked_path, "refs").unwrap();
@@ -237,7 +236,7 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
         let project = top.path().join("packages/app");
         fs::create_dir_all(&project).unwrap();
         let config = parse(CONFIG).unwrap();
-        let exclude = || observe(&project, &config, vec![]).unwrap().exclude;
+        let exclude = || observe(&project, &config).unwrap().exclude;
 
         assert_eq!(exclude(), Exclude::Missing);
         ensure_exclude(&project, "refs").unwrap();
@@ -253,7 +252,7 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
         let dir = TempDir::new().unwrap();
         git(dir.path(), &["init", "-q", "--bare"]);
 
-        let observed = observe(dir.path(), &parse(CONFIG).unwrap(), vec![]).unwrap();
+        let observed = observe(dir.path(), &parse(CONFIG).unwrap()).unwrap();
 
         assert_eq!(observed.exclude, Exclude::NoGit);
         ensure_exclude(dir.path(), "refs").unwrap();
@@ -267,7 +266,7 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
         fs::create_dir(&dir).unwrap();
         git(&dir, &["init", "-q"]);
 
-        let observed = observe(&dir, &parse(CONFIG).unwrap(), vec![]).unwrap();
+        let observed = observe(&dir, &parse(CONFIG).unwrap()).unwrap();
 
         assert_eq!(observed.exclude, Exclude::NoGit);
         ensure_exclude(&dir, "refs").unwrap();
@@ -278,7 +277,7 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
     fn a_directory_without_a_git_directory_has_nowhere_for_the_rule() {
         let dir = TempDir::new().unwrap();
 
-        let observed = observe(dir.path(), &parse(CONFIG).unwrap(), vec![]).unwrap();
+        let observed = observe(dir.path(), &parse(CONFIG).unwrap()).unwrap();
 
         assert_eq!(observed.exclude, Exclude::NoGit);
     }
