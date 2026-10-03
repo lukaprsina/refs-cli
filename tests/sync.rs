@@ -2,7 +2,7 @@ use std::fs;
 
 use refs_cli::config::{Config, parse};
 use refs_cli::lock::Lock;
-use refs_cli::plan::LockFlags;
+use refs_cli::plan::{Drift, LockFlags};
 use refs_cli::source::fake::{Call, FakeSource, Method};
 use refs_cli::source::{Observed, Source};
 use refs_cli::sync::{Outcome, Report, SyncFlags, lock, sync};
@@ -316,6 +316,17 @@ fn lock_resolves_and_writes_the_lock_but_touches_nothing_else() {
     assert_eq!(p.lock().unwrap().repo.len(), 1);
     assert_eq!(p.source.inspect("a").unwrap(), Observed::Absent);
     assert_eq!(p.read("AGENTS.md"), None);
+}
+
+#[test]
+fn a_failed_lock_still_reports_how_the_lock_differed() {
+    let p = Project::new(A);
+    p.source.fail("a", Method::Resolve, "unreachable");
+
+    let report = lock(&p.source, p.dir.path(), &p.config, &LockFlags::default());
+
+    assert_eq!(report.outcome, Outcome::Failed);
+    assert_eq!(report.drift, [Drift::LockMissing]);
 }
 
 #[test]

@@ -47,41 +47,46 @@ impl Report {
         }
     }
 
+    /// Stage 1 builds its reports without knowing how the Lock differed; the caller does.
+    fn with_drift(self, drift: Vec<Drift>) -> Report {
+        Report { drift, ..self }
+    }
+
     fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
         Report::new(Outcome::Failed, vec![], vec![miette::Report::new(error)])
     }
 }
 
 /// What every run starts from: the active set, the Lock on disk (if any) and how it differs.
-struct Start<'a> {
+struct Preflight<'a> {
     active: ActiveSet<'a>,
     old: Option<Lock>,
     drift: Vec<Drift>,
 }
 
-fn start<'a>(root: &Path, config: &'a Config) -> Result<Start<'a>, Report> {
+fn preflight<'a>(root: &Path, config: &'a Config) -> Result<Preflight<'a>, Report> {
     let active = active(config);
     let old = Lock::read(&Lock::path(root)).map_err(Report::failed)?;
     let drift = lock_drift(&active, old.as_ref());
-    Ok(Start { active, old, drift })
+    Ok(Preflight { active, old, drift })
 }
 
 /// `refs lock`: stage 1 and a write.
 pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags) -> Report {
-    let Start { active, old, drift } = match start(root, config) {
-        Ok(start) => start,
+    let Preflight { active, old, drift } = match preflight(root, config) {
+        Ok(preflight) => preflight,
         Err(report) => return report,
     };
     match stage_one(source, &active, old, flags, root) {
         Ok(_) => Report::new(Outcome::InSync, drift, vec![]),
-        Err(report) => Report { drift, ..report },
+        Err(report) => report.with_drift(drift),
     }
 }
 
 /// `refs sync`. With `check`, nothing is resolved, verified, fetched or written.
 pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
-    let Start { active, old, drift } = match start(root, config) {
-        Ok(start) => start,
+    let Preflight { active, old, drift } = match preflight(root, config) {
+        Ok(preflight) => preflight,
         Err(report) => return report,
     };
     let lock = if flags.check {
@@ -97,7 +102,7 @@ pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
         };
         match stage_one(source, &active, old, &lock_flags, root) {
             Ok(lock) => lock,
-            Err(report) => return Report { drift, ..report },
+            Err(report) => return report.with_drift(drift),
         }
     };
     let plan = match plan_stage_two(source, root, config, &active, &lock, flags.force) {

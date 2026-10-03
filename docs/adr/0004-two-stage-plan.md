@@ -30,6 +30,7 @@ A `Plan` is an ordered `Vec<Action>`: removals, then materialisations, then Agen
 
 - Stage 1 collects all errors and writes the Lock only if there are none.
 - Stage 2 runs sequentially and collects failures. Other Repos still proceed (every action is idempotent, so a retry is safe), and the block is not rewritten if any Repo failed. The run exits 1 with all diagnostics.
+- A Lock that does not cover the active Repos is drift only under `--check`; after stage 1 it cannot happen, so a real `sync` reports it as a failure rather than as out of date.
 - `sync --check` exits 3 for plain drift and 1 for refusals (`foreign_dir`, `dirty_checkout`, malformed markers): "run `refs sync`" is the wrong advice when `sync` will also refuse.
 
 ## Consequences
