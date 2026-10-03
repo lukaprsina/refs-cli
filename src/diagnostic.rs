@@ -25,6 +25,13 @@ pub enum EditError {
     #[diagnostic(code(refs::config::unknown_repo), help("`refs list` shows the ids"))]
     UnknownRepo { id: String },
 
+    #[error("there is no group with the id `{id}`")]
+    #[diagnostic(
+        code(refs::config::unknown_group),
+        help("`refs list` shows the groups")
+    )]
+    UnknownGroup { id: String },
+
     #[error("could not edit refs.toml: {0}")]
     #[diagnostic(code(refs::config::unreadable))]
     Unreadable(String),
@@ -391,6 +398,22 @@ pub enum Note {
     Recreated { id: String },
 }
 
+/// Why `refs init` stopped.
+#[derive(Debug, Error, Diagnostic)]
+pub enum InitError {
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Project(#[from] ProjectError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Block(#[from] BlockError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Invalid(#[from] ConfigErrors),
+}
+
 /// A problem reading or writing a project file other than `refs.lock` and the Agent files.
 #[derive(Debug, Error, Diagnostic)]
 pub enum ProjectError {
@@ -413,6 +436,13 @@ pub enum ProjectError {
     #[error("no refs.toml in {start} or any parent directory")]
     #[diagnostic(code(refs::project::no_config), help("create one with `refs init`"))]
     NoConfig { start: String },
+
+    #[error("{start} is inside the project at {root}")]
+    #[diagnostic(
+        code(refs::project::nested),
+        help("`refs init --here` creates a nested project in this directory")
+    )]
+    Nested { start: String, root: String },
 
     #[error("{path} resolves outside the project")]
     #[diagnostic(

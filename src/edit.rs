@@ -106,31 +106,107 @@ pub fn remove(text: &str, id: &str) -> Result<String, EditError> {
     Ok(out)
 }
 
-/// Cut the table `[<parent>.<key>]` out of `text`: its header, its comment lines directly
-/// above, the blank line before those, and every line up to its last key. What follows the
-/// last key (blank lines, comments for the next table) stays. Cutting by text, not through
-/// the document, leaves every other byte alone.
-fn cut_table(text: &str, parent: &str, key: &str) -> Result<String, EditError> {
+/// What `enable` and `disable` act on.
+#[derive(Debug, Clone, Copy)]
+pub enum Target<'a> {
+    Repo(&'a str),
+    Group(&'a str),
+}
+
+/// Set `enabled = false` on the repo or group, or on its existing `enabled` key.
+pub fn disable(text: &str, target: Target) -> Result<String, EditError> {
+    let (parent, key) = locate(text, target)?;
     let doc = parse(text)?;
-    let table = doc
-        .get(parent)
+    let table = table_of(&doc, parent, key)?;
+    let mut out = text.to_owned();
+    if let Some(span) = table.get("enabled").and_then(Item::span) {
+        out.replace_range(span, "false");
+    } else {
+        let at = line_end(text, body_end(table));
+        let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+        let line = if text[..at].ends_with('\n') {
+            format!("enabled = false{eol}")
+        } else {
+            format!("{eol}enabled = false")
+        };
+        out.insert_str(at, &line);
+    }
+    config::parse(&out)?;
+    Ok(out)
+}
+
+/// Remove the `enabled` key of the repo or group (spec §6.4: absent means enabled).
+pub fn enable(text: &str, target: Target) -> Result<String, EditError> {
+    let (parent, key) = locate(text, target)?;
+    let doc = parse(text)?;
+    let table = table_of(&doc, parent, key)?;
+    let Some(span) = table.get("enabled").and_then(Item::span) else {
+        return Ok(text.to_owned());
+    };
+    let (key_start, _) = table
+        .key("enabled")
+        .and_then(toml_edit::Key::span)
+        .map_or((span.start, span.end), |k| (k.start, k.end));
+    let start = text[..key_start].rfind('\n').map_or(0, |i| i + 1);
+    let end = line_end(text, span.end);
+    let mut out = format!("{}{}", &text[..start], &text[end..]);
+    // The line was the file's last and had no newline: take the one before it too.
+    if end == text.len() && !text.ends_with('\n') && start > 0 {
+        out.pop();
+        if out.ends_with('\r') {
+            out.pop();
+        }
+    }
+    config::parse(&out)?;
+    Ok(out)
+}
+
+/// The table name and key of `target`, once it is known to exist in `text`.
+fn locate<'a>(text: &str, target: Target<'a>) -> Result<(&'static str, &'a str), EditError> {
+    let config = open(text)?;
+    match target {
+        Target::Repo(id) if config.repos.contains_key(id) => Ok(("repos", id)),
+        Target::Repo(id) => Err(EditError::UnknownRepo { id: id.into() }),
+        Target::Group(id) if config.groups.contains_key(id) => Ok(("groups", id)),
+        Target::Group(id) => Err(EditError::UnknownGroup { id: id.into() }),
+    }
+}
+
+fn table_of<'d>(doc: &'d Document<&str>, parent: &str, key: &str) -> Result<&'d Table, EditError> {
+    doc.get(parent)
         .and_then(|p| p.get(key))
         .and_then(Item::as_table)
         .ok_or_else(|| {
             EditError::Unreadable(format!(
                 "`{parent}.{key}` is not a `[{parent}.{key}]` table"
             ))
-        })?;
-    let header = table.span().map_or(0, |span| span.start);
-    let body_end = table
+        })
+}
+
+/// Where the last key of `table` ends.
+fn body_end(table: &Table) -> usize {
+    table
         .iter()
         .filter_map(|(_, item)| item.span())
         .map(|span| span.end)
         .max()
-        .unwrap_or_else(|| table.span().map_or(0, |span| span.end));
-    let end = text[body_end..]
-        .find('\n')
-        .map_or(text.len(), |i| body_end + i + 1);
+        .unwrap_or_else(|| table.span().map_or(0, |span| span.end))
+}
+
+/// The offset just past the line that `at` is on.
+fn line_end(text: &str, at: usize) -> usize {
+    text[at..].find('\n').map_or(text.len(), |i| at + i + 1)
+}
+
+/// Cut the table `[<parent>.<key>]` out of `text`: its header, its comment lines directly
+/// above, the blank line before those, and every line up to its last key. What follows the
+/// last key (blank lines, comments for the next table) stays. Cutting by text, not through
+/// the document, leaves every other byte alone.
+fn cut_table(text: &str, parent: &str, key: &str) -> Result<String, EditError> {
+    let doc = parse(text)?;
+    let table = table_of(&doc, parent, key)?;
+    let header = table.span().map_or(0, |span| span.start);
+    let end = line_end(text, body_end(table));
 
     let lines: Vec<&str> = text[..header].split_inclusive('\n').collect();
     let mut start = header;

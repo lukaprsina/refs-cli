@@ -2,7 +2,7 @@ use std::fs;
 
 mod common;
 
-use refs_cli::project::find_root;
+use refs_cli::project::{find_root, init_root};
 use tempfile::TempDir;
 
 #[test]
@@ -299,4 +299,53 @@ fn the_config_is_written_atomically_and_read_back() {
         .map(|e| e.unwrap().file_name())
         .collect();
     assert_eq!(names, ["refs.toml"], "no temp file is left behind");
+}
+
+mod init_root_rule {
+    use super::*;
+
+    fn canonical(dir: &TempDir) -> std::path::PathBuf {
+        dir.path().canonicalize().unwrap()
+    }
+
+    #[test]
+    fn with_no_project_it_is_the_git_worktree_root_or_else_the_start() {
+        let dir = TempDir::new().unwrap();
+        let deep = dir.path().join("a/b");
+        fs::create_dir_all(&deep).unwrap();
+        assert_eq!(
+            init_root(&deep, false).unwrap(),
+            deep.canonicalize().unwrap()
+        );
+
+        crate::common::git(dir.path(), &["init", "-q"]);
+        assert_eq!(init_root(&deep, false).unwrap(), canonical(&dir));
+    }
+
+    #[test]
+    fn an_existing_project_is_its_own_root_but_is_not_entered_from_below() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("refs.toml"), "").unwrap();
+        let deep = dir.path().join("a");
+        fs::create_dir_all(&deep).unwrap();
+
+        assert_eq!(init_root(dir.path(), false).unwrap(), canonical(&dir));
+        let error = init_root(&deep, false).unwrap_err();
+        assert_eq!(
+            miette::Diagnostic::code(&error).unwrap().to_string(),
+            "refs::project::nested"
+        );
+    }
+
+    #[test]
+    fn here_always_means_the_start() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("refs.toml"), "").unwrap();
+        let deep = dir.path().join("a");
+        fs::create_dir_all(&deep).unwrap();
+        assert_eq!(
+            init_root(&deep, true).unwrap(),
+            deep.canonicalize().unwrap()
+        );
+    }
 }

@@ -86,3 +86,59 @@ fn list_reads_the_config_only() {
     names.sort();
     assert_eq!(names, ["refs.toml"]);
 }
+
+#[test]
+fn disable_then_enable_leave_refs_toml_byte_identical() {
+    let dir = project(CONFIG);
+
+    assert_eq!(refs(dir.path(), &["disable", "solid"]), 0);
+    assert!(config_text(&dir).contains("enabled = false"));
+    assert_eq!(refs(dir.path(), &["enable", "solid"]), 0);
+    assert_eq!(config_text(&dir), CONFIG);
+}
+
+#[test]
+fn group_targets_a_group_and_an_unknown_id_exits_1() {
+    let dir = project("[groups.g]\nname = \"G\"\n");
+
+    assert_eq!(refs(dir.path(), &["disable", "g", "--group"]), 0);
+    assert!(config_text(&dir).contains("enabled = false"));
+    assert_eq!(refs(dir.path(), &["disable", "g"]), 1, "g is not a repo");
+    assert_eq!(refs(dir.path(), &["enable", "nope", "--group"]), 1);
+}
+
+#[test]
+fn init_needs_no_project_and_a_second_run_changes_nothing() {
+    let dir = TempDir::new().unwrap();
+
+    assert_eq!(refs(dir.path(), &["init"]), 0);
+    assert!(dir.path().join("refs.toml").is_file());
+    assert!(dir.path().join("AGENTS.md").is_file());
+    let before = (
+        config_text(&dir),
+        fs::read(dir.path().join("AGENTS.md")).unwrap(),
+    );
+
+    assert_eq!(refs(dir.path(), &["init"]), 0);
+    assert_eq!(
+        (
+            config_text(&dir),
+            fs::read(dir.path().join("AGENTS.md")).unwrap()
+        ),
+        before
+    );
+}
+
+#[test]
+fn init_below_a_project_stops_unless_here() {
+    let dir = project(CONFIG);
+    let sub = dir.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+
+    assert_eq!(refs(&sub, &["init"]), 1);
+    assert!(!sub.join("refs.toml").exists());
+
+    assert_eq!(refs(&sub, &["init", "--here"]), 0);
+    assert!(sub.join("refs.toml").is_file());
+    assert_eq!(config_text(&dir), CONFIG);
+}

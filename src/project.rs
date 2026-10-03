@@ -27,6 +27,39 @@ pub fn find_root(start: &Path) -> Result<PathBuf, ProjectError> {
         })
 }
 
+/// Where `refs init` sets up a Project (spec §5): `start` itself with `here`; otherwise
+/// the nearest directory up with a `refs.toml` when that is `start`, and an error when it is
+/// further up (a nested project needs `--here`); with none, the git worktree root, or
+/// `start` outside git.
+pub fn init_root(start: &Path, here: bool) -> Result<PathBuf, ProjectError> {
+    let canonical = start.canonicalize().map_err(|source| ProjectError::Read {
+        path: start.display().to_string(),
+        source,
+    })?;
+    if here {
+        return Ok(canonical);
+    }
+    match find_root(&canonical) {
+        Ok(root) if root == canonical => Ok(root),
+        Ok(root) => Err(ProjectError::Nested {
+            start: canonical.display().to_string(),
+            root: root.display().to_string(),
+        }),
+        Err(_) => Ok(git_top(&canonical).unwrap_or(canonical)),
+    }
+}
+
+/// The top of the git worktree that holds `dir`.
+fn git_top(dir: &Path) -> Option<PathBuf> {
+    let out = Cmd::new()
+        .own_repository()
+        .dir(dir)
+        .args(["rev-parse", "--path-format=absolute", "--show-toplevel"])
+        .run()
+        .ok()?;
+    Some(PathBuf::from(out.strip_suffix('\n')?))
+}
+
 /// The text of `<root>/refs.toml`.
 pub fn read_config(root: &Path) -> Result<String, ProjectError> {
     std::fs::read_to_string(root.join(CONFIG_FILE)).map_err(|source| ProjectError::Read {
@@ -207,7 +240,8 @@ fn read_exclude(root: &Path, references_dir: &str) -> Result<Exclude, ProjectErr
     }
 }
 
-/// Add the exclude rule for `references_dir` to the Project's git exclude file.
+/// Add the exclude rule for `references_dir` to the Project's git exclude file, unless it is
+/// already there.
 pub fn ensure_exclude(root: &Path, references_dir: &str) -> Result<(), ProjectError> {
     let Some(file) = ExcludeFile::find(root) else {
         return Ok(());
@@ -222,10 +256,14 @@ pub fn ensure_exclude(root: &Path, references_dir: &str) -> Result<(), ProjectEr
         Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
         Err(source) => return Err(write(source)),
     };
+    let line = file.line(references_dir);
+    if text.lines().any(|l| l.trim() == line) {
+        return Ok(());
+    }
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
-    text.push_str(&file.line(references_dir));
+    text.push_str(&line);
     text.push('\n');
     std::fs::create_dir_all(path.parent().expect("a file has a parent")).map_err(write)?;
     crate::atomic::write(path, &text).map_err(write)

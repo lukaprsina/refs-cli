@@ -332,3 +332,44 @@ fn the_binary_syncs_recreates_a_wiped_cache_and_guards_edits() {
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(fs::read_to_string(checkout.join("docs/a.md")).unwrap(), "a");
 }
+
+#[test]
+fn disabling_a_repo_or_its_group_then_syncing_drops_its_lock_entry_and_entry() {
+    let p = Project::new(
+        r#"
+[groups.g]
+name = "Group G"
+[repos.a]
+url = "https://github.com/o/a"
+group = "g"
+[repos.b]
+url = "https://github.com/o/b"
+"#,
+    );
+    assert_eq!(p.run(&["sync"]), 0);
+    let block = fs::read_to_string(p.path("AGENTS.md")).unwrap();
+    assert!(block.contains("[a @") && block.contains("[b @") && block.contains("Group G"));
+
+    assert_eq!(p.run(&["disable", "b"]), 0);
+    assert_eq!(p.run(&["sync", "--check"]), 3, "the lock still has b");
+    assert_eq!(p.run(&["sync"]), 0);
+    let (lock, block) = (
+        p.lock_text().unwrap(),
+        fs::read_to_string(p.path("AGENTS.md")).unwrap(),
+    );
+    assert!(!lock.contains("\"b\"") && lock.contains("\"a\""), "{lock}");
+    assert!(!block.contains("[b @") && block.contains("[a @"), "{block}");
+
+    assert_eq!(p.run(&["disable", "g", "--group"]), 0);
+    assert_eq!(p.run(&["sync"]), 0);
+    let (lock, block) = (
+        p.lock_text().unwrap(),
+        fs::read_to_string(p.path("AGENTS.md")).unwrap(),
+    );
+    assert!(!lock.contains("\"a\""), "{lock}");
+    assert!(
+        !block.contains("Group G") && !block.contains("[a @"),
+        "{block}"
+    );
+    assert_eq!(p.run(&["sync", "--check"]), 0);
+}

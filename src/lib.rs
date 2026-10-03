@@ -5,6 +5,7 @@ pub mod cli;
 pub mod config;
 pub mod diagnostic;
 pub mod edit;
+pub mod init;
 pub mod list;
 pub mod lock;
 pub mod plan;

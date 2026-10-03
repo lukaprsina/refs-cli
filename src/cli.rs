@@ -13,7 +13,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::config::Config;
 use crate::diagnostic::{EditError, SourceError};
-use crate::edit::{self, AddRepo};
+use crate::edit::{self, AddRepo, Target};
 use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
@@ -51,6 +51,38 @@ enum Command {
     Add(AddArgs),
     /// Remove a repo from refs.toml
     Remove(RemoveArgs),
+    /// Stop tracking a repo, or a group, without removing it
+    Disable(ToggleArgs),
+    /// Track a disabled repo or group again
+    Enable(ToggleArgs),
+    /// Set up a project: refs.toml, the managed block and the git exclude rule
+    Init(InitArgs),
+}
+
+#[derive(Debug, Args)]
+struct ToggleArgs {
+    /// The id of the repo, or of the group with --group
+    id: String,
+    /// The id names a group
+    #[arg(long)]
+    group: bool,
+}
+
+impl ToggleArgs {
+    fn target(&self) -> Target<'_> {
+        if self.group {
+            Target::Group(&self.id)
+        } else {
+            Target::Repo(&self.id)
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+struct InitArgs {
+    /// Create a project here even below a directory that already has a refs.toml
+    #[arg(long)]
+    here: bool,
 }
 
 #[derive(Debug, Args)]
@@ -133,6 +165,9 @@ pub fn run<'a>(
     };
     install_report_handler(cli.no_color);
     let start = cli.project.as_deref().unwrap_or(cwd);
+    if let Command::Init(args) = &cli.command {
+        return init(start, args.here, cli.quiet);
+    }
     let (root, config) = match project::load(start) {
         Ok(loaded) => loaded,
         Err(reports) => {
@@ -154,7 +189,13 @@ pub fn run<'a>(
         Command::Remove(args) => {
             return edit_config(&root, cli.quiet, |text| edit::remove(text, &args.id));
         }
-        Command::Lock(_) | Command::Sync(_) => {}
+        Command::Disable(args) => {
+            return edit_config(&root, cli.quiet, |text| edit::disable(text, args.target()));
+        }
+        Command::Enable(args) => {
+            return edit_config(&root, cli.quiet, |text| edit::enable(text, args.target()));
+        }
+        Command::Lock(_) | Command::Sync(_) | Command::Init(_) => {}
     }
     let source = match make_source(&root, &config) {
         Ok(source) => source,
@@ -180,7 +221,12 @@ pub fn run<'a>(
             };
             sync::sync(source, &root, &config, &flags)
         }
-        Command::List | Command::Add(_) | Command::Remove(_) => {
+        Command::List
+        | Command::Add(_)
+        | Command::Remove(_)
+        | Command::Enable(_)
+        | Command::Disable(_)
+        | Command::Init(_) => {
             unreachable!("handled before the Source is made")
         }
     };
@@ -230,6 +276,32 @@ fn edit_config(
         }
     }
 }
+
+/// `refs init`: it needs no loaded project, as there may be none yet.
+fn init(start: &Path, here: bool, quiet: bool) -> u8 {
+    let result = project::init_root(start, here)
+        .map_err(miette::Report::new)
+        .and_then(|root| crate::init::init(&root).map_err(miette::Report::new));
+    match result {
+        Ok(done) => {
+            if !quiet {
+                if done.config_created {
+                    println!("created {}", project::CONFIG_FILE);
+                }
+                println!("{REMINDERS}");
+            }
+            0
+        }
+        Err(report) => {
+            eprintln!("{report:?}");
+            EXIT_ERROR
+        }
+    }
+}
+
+const REMINDERS: &str = "Add a repo with `refs add <url>`, then run `refs sync`.
+Linters, formatters and type checkers are yours to configure: exclude the references dir from them.
+Claude Code reads AGENTS.md only when there is no CLAUDE.md; to use CLAUDE.md, list it in `agents_files`.";
 
 fn exit_code(outcome: Outcome) -> u8 {
     match outcome {

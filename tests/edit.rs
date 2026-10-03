@@ -1,4 +1,4 @@
-use refs_cli::edit::{AddRepo, add, remove};
+use refs_cli::edit::{AddRepo, Target, add, disable, enable, remove};
 
 const CONFIG: &str = r#"# My references.
 
@@ -262,4 +262,58 @@ fn remove_also_drops_a_stub_group_that_add_found_empty() {
     };
     let added = add(text, &req).unwrap();
     assert_eq!(remove(&added, "r").unwrap(), "");
+}
+
+#[test]
+fn disable_marks_a_repo_and_enable_gives_back_the_same_bytes() {
+    let disabled = disable(CONFIG, Target::Repo("solid")).unwrap();
+    let config = refs_cli::config::parse(&disabled).unwrap();
+    assert_eq!(config.repos["solid"].enabled, Some(false));
+    assert_eq!(enable(&disabled, Target::Repo("solid")).unwrap(), CONFIG);
+}
+
+#[test]
+fn disable_and_enable_work_on_a_group() {
+    let disabled = disable(CONFIG, Target::Group("solid")).unwrap();
+    let config = refs_cli::config::parse(&disabled).unwrap();
+    assert_eq!(config.groups["solid"].enabled, Some(false));
+    assert_eq!(enable(&disabled, Target::Group("solid")).unwrap(), CONFIG);
+}
+
+#[test]
+fn disable_and_enable_reject_an_id_that_is_not_in_the_config() {
+    let err = disable(CONFIG, Target::Repo("nope")).unwrap_err();
+    assert_eq!(codes(&err), ["refs::config::unknown_repo"]);
+    let err = enable(CONFIG, Target::Group("nope")).unwrap_err();
+    assert_eq!(codes(&err), ["refs::config::unknown_group"]);
+}
+
+#[test]
+fn enable_removes_a_written_enabled_key_and_disable_overwrites_it() {
+    let text = "[repos.a]\nurl = \"https://github.com/o/a\"\nenabled = true # on\nref = \"main\"\n";
+    let off = disable(text, Target::Repo("a")).unwrap();
+    assert_eq!(off, text.replace("true", "false"));
+    let on = enable(text, Target::Repo("a")).unwrap();
+    assert_eq!(
+        on,
+        "[repos.a]\nurl = \"https://github.com/o/a\"\nref = \"main\"\n"
+    );
+}
+
+#[test]
+fn enabling_an_enabled_repo_changes_nothing() {
+    assert_eq!(enable(CONFIG, Target::Repo("solid")).unwrap(), CONFIG);
+}
+
+#[test]
+fn the_round_trip_holds_with_crlf_and_without_a_final_newline() {
+    for text in [
+        CONFIG.replace('\n', "\r\n"),
+        CONFIG.trim_end().to_owned(),
+        CONFIG.replace('\n', "\r\n").trim_end().to_owned(),
+    ] {
+        let off = disable(&text, Target::Repo("solid")).unwrap();
+        assert!(refs_cli::config::parse(&off).is_ok());
+        assert_eq!(enable(&off, Target::Repo("solid")).unwrap(), text);
+    }
 }
