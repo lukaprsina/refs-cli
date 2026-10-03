@@ -111,7 +111,7 @@ pub enum Observed {
 }
 
 /// Options for `materialise`: `offline` forbids network access. `force` is `plan`'s
-/// business (ADR 0004), so `Source` never sees it.
+/// business (ADR 0006), so `Source` never sees it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MaterialiseOpts {
     pub offline: bool,

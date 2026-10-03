@@ -1,4 +1,4 @@
-//! The `sync` executor (ADR 0004): reads the project, runs the two stages, applies the plan.
+//! The `sync` executor (ADR 0006): reads the project, runs the two stages, applies the plan.
 //! Decisions live in `plan`; this module only does what the plans say and collects failures.
 
 use std::collections::HashMap;

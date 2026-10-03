@@ -16,7 +16,7 @@ pub enum Drift {
 }
 
 /// What the executor does for one active Repo. It verifies `paths` and `start` of
-/// every Repo afterwards, so verification is not a variant (ADR 0004).
+/// every Repo afterwards, so verification is not a variant (ADR 0006).
 #[derive(Debug)]
 pub enum Step<'a> {
     /// Ask the Source for a new pin: a new, re-enabled or changed Repo, or an upgrade.
@@ -77,7 +77,7 @@ pub fn lock_drift(active: &ActiveSet, lock: Option<&Lock>) -> Vec<Drift> {
     drift
 }
 
-/// Stage 1 (ADR 0004): one step per active Repo, in active-set order. `offline` refuses
+/// Stage 1 (ADR 0006): one step per active Repo, in active-set order. `offline` refuses
 /// anything that would resolve: a missing or stale Lock, or any `upgrade`.
 pub fn plan_lock<'a>(
     active: &ActiveSet<'a>,
