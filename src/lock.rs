@@ -24,7 +24,6 @@ pub struct Lock {
 pub enum Field {
     Url,
     Ref,
-    Paths,
 }
 
 impl std::fmt::Display for Field {
@@ -32,19 +31,19 @@ impl std::fmt::Display for Field {
         f.write_str(match self {
             Field::Url => "url",
             Field::Ref => "ref",
-            Field::Paths => "paths",
         })
     }
 }
 
-/// One locked Repo. The `source` tag and its fields live in the `Pin`.
+/// One locked Repo. The `source` tag and its fields live in the `Pin`. The Lock records
+/// what a Repo resolved to, not which `paths` it checks out, so a `paths` key in an older
+/// `refs.lock` is ignored on read and gone the next time the Lock is written (format
+/// version stays 1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockedRepo {
     pub id: String,
     #[serde(flatten)]
     pub pin: Pin,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub paths: Vec<String>,
 }
 
 impl Lock {

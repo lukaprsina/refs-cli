@@ -101,6 +101,8 @@ pub enum CheckoutState {
     /// Locked, but nothing (or a dangling directory) is checked out.
     Missing,
     WrongSha,
+    /// The right commit, checked out with other `paths` than the config asks for.
+    WrongPaths,
     /// A directory that is not one of ours is in the way.
     Foreign,
     NotLocked,
@@ -113,6 +115,7 @@ impl std::fmt::Display for CheckoutState {
             CheckoutState::Ok => "ok",
             CheckoutState::Missing => "missing",
             CheckoutState::WrongSha => "wrong SHA",
+            CheckoutState::WrongPaths => "wrong paths",
             CheckoutState::Foreign => "foreign",
             CheckoutState::NotLocked => "not locked",
             CheckoutState::Disabled => "disabled",
@@ -130,8 +133,9 @@ fn checkout_state(config: &Config, status: &Status, r: &RepoRef) -> CheckoutStat
     match status.observed.get(r.id) {
         None | Some(Observed::Absent | Observed::Dangling) => CheckoutState::Missing,
         Some(Observed::Foreign) => CheckoutState::Foreign,
-        Some(Observed::At { pin, .. }) if pin.same_commit(&locked.pin) => CheckoutState::Ok,
-        Some(Observed::At { .. }) => CheckoutState::WrongSha,
+        Some(seen) if seen.matches(r.repo, &locked.pin) => CheckoutState::Ok,
+        Some(Observed::At { pin, .. }) if !pin.same_commit(&locked.pin) => CheckoutState::WrongSha,
+        Some(Observed::At { .. }) => CheckoutState::WrongPaths,
     }
 }
 

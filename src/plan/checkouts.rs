@@ -141,16 +141,6 @@ fn dirty(id: &str, files: &[String]) -> Refusal {
     }
 }
 
-fn same_set(a: &[String], b: &[String]) -> bool {
-    let sorted = |v: &[String]| {
-        let mut v = v.to_vec();
-        v.sort();
-        v.dedup();
-        v
-    };
-    sorted(a) == sorted(b)
-}
-
 /// Plan stage 2 against the Lock and what is on disk.
 pub fn plan_checkouts<'a>(
     active: &ActiveSet<'a>,
@@ -174,9 +164,7 @@ pub fn plan_checkouts<'a>(
                 note: Some(Note::Recreated { id: repo.id.into() }),
             }),
             Observed::Foreign => refusals.push(Refusal::ForeignDir { id: repo.id.into() }),
-            Observed::At {
-                pin: seen, paths, ..
-            } if seen.same_commit(&locked.pin) && same_set(paths, &repo.repo.path_strings()) => {}
+            seen @ Observed::At { .. } if seen.matches(repo.repo, &locked.pin) => {}
             Observed::At { dirty_files, .. } if dirty_files.is_empty() => {
                 current.push(RepoAction::Materialise { repo, pin: pin() })
             }

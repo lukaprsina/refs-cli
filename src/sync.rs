@@ -247,7 +247,6 @@ fn stage_one(
                 Ok(pin) => entries.push(LockedRepo {
                     id: repo.id.into(),
                     pin,
-                    paths: repo.repo.path_strings(),
                 }),
                 Err(e) => errors.push(e.into()),
             },

@@ -8,11 +8,10 @@ use refs_cli::source::Pin;
 
 const SHA: &str = "ee49b3e0123456789012345678901234567890ab";
 
-fn entry(id: &str, url: &str, git_ref: &str, paths: &[&str]) -> LockedRepo {
+fn entry(id: &str, url: &str, git_ref: &str) -> LockedRepo {
     LockedRepo {
         id: id.into(),
         pin: Pin::git(url, git_ref, SHA, None),
-        paths: paths.iter().map(|p| p.to_string()).collect(),
     }
 }
 
@@ -28,7 +27,7 @@ paths = ["docs"]
 "#;
 
 fn a_entry() -> LockedRepo {
-    entry("a", "https://github.com/o/a", "next", &["docs"])
+    entry("a", "https://github.com/o/a", "next")
 }
 
 #[test]
@@ -51,18 +50,13 @@ fn a_matching_lock_is_current_and_every_repo_is_reused() {
 }
 
 #[test]
-fn editing_paths_keeps_the_pin_and_refreshes_the_entry_paths() {
-    let config = parse(&A.replace(r#"["docs"]"#, r#"["docs", "src"]"#)).unwrap();
+fn editing_paths_leaves_the_lock_current_and_reuses_the_entry() {
+    let config = parse(&A.replace(r#"["docs"]"#, r#"["src", "docs", "src"]"#)).unwrap();
     let set = active(&config);
     let locked = lock(vec![a_entry()]);
-    let drift = vec![Drift::Changed {
-        id: "a".into(),
-        field: Field::Paths,
-    }];
-    assert_eq!(lock_drift(&set, Some(&locked)), drift);
+    assert_eq!(lock_drift(&set, Some(&locked)), vec![]);
     let plan = plan_lock(&set, Some(&locked), &LockFlags::default()).unwrap();
-    let want = entry("a", "https://github.com/o/a", "next", &["docs", "src"]);
-    assert!(matches!(plan.steps.as_slice(), [Step::Reuse(e)] if *e == want));
+    assert!(matches!(plan.steps.as_slice(), [Step::Reuse(e)] if *e == a_entry()));
 }
 
 fn changed(field: Field) -> Vec<Drift> {
@@ -153,14 +147,13 @@ url = "https://github.com/o/head"
 
 fn three_locked() -> Lock {
     lock(vec![
-        entry("branch", "https://github.com/o/branch", "next", &[]),
+        entry("branch", "https://github.com/o/branch", "next"),
         entry(
             "pinned",
             "https://github.com/o/pinned",
             "ee49b3e0123456789012345678901234567890ab",
-            &[],
         ),
-        entry("head", "https://github.com/o/head", "HEAD", &[]),
+        entry("head", "https://github.com/o/head", "HEAD"),
     ])
 }
 
@@ -219,12 +212,7 @@ fn offline_refuses_a_missing_or_stale_lock_naming_the_drift() {
         matches!(&err, LockRefusal::OfflineStale { drift } if *drift == vec![Drift::LockMissing])
     );
 
-    let stale = lock(vec![entry(
-        "a",
-        "https://github.com/o/a",
-        "main",
-        &["docs"],
-    )]);
+    let stale = lock(vec![entry("a", "https://github.com/o/a", "main")]);
     let err = plan_lock(&set, Some(&stale), &offline()).unwrap_err();
     assert!(matches!(&err, LockRefusal::OfflineStale { drift } if *drift == changed(Field::Ref)));
 }

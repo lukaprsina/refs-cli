@@ -243,6 +243,71 @@ fn check_tells_drift_from_a_refusal() {
     assert_eq!(p.sync(&check()).outcome, Outcome::OutOfDate);
 }
 
+/// Sync the project's source with `config` instead of the one it was made with.
+fn sync_with(p: &Project, config: &str, flags: &SyncFlags) -> Report {
+    sync(&p.source, p.dir.path(), &parse(config).unwrap(), flags)
+}
+
+#[test]
+fn reordering_or_duplicating_paths_is_in_sync_and_changes_no_file() {
+    let two = A.replace(r#"["docs"]"#, r#"["docs", "src"]"#);
+    let p = synced(&two);
+    let reordered = A.replace(r#"["docs"]"#, r#"["src", "docs", "src"]"#);
+    let lock = p.read("refs.lock").unwrap();
+    let seen = p.source.calls().len();
+
+    assert_eq!(sync_with(&p, &reordered, &check()).outcome, Outcome::InSync);
+    let report = sync_with(&p, &reordered, &SyncFlags::default());
+
+    assert_eq!(report.outcome, Outcome::InSync);
+    assert!(report.drift.is_empty());
+    assert_eq!(p.read("refs.lock").unwrap(), lock);
+    assert!(
+        p.source.calls()[seen..]
+            .iter()
+            .all(|c| matches!(c, Call::Verify { .. })),
+        "{:?}",
+        p.source.calls()
+    );
+}
+
+#[test]
+fn a_paths_only_edit_leaves_refs_lock_alone_but_changes_the_checkout() {
+    let p = synced(A);
+    let lock = p.read("refs.lock").unwrap();
+    let wider = A.replace(r#"["docs"]"#, r#"["docs", "src"]"#);
+
+    assert_eq!(sync_with(&p, &wider, &check()).outcome, Outcome::OutOfDate);
+    let report = sync_with(&p, &wider, &SyncFlags::default());
+
+    assert_eq!(report.outcome, Outcome::InSync, "{:?}", report.diagnostics);
+    assert_eq!(p.read("refs.lock").unwrap(), lock);
+    assert!(!lock.contains("paths"));
+    let Observed::At { paths, .. } = p.source.inspect("a").unwrap() else {
+        panic!("not checked out")
+    };
+    assert_eq!(paths, ["docs", "src"]);
+}
+
+#[test]
+fn a_lock_written_with_paths_is_current_and_resolves_nothing() {
+    let p = synced(A);
+    let old = p
+        .read("refs.lock")
+        .unwrap()
+        .replace("sha = ", "paths = [\"somewhere\"]\nsha = ");
+    fs::write(p.path("refs.lock"), &old).unwrap();
+    let seen = p.source.calls().len();
+
+    assert_eq!(p.sync(&check()).outcome, Outcome::InSync);
+    assert_eq!(p.sync(&SyncFlags::default()).outcome, Outcome::InSync);
+    assert!(
+        p.source.calls()[seen..]
+            .iter()
+            .all(|c| !matches!(c, Call::Resolve(_)))
+    );
+}
+
 fn dirty(p: &Project) {
     let Observed::At { pin, paths, .. } = p.source.inspect("a").unwrap() else {
         panic!("not checked out")

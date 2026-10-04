@@ -1,11 +1,10 @@
 ---
 status: accepted
-supersedes: 0003, 0004
 ---
 
 # `sync` is planned in two pure stages, grouped by Repo; `Source` only reports and executes
 
-This is the one statement of how `sync` decides and acts. It replaces ADR 0003 (decisions live in `plan`, mechanics in `Source`) and ADR 0004 (two-stage plan), which had grown into a chain of refinements, and it changes the shape of the Plan: a flat `Vec<Action>` whose order carried implicit dependencies that only the executor knew became a Plan grouped by Repo, so the failure policy is data.
+This is the one statement of how `sync` decides and acts. The Plan is grouped by Repo rather than a flat list of actions whose order carried implicit dependencies that only the executor knew, so the failure policy is data.
 
 ## Decisions in `plan`, mechanics in `Source`
 
@@ -38,6 +37,14 @@ Plan { repos: Vec<RepoAction>, writes: Vec<WriteAgentFile>, exclude: Option<Excl
 ## What stage 2 observes
 
 `Checkouts` is the observation of every Repo the plan has to judge: each active Repo, and each non-active name found in `references_dir` (from `Source::list`). It is built by one constructor that checks every active id is present and returns an error otherwise, so an omitted entry is not read as `Absent`. There is no separate listing. A non-active name that is `At` is removed (refused if dirty and not forced); `Foreign` or `Absent` is ignored. The old Lock is not read, so a retry after a failed stage 2 still finds them. `ProjectObserved` is the rest: the `references_dir` setting, the text of each Agent file and the exclude rule (`Present`, `Missing` or `NoGit`; `NoGit` is a note, not drift).
+
+## The Lock records the commit, not the Paths
+
+A Lock entry is `id` plus a Pin (`source`, `url`, `ref`, `sha`, `branch`). It has no `paths`: they do not change which commit a Repo resolves to, and `verify` checks `paths` and `start` against that commit on every sync anyway. A Lock is stale when a Repo is added or removed or its url or Ref changed, so a `paths`-only edit (including reordering or repeating entries) leaves `refs.lock` byte for byte as it was, and `sync --check`, `sync` and `list --status` agree. `paths` is a set everywhere.
+
+Two rules decide matching, both defined in `source`: `Pin::drift_from(repo)` (url and Ref) for Lock drift, pin reuse and the checkout stage's input, and `Observed::matches(repo, locked)` (same commit as the locked Pin, `paths` as a set) for the checkout stage and `list --status`. Lock-entry construction takes the Pin straight from `resolve`.
+
+The format version stays 1. A Lock holding `paths` is still read (unknown keys are ignored), is current if url and Ref match, and loses the keys the next time the Lock is written for another reason; nothing rewrites it just to drop them.
 
 ## Verification and offline
 

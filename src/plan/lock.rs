@@ -21,7 +21,7 @@ pub enum Drift {
 pub enum Step<'a> {
     /// Ask the Source for a new pin: a new, re-enabled or changed Repo, or an upgrade.
     Resolve(RepoRef<'a>),
-    /// Keep the locked pin; `paths` are already the config's.
+    /// Keep the locked entry.
     Reuse(LockedRepo),
 }
 
@@ -56,13 +56,11 @@ pub fn lock_drift(active: &ActiveSet, lock: Option<&Lock>) -> Vec<Drift> {
         match lock.get(repo.id) {
             None => drift.push(Drift::Added(repo.id.into())),
             Some(entry) => {
-                let mut fields = entry.pin.drift_from(repo.repo);
-                if entry.paths != repo.repo.path_strings() {
-                    fields.push(Field::Paths);
-                }
-                drift.extend(fields.into_iter().map(|field| Drift::Changed {
-                    id: repo.id.into(),
-                    field,
+                drift.extend(entry.pin.drift_from(repo.repo).into_iter().map(|field| {
+                    Drift::Changed {
+                        id: repo.id.into(),
+                        field,
+                    }
                 }));
             }
         }
@@ -108,10 +106,7 @@ pub fn plan_lock<'a>(
                 Some(entry)
                     if entry.pin.drift_from(repo.repo).is_empty() && !flags.upgrades(repo) =>
                 {
-                    Step::Reuse(LockedRepo {
-                        paths: repo.repo.path_strings(),
-                        ..entry.clone()
-                    })
+                    Step::Reuse(entry.clone())
                 }
                 _ => Step::Resolve(repo),
             })

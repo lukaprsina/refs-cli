@@ -33,7 +33,6 @@ fn lock() -> Lock {
         repo: vec![LockedRepo {
             id: "a".into(),
             pin: pin(SHA),
-            paths: vec!["docs".into(), "src".into()],
         }],
     }
 }
@@ -170,8 +169,7 @@ fn paths_are_compared_as_sets() {
 fn no_paths_in_the_config_equals_no_sparse_patterns_on_disk() {
     let config = parse(&CONFIG.replace(r#"paths = ["docs", "src"]"#, "")).unwrap();
     let set = active(&config);
-    let mut locked = lock();
-    locked.repo[0].paths = vec![];
+    let locked = lock();
     let source = FakeSource::new();
     source.seed("a", at(SHA, &[], &[]));
     let text = format!("{}\n", render(&set, &locked, ".references").unwrap());

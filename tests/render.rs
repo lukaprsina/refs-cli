@@ -16,7 +16,6 @@ fn lock(repos: &[(&str, &str, Option<&str>)]) -> Lock {
             .map(|(id, git_ref, branch)| LockedRepo {
                 id: id.to_string(),
                 pin: Pin::git("https://example.com/o/r", git_ref, SHA, *branch),
-                paths: vec![],
             })
             .collect(),
     }

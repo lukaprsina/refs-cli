@@ -49,7 +49,7 @@ What a Repo's Ref resolved to, as recorded in the Lock: the commit and, for a Re
 _Avoid_: Lock entry (an Entry is the Managed block's record), resolution
 
 **Stale**:
-A Lock whose Pins no longer match the active Repos: a Repo added or removed, or one whose url, Ref or Paths changed. Stale does not mean re-resolve: only a changed url or Ref, or a newly active Repo, resolves again.
+A Lock whose Pins no longer match the active Repos: a Repo added or removed, or one whose url or Ref changed. Paths are not in the Lock, so changing them (or reordering them) never makes it stale; the Checkout follows Paths on the next sync. Stale does not mean re-resolve: a removed Repo only drops its entry.
 _Avoid_: Outdated, invalid
 
 **Checkout**:

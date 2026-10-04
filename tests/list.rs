@@ -80,7 +80,6 @@ enabled = false
     let entry = |id: &str, c| LockedRepo {
         id: id.into(),
         pin: pin(&sha(c)),
-        paths: vec![],
     };
     let lock = Lock::new(vec![
         entry("ok", '1'),
@@ -119,6 +118,42 @@ ungrouped
   off     https://github.com/o/r  HEAD  all  -  disabled
 "
     );
+}
+
+#[test]
+fn status_compares_paths_as_a_set() {
+    let config = parse(
+        r#"
+[repos.same]
+url = "https://github.com/o/r"
+paths = ["b", "a", "b"]
+[repos.other]
+url = "https://github.com/o/r"
+paths = ["a"]
+"#,
+    )
+    .unwrap();
+    let sha = "1".repeat(40);
+    let entry = |id: &str| LockedRepo {
+        id: id.into(),
+        pin: pin(&sha),
+    };
+    let at = |paths: &[&str]| Observed::At {
+        pin: pin(&sha),
+        paths: paths.iter().map(|p| p.to_string()).collect(),
+        dirty_files: vec![],
+    };
+    let status = Status {
+        lock: Some(Lock::new(vec![entry("same"), entry("other")])),
+        observed: HashMap::from([
+            ("same".to_string(), at(&["a", "b"])),
+            ("other".to_string(), at(&["a", "b"])),
+        ]),
+    };
+
+    let out = list_status(&config, &status);
+    assert!(out.contains("1111111  ok\n"), "{out}");
+    assert!(out.contains("1111111  wrong paths\n"), "{out}");
 }
 
 #[test]
