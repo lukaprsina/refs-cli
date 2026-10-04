@@ -1,13 +1,11 @@
-use std::collections::HashMap;
-
 use miette::Diagnostic;
 use refs_cli::active::{ActiveSet, active};
 use refs_cli::config::{Config, parse};
 use refs_cli::diagnostic::Refusal;
 use refs_cli::lock::{Lock, LockedRepo};
 use refs_cli::plan::{
-    AgentFileText, Checkouts, Exclude, ExcludeAction, Plan, ProjectObserved, RepoAction,
-    plan_checkouts,
+    AgentFileText, Checkouts, Exclude, ExcludeAction, Outcome, Plan, ProjectObserved, RepoAction,
+    check_outcome, plan_checkouts,
 };
 use refs_cli::render::render;
 use refs_cli::source::fake::FakeSource;
@@ -48,12 +46,8 @@ fn at(sha: &str, paths: &[&str], dirty: &[&str]) -> Observed {
 /// What `sync` would read: every active repo and every `extra` name in the references
 /// directory, inspected.
 fn observe(source: &FakeSource, set: &ActiveSet, extra: &[&str]) -> Checkouts {
-    let seen = set
-        .repos()
-        .map(|r| r.id)
-        .chain(extra.iter().copied())
-        .map(|id| (id.to_string(), source.inspect(id).unwrap()));
-    Checkouts::new(set, seen).unwrap()
+    let listing: Vec<String> = extra.iter().map(|n| n.to_string()).collect();
+    Checkouts::observe(set, &listing, |name| source.inspect(name)).unwrap()
 }
 
 /// The agent file as it is after a clean `sync`.
@@ -519,19 +513,30 @@ fn a_dangling_non_active_name_is_left_for_doctor() {
 }
 
 #[test]
-fn an_observation_missing_an_active_repo_is_an_error() {
+fn every_active_repo_and_each_other_listed_name_is_inspected_once() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
-    let err = Checkouts::new(&set, HashMap::<String, Observed>::new()).unwrap_err();
-    assert_eq!(err.ids, vec!["a".to_string()]);
+    let mut asked = Vec::new();
+    // the listing names an active repo too, and a name that is not active
+    let listing = ["a".to_string(), "old".to_string()];
+    Checkouts::observe(&set, &listing, |name| {
+        asked.push(name.to_string());
+        Ok::<_, ()>(Observed::Absent)
+    })
+    .unwrap();
+    assert_eq!(asked, ["a", "old"]);
 }
 
 #[test]
-fn a_name_that_is_not_active_does_not_satisfy_an_active_repo() {
+fn inspect_failures_are_all_collected() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
-    let seen = [("other".to_string(), Observed::Absent)];
-    assert!(Checkouts::new(&set, seen).is_err());
+    let listing = ["old".to_string()];
+    let errors = Checkouts::observe(&set, &listing, |name| {
+        Err::<Observed, _>(format!("cannot inspect {name}"))
+    })
+    .unwrap_err();
+    assert_eq!(errors, ["cannot inspect a", "cannot inspect old"]);
 }
 
 #[test]
@@ -567,4 +572,66 @@ fn a_replace_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
         [RepoAction::Replace { .. }]
     ));
     assert!(plan.repos[0].gates_writes());
+}
+
+const MARKED: &str = "# Notes\n\n<!-- BEGIN:refs -->\nold\n<!-- END:refs -->\n\nafter\n";
+
+#[test]
+fn with_no_active_repo_the_block_is_removed_and_the_rest_kept() {
+    let config = parse("[settings]\n").unwrap();
+    let set = active(&config);
+    let project = with_agent_files(
+        &set,
+        &[
+            ("AGENTS.md", Some(MARKED)),
+            ("CLAUDE.md", Some("no markers\n")),
+            ("OTHER.md", None),
+        ],
+    );
+    let empty_lock = Lock::new(vec![]);
+    let observed = Checkouts::observe(&set, &[], |_| Ok::<_, ()>(Observed::Absent)).unwrap();
+    let plan = plan_checkouts(&set, &empty_lock, &observed, &project, false).unwrap();
+    let writes: Vec<(&str, &str)> = plan
+        .writes
+        .iter()
+        .map(|w| (w.path.as_str(), w.text.as_str()))
+        .collect();
+    assert_eq!(writes, [("AGENTS.md", "# Notes\n\n\n\nafter\n")]);
+    assert!(plan.is_drift());
+}
+
+#[test]
+fn a_failed_action_on_a_listed_checkout_holds_back_the_writes() {
+    let config = parse(CONFIG).unwrap();
+    let set = active(&config);
+    let source = FakeSource::new();
+    source.seed("old", at(OTHER_SHA, &[], &[]));
+    // repos: [Remove old, Materialise a]
+    let plan = plan_with(&source, &["old"], &project(&set), false);
+    assert!(!plan.holds_back_writes(&[]));
+    assert!(!plan.holds_back_writes(&[0]));
+    assert!(plan.holds_back_writes(&[1]));
+}
+
+#[test]
+fn outcomes_follow_from_the_plan() {
+    let config = parse(CONFIG).unwrap();
+    let set = active(&config);
+    let in_sync = plan(&in_sync_source(), &project(&set), false);
+    assert_eq!(check_outcome(Some(&in_sync), false), Outcome::InSync);
+    assert_eq!(check_outcome(Some(&in_sync), true), Outcome::OutOfDate);
+    assert_eq!(check_outcome(None, false), Outcome::OutOfDate);
+
+    let absent = plan(&FakeSource::new(), &project(&set), false);
+    assert_eq!(check_outcome(Some(&absent), false), Outcome::OutOfDate);
+
+    let source = FakeSource::new();
+    source.seed("a", Observed::Foreign);
+    let refused = plan(&source, &project(&set), false);
+    assert_eq!(check_outcome(Some(&refused), true), Outcome::Refused);
+
+    assert_eq!(Plan::applied_outcome(false, false), Outcome::InSync);
+    assert_eq!(Plan::applied_outcome(true, false), Outcome::Refused);
+    assert_eq!(Plan::applied_outcome(true, true), Outcome::Failed);
+    assert!(refused.is_refused() && !absent.is_refused());
 }

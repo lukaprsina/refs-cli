@@ -1,5 +1,6 @@
-//! The `sync` executor (ADR 0006): reads the project, runs the two stages, applies the plan.
-//! Decisions live in `plan`; this module only does what the plans say and collects failures.
+//! The `sync` executor (ADR 0006): reads the project, runs the typed actions of the two
+//! plans through `Source`, and collects what happened. Which names are observed, how Lock
+//! entries are built, and how a Plan becomes an outcome are decided in `plan`.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -7,30 +8,22 @@ use std::path::Path;
 use crate::active::{ActiveSet, active};
 use crate::agent_file;
 use crate::config::{self, Config};
-use crate::diagnostic::{NotLocked, NotObserved, Note};
+use crate::diagnostic::{NotLocked, Note};
 use crate::list::Status;
-use crate::lock::{Lock, LockedRepo};
+use crate::lock::Lock;
+pub use crate::plan::Outcome;
 use crate::plan::{
-    Checkouts, Drift, ExcludeAction, LockFlags, Plan, RepoAction, Step, lock_drift, plan_checkouts,
-    plan_lock,
+    Checkouts, Drift, ExcludeAction, LockFlags, LockPlan, Plan, RepoAction, Step, check_outcome,
+    lock_drift, locked, plan_checkouts, plan_lock,
 };
 use crate::project;
-use crate::source::{MaterialiseOpts, Observed, Source, VerifyOpts};
+use crate::source::{MaterialiseOpts, Source, VerifyOpts};
 
 #[derive(Debug, Default)]
 pub struct SyncFlags {
     pub offline: bool,
     pub force: bool,
     pub check: bool,
-}
-
-/// How a run ended; the CLI maps it to an exit code (0, 3, 1, 1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Outcome {
-    InSync,
-    OutOfDate,
-    Refused,
-    Failed,
 }
 
 #[derive(Debug)]
@@ -97,7 +90,7 @@ pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
         match old {
             Some(lock) => lock,
             // Nothing to plan against: the Lock is what is out of date.
-            None => return Report::new(Outcome::OutOfDate, drift, vec![]),
+            None => return Report::new(check_outcome(None, true), drift, vec![]),
         }
     } else {
         match stage_one(source, &active, old, &lock_flags(flags), root) {
@@ -132,7 +125,7 @@ fn plan_and_apply(
         // Only `--check` can meet a Lock that does not cover the active set, and it does not
         // repair it: the Lock is what is out of date.
         Err(StageTwoError::NotLocked(_)) if flags.check => {
-            return Report::new(Outcome::OutOfDate, drift, vec![]);
+            return Report::new(check_outcome(None, true), drift, vec![]);
         }
         Err(e) => return Report::new(Outcome::Failed, drift, e.into_reports()),
     };
@@ -244,10 +237,7 @@ fn stage_one(
         match step {
             Step::Reuse(entry) => entries.push(entry),
             Step::Resolve(repo) => match source.resolve(repo) {
-                Ok(pin) => entries.push(LockedRepo {
-                    id: repo.id.into(),
-                    pin,
-                }),
+                Ok(pin) => entries.push(locked(repo, pin)),
                 Err(e) => errors.push(e.into()),
             },
         }
@@ -266,32 +256,29 @@ fn stage_one(
     if !errors.is_empty() {
         return Err(Report::new(Outcome::Failed, vec![], errors));
     }
-    let lock = Lock::new(entries);
-    if old.as_ref() != Some(&lock)
-        && let Err(e) = lock.write(&Lock::path(root))
+    let new = LockPlan::finish(entries, old.as_ref());
+    if new.write
+        && let Err(e) = new.lock.write(&Lock::path(root))
     {
         return Err(Report::failed(e));
     }
-    Ok(lock)
+    Ok(new.lock)
 }
 
 /// Why stage 2 produced no Plan.
 enum StageTwoError {
     /// The Lock does not cover every active Repo.
     NotLocked(NotLocked),
-    /// A bug: `plan_stage_two` inspects every active Repo.
-    NotObserved(NotObserved),
     /// Reading the project or the checkouts failed; every failure is collected.
     Read(Vec<miette::Report>),
 }
 
 impl StageTwoError {
     /// The reports to show. Past stage 1 (and not `--check`) the Lock covers every active
-    /// Repo, so `NotLocked` is then a bug, like `NotObserved`.
+    /// Repo, so `NotLocked` is only met by `--check`, which maps it to out of date first.
     fn into_reports(self) -> Vec<miette::Report> {
         match self {
             StageTwoError::NotLocked(e) => vec![e.into()],
-            StageTwoError::NotObserved(e) => vec![e.into()],
             StageTwoError::Read(errors) => errors,
         }
     }
@@ -311,19 +298,13 @@ fn plan_stage_two<'a>(
         errors.push(e.into());
         vec![]
     });
-    let mut observed: Vec<(String, Observed)> = Vec::new();
-    let names = active
-        .repos()
-        .map(|r| r.id.to_string())
-        .chain(listing.iter().filter(|n| active.get(n).is_none()).cloned());
-    for name in names {
-        match source.inspect(&name) {
-            Ok(o) => {
-                observed.push((name, o));
-            }
-            Err(e) => errors.push(e.into()),
+    let checkouts = match Checkouts::observe(active, &listing, |name| source.inspect(name)) {
+        Ok(checkouts) => Some(checkouts),
+        Err(inspect_errors) => {
+            errors.extend(inspect_errors.into_iter().map(miette::Report::from));
+            None
         }
-    }
+    };
     let project = match project::observe(root, config) {
         Ok(project) => Some(project),
         Err(e) => {
@@ -331,22 +312,18 @@ fn plan_stage_two<'a>(
             None
         }
     };
-    let Some(project) = project.filter(|_| errors.is_empty()) else {
+    let (Some(project), Some(checkouts)) = (project, checkouts) else {
         return Err(StageTwoError::Read(errors));
     };
-    let checkouts = Checkouts::new(active, observed).map_err(StageTwoError::NotObserved)?;
+    if !errors.is_empty() {
+        return Err(StageTwoError::Read(errors));
+    }
     plan_checkouts(active, lock, &checkouts, &project, force).map_err(StageTwoError::NotLocked)
 }
 
 /// `--check`: report what applying the plan would do.
 fn check(plan: Plan, drift: Vec<Drift>) -> Report {
-    let refused = !plan.refusals.is_empty();
-    let out_of_date = plan.is_drift() || !drift.is_empty();
-    let outcome = match () {
-        _ if refused => Outcome::Refused,
-        _ if out_of_date => Outcome::OutOfDate,
-        _ => Outcome::InSync,
-    };
+    let outcome = check_outcome(Some(&plan), !drift.is_empty());
     let diagnostics = plan.refusals.into_iter().map(miette::Report::new).collect();
     Report::new(outcome, drift, diagnostics)
 }
@@ -366,23 +343,21 @@ fn apply(
     };
     let mut diagnostics: Vec<miette::Report> = Vec::new();
     let mut failed = false;
-    let mut listed_failed = false;
-    for action in plan.repos {
-        let gates = action.gates_writes();
-        let note = match run(source, action, opts) {
-            Ok(note) => note,
+    let mut failed_actions = Vec::new();
+    for (i, action) in plan.repos.iter().enumerate() {
+        match run(source, action, opts) {
+            Ok(note) => diagnostics.extend(note.map(miette::Report::new)),
             Err(e) => {
                 diagnostics.push(e);
                 failed = true;
-                listed_failed |= gates;
-                continue;
+                failed_actions.push(i);
             }
-        };
-        diagnostics.extend(note.map(miette::Report::new));
+        }
     }
-    let refused = !plan.refusals.is_empty();
+    let held_back = plan.holds_back_writes(&failed_actions);
+    let refused = plan.is_refused();
     diagnostics.extend(plan.refusals.into_iter().map(miette::Report::new));
-    if !listed_failed {
+    if !held_back {
         for write in plan.writes {
             if let Err(e) = agent_file::write(&root.join(&write.path), &write.text) {
                 diagnostics.push(e.into());
@@ -400,32 +375,27 @@ fn apply(
         Some(ExcludeAction::NoGit) => diagnostics.push(Note::NoGitRepo.into()),
         None => {}
     }
-    let outcome = match () {
-        _ if failed => Outcome::Failed,
-        _ if refused => Outcome::Refused,
-        _ => Outcome::InSync,
-    };
-    Report::new(outcome, drift, diagnostics)
+    Report::new(Plan::applied_outcome(refused, failed), drift, diagnostics)
 }
 
 /// Do one `RepoAction`; on success the note it carries, if any.
 fn run(
     source: &dyn Source,
-    action: RepoAction,
+    action: &RepoAction,
     opts: MaterialiseOpts,
 ) -> Result<Option<Note>, miette::Report> {
     match action {
         RepoAction::Materialise { repo, pin } => {
-            source.materialise(repo, &pin, opts)?;
+            source.materialise(*repo, pin, opts)?;
             Ok(None)
         }
         RepoAction::Replace { repo, pin, note } => {
             source.remove(repo.id)?;
-            source.materialise(repo, &pin, opts)?;
-            Ok(note)
+            source.materialise(*repo, pin, opts)?;
+            Ok(note.clone())
         }
         RepoAction::Remove { id } => {
-            source.remove(&id)?;
+            source.remove(id)?;
             Ok(None)
         }
     }

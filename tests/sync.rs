@@ -494,3 +494,39 @@ fn a_failed_replace_reports_no_recreated_note() {
     assert_eq!(report.outcome, Outcome::Failed);
     assert_eq!(codes(&report), ["refs::git::failed"]);
 }
+
+const NO_REPOS: &str = "[settings]\n";
+
+#[test]
+fn disabling_the_last_repo_removes_the_block_and_keeps_the_rest_of_the_file() {
+    let mut p = synced(A);
+    let block = p.read("AGENTS.md").unwrap();
+    fs::write(p.path("AGENTS.md"), format!("# mine\n\n{block}\ntail\n")).unwrap();
+    fs::write(p.path("CLAUDE.md"), "no markers here\n").unwrap();
+    p.config = parse(&A.replace("[repos.a]", "[repos.a]\nenabled = false")).unwrap();
+
+    assert_eq!(p.sync(&check()).outcome, Outcome::OutOfDate);
+
+    assert_eq!(p.sync(&SyncFlags::default()).outcome, Outcome::InSync);
+    let left = p.read("AGENTS.md").unwrap();
+    assert!(!left.contains("refs"), "{left}");
+    assert!(left.starts_with("# mine\n\n") && left.ends_with("\ntail\n"));
+    assert_eq!(p.read("CLAUDE.md").unwrap(), "no markers here\n");
+    assert_eq!(p.sync(&check()).outcome, Outcome::InSync);
+}
+
+#[test]
+fn a_zero_repo_project_with_no_block_writes_no_agent_file() {
+    let p = Project::new(NO_REPOS);
+    assert_eq!(p.sync(&SyncFlags::default()).outcome, Outcome::InSync);
+    assert_eq!(p.read("AGENTS.md"), None);
+}
+
+#[test]
+fn a_file_left_empty_by_removing_the_block_is_kept() {
+    let mut p = synced(A);
+    fs::write(p.path("AGENTS.md"), p.read("AGENTS.md").unwrap().trim_end()).unwrap();
+    p.config = parse(NO_REPOS).unwrap();
+    assert_eq!(p.sync(&SyncFlags::default()).outcome, Outcome::InSync);
+    assert_eq!(p.read("AGENTS.md").as_deref(), Some(""));
+}

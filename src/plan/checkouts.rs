@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 
 use crate::active::ActiveSet;
-use crate::agent_file::splice;
+use crate::agent_file::{splice, strip};
 use crate::config::RepoRef;
-use crate::diagnostic::{NotLocked, NotObserved, Note, Refusal};
+use crate::diagnostic::{NotLocked, Note, Refusal};
 use crate::lock::Lock;
 use crate::render::render;
 use crate::source::{Observed, Pin};
@@ -27,31 +27,45 @@ pub enum Exclude {
 }
 
 /// What `inspect` found for every Repo stage 2 has to judge: each active Repo, and each
-/// other name found in the references directory. The one constructor checks that no active
-/// Repo is missing, so an omitted entry cannot be read as `Absent`.
+/// other name found in the references directory.
 #[derive(Debug, Clone)]
 pub struct Checkouts(BTreeMap<String, Observed>);
 
 impl Checkouts {
-    pub fn new(
+    /// Inspect every active Repo, then each name in `listing` (what `Source::list` found in
+    /// the references directory) that is not active. The one constructor decides what is
+    /// observed and runs `inspect` itself, so an active Repo cannot be left out and read as
+    /// `Absent`. Every failure is collected.
+    pub fn observe<E>(
         active: &ActiveSet,
-        observed: impl IntoIterator<Item = (String, Observed)>,
-    ) -> Result<Checkouts, NotObserved> {
-        let observed: BTreeMap<String, Observed> = observed.into_iter().collect();
-        let ids: Vec<String> = active
+        listing: &[String],
+        mut inspect: impl FnMut(&str) -> Result<Observed, E>,
+    ) -> Result<Checkouts, Vec<E>> {
+        let names = active
             .repos()
-            .filter(|r| !observed.contains_key(r.id))
             .map(|r| r.id.to_string())
-            .collect();
-        if ids.is_empty() {
-            Ok(Checkouts(observed))
+            .chain(listing.iter().filter(|n| active.get(n).is_none()).cloned());
+        let mut seen = BTreeMap::new();
+        let mut errors = Vec::new();
+        for name in names {
+            match inspect(&name) {
+                Ok(observed) => {
+                    seen.insert(name, observed);
+                }
+                Err(e) => errors.push(e),
+            }
+        }
+        if errors.is_empty() {
+            Ok(Checkouts(seen))
         } else {
-            Err(NotObserved { ids })
+            Err(errors)
         }
     }
 
     fn of(&self, id: &str) -> &Observed {
-        self.0.get(id).expect("`new` checked every active Repo")
+        self.0
+            .get(id)
+            .expect("`observe` inspected every active Repo")
     }
 
     /// The names in the references directory that are not active Repos.
@@ -124,7 +138,51 @@ pub struct Plan<'a> {
     pub refusals: Vec<Refusal>,
 }
 
+/// How a run ended; the CLI maps it to an exit code (0, 3, 1, 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    InSync,
+    OutOfDate,
+    Refused,
+    Failed,
+}
+
+/// The outcome of `sync --check`. `plan` is `None` when the Lock does not cover the active
+/// Repos, so no Plan could be made: the Lock is what is out of date. `lock_drifted` is
+/// whether the Lock differed from the config. A refusal outranks drift, since "run `refs
+/// sync`" is the wrong advice when `sync` will also refuse.
+pub fn check_outcome(plan: Option<&Plan>, lock_drifted: bool) -> Outcome {
+    match plan {
+        None => Outcome::OutOfDate,
+        Some(plan) if !plan.refusals.is_empty() => Outcome::Refused,
+        Some(plan) if plan.is_drift() || lock_drifted => Outcome::OutOfDate,
+        Some(_) => Outcome::InSync,
+    }
+}
+
 impl Plan<'_> {
+    /// Whether the Plan has refusals, for `applied_outcome` once they have been taken to be
+    /// reported.
+    pub fn is_refused(&self) -> bool {
+        !self.refusals.is_empty()
+    }
+
+    /// The outcome of applying a Plan that `refused` or not; `failed` is whether anything
+    /// the executor did failed.
+    pub fn applied_outcome(refused: bool, failed: bool) -> Outcome {
+        match () {
+            _ if failed => Outcome::Failed,
+            _ if refused => Outcome::Refused,
+            _ => Outcome::InSync,
+        }
+    }
+
+    /// Whether the Agent file writes are held back, given the indices into `repos` of the
+    /// actions that failed: they are if one of them is on a Checkout the block lists.
+    pub fn holds_back_writes(&self, failed: &[usize]) -> bool {
+        failed.iter().any(|&i| self.repos[i].gates_writes())
+    }
+
     /// Anything to do or refuse: everything except the note that there is no git repository.
     pub fn is_drift(&self) -> bool {
         !self.repos.is_empty()
@@ -149,7 +207,12 @@ pub fn plan_checkouts<'a>(
     project: &ProjectObserved,
     force: bool,
 ) -> Result<Plan<'a>, NotLocked> {
-    let block = render(active, lock, &project.references_dir)?;
+    // With no active Repo there is nothing to list: the block goes, markers included.
+    let block = if active.repos().next().is_none() {
+        None
+    } else {
+        Some(render(active, lock, &project.references_dir)?)
+    };
     let mut stale = Vec::new();
     let mut current = Vec::new();
     let mut refusals = Vec::new();
@@ -189,7 +252,14 @@ pub fn plan_checkouts<'a>(
     }
     let mut writes = Vec::new();
     for file in &project.agent_files {
-        match splice(file.text.as_deref().unwrap_or(""), &block) {
+        let current = file.text.as_deref().unwrap_or("");
+        let planned = match &block {
+            Some(block) => splice(current, block),
+            None => strip(current),
+        };
+        match planned {
+            // an absent file with no block to add is not created
+            Ok(text) if file.text.is_none() && text.is_empty() => {}
             Ok(text) if file.text.as_deref() != Some(text.as_str()) => {
                 writes.push(WriteAgentFile {
                     path: file.path.clone(),

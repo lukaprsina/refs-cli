@@ -4,7 +4,7 @@ status: accepted
 
 # `sync` is planned in two pure stages, grouped by Repo; `Source` only reports and executes
 
-This is the one statement of how `sync` decides and acts. The Plan is grouped by Repo rather than a flat list of actions whose order carried implicit dependencies that only the executor knew, so the failure policy is data.
+This is the one statement of how `sync` decides and acts. `plan` decides everything that is a decision: which names are observed, how Lock entries are built, whether the Lock is written, which actions run, what a failure holds back, and how a Plan becomes an outcome (in sync, out of date, refused, failed). `sync` is a loop: it runs the typed actions through `Source`, collects the failures and reports. The Plan is grouped by Repo rather than a flat list of actions whose order carried implicit dependencies that only the executor knew, so the failure policy is data.
 
 ## Decisions in `plan`, mechanics in `Source`
 
@@ -36,7 +36,7 @@ Plan { repos: Vec<RepoAction>, writes: Vec<WriteAgentFile>, exclude: Option<Excl
 
 ## What stage 2 observes
 
-`Checkouts` is the observation of every Repo the plan has to judge: each active Repo, and each non-active name found in `references_dir` (from `Source::list`). It is built by one constructor that checks every active id is present and returns an error otherwise, so an omitted entry is not read as `Absent`. There is no separate listing. A non-active name that is `At` is removed (refused if dirty and not forced); `Foreign` or `Absent` is ignored. The old Lock is not read, so a retry after a failed stage 2 still finds them. `ProjectObserved` is the rest: the `references_dir` setting, the text of each Agent file and the exclude rule (`Present`, `Missing` or `NoGit`; `NoGit` is a note, not drift).
+`Checkouts` is the observation of every Repo the plan has to judge: each active Repo, and each non-active name found in `references_dir` (from `Source::list`). It is built by one constructor, `Checkouts::observe(active, listing, inspect)`, which decides the names and calls `inspect` for each, so a missing observation cannot be represented and an omitted entry cannot be read as `Absent`. There is no separate listing. A non-active name that is `At` is removed (refused if dirty and not forced); `Foreign` or `Absent` is ignored. The old Lock is not read, so a retry after a failed stage 2 still finds them. `ProjectObserved` is the rest: the `references_dir` setting, the text of each Agent file and the exclude rule (`Present`, `Missing` or `NoGit`; `NoGit` is a note, not drift).
 
 ## The Lock records the commit, not the Paths
 
@@ -55,8 +55,12 @@ The format version stays 1. A Lock holding `paths` is still read (unknown keys a
 
 - Stage 1 collects all errors and writes the Lock only if there are none.
 - Stage 2 runs sequentially and collects failures. A failure of one Repo does not stop the others (every action is idempotent, so a retry is safe); only the writes that list a failed Repo are held back. The run exits 1 with all diagnostics.
-- A Lock that does not cover the active Repos is drift only under `--check`; after stage 1 it cannot happen, so a real `sync` reports it as a failure.
+- A Lock that does not cover the active Repos is drift under `--check` (no Plan is made, and `check_outcome(None, ..)` is out of date); after stage 1 it cannot happen.
 - `sync --check` exits 3 for plain drift and 1 for refusals: "run `refs sync`" is the wrong advice when `sync` will also refuse.
+
+## No active Repo
+
+With no active Repo the Plan removes the Managed block, markers included, from every Agent file that has one. The rest of the file is untouched and the file is kept even if it is left empty; a file without markers, or a missing one, is left alone. `sync --check` reports a leftover block as out of date, and is in sync once it is gone.
 
 ## Consequences
 
