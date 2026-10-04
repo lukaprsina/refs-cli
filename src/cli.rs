@@ -182,7 +182,10 @@ pub fn run<'a>(
     match cli.command {
         Command::Init(args) => init(start, args.here, quiet),
         Command::Config(command) => match load(start) {
-            Ok((root, config)) => run_config(&command, &root, &config, quiet, make_source),
+            Ok((root, config)) => {
+                let color = !cli.no_color && stdout_is_colorful();
+                run_config(&command, &root, &config, quiet, color, make_source)
+            }
             Err(code) => code,
         },
         Command::Source(command) => match load(start) {
@@ -208,15 +211,16 @@ fn run_config<'a>(
     root: &Path,
     config: &Config,
     quiet: bool,
+    color: bool,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
 ) -> u8 {
     type Edit<'e> = Box<dyn Fn(&str) -> Result<String, EditError> + 'e>;
     let (flags, edit): (&EditFlags, Edit) = match command {
         ConfigCommand::List(args) if args.status => {
-            return list_status(root, config, make_source);
+            return list_status(root, config, color, make_source);
         }
         ConfigCommand::List(_) => {
-            print!("{}", list(config));
+            print!("{}", list(config, color));
             return 0;
         }
         ConfigCommand::Add { repo, flags } => (flags, Box::new(|text| edit::add(text, repo))),
@@ -237,6 +241,7 @@ fn run_config<'a>(
 fn list_status<'a>(
     root: &Path,
     config: &Config,
+    color: bool,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
 ) -> u8 {
     let result = make_source(root, config)
@@ -244,7 +249,7 @@ fn list_status<'a>(
         .and_then(|source| sync::status(&*source, root, config));
     match result {
         Ok(status) => {
-            print!("{}", crate::list::list_status(config, &status));
+            print!("{}", crate::list::list_status(config, &status, color));
             0
         }
         Err(report) => fail(report),
@@ -388,6 +393,12 @@ fn exit_code(outcome: Outcome) -> u8 {
         Outcome::OutOfDate => EXIT_OUT_OF_DATE,
         Outcome::Refused | Outcome::Failed => EXIT_ERROR,
     }
+}
+
+/// Dim only on a terminal, and not when `NO_COLOR` is set.
+fn stdout_is_colorful() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
 }
 
 fn install_report_handler(no_color: bool) {

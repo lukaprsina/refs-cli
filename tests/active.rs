@@ -1,4 +1,4 @@
-use refs_cli::active::active;
+use refs_cli::active::{active, layout};
 use refs_cli::config::parse;
 
 /// `(group id, repo ids)` per rendered section, in order; `None` is the ungrouped section.
@@ -96,4 +96,57 @@ group = "all-off"
 enabled = false
 "#;
     assert_eq!(sections(text), []);
+}
+
+#[test]
+fn layout_lists_every_repo_in_group_order_tagged_enabled_or_disabled() {
+    let config = parse(
+        r#"
+[groups.g1]
+name = "G1"
+[groups.off]
+name = "Off"
+enabled = false
+[groups.empty]
+name = "Empty"
+
+[repos.loose]
+url = "https://github.com/o/a"
+[repos.inherited]
+url = "https://github.com/o/a"
+group = "off"
+[repos.in1]
+url = "https://github.com/o/a"
+group = "g1"
+[repos.in1-off]
+url = "https://github.com/o/a"
+group = "g1"
+enabled = false
+[repos.loose-off]
+url = "https://github.com/o/a"
+enabled = false
+"#,
+    )
+    .unwrap();
+    let laid: Vec<_> = layout(&config)
+        .iter()
+        .map(|s| {
+            (
+                s.group.as_ref().map(|g| (g.id, g.enabled)),
+                s.repos
+                    .iter()
+                    .map(|r| (r.repo.id, r.enabled))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        laid,
+        [
+            (Some(("g1", true)), vec![("in1", true), ("in1-off", false)]),
+            (Some(("off", false)), vec![("inherited", false)]),
+            (Some(("empty", true)), vec![]),
+            (None, vec![("loose", true), ("loose-off", false)]),
+        ]
+    );
 }

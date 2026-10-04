@@ -37,16 +37,50 @@ url = "https://github.com/o/loose"
     )
     .unwrap();
     assert_eq!(
-        list(&config),
+        list(&config, false),
         "\
-solid (SolidJS 2.0)
-  router     https://github.com/solidjs/solid-router  next  src, docs
-  old        https://github.com/o/old  HEAD  all  disabled
-off (Off) disabled
-  inherited  https://github.com/o/inherited  HEAD  all  disabled
+SolidJS 2.0 (solid)
+  router     https://github.com/solidjs/solid-router  next  src, docs     on
+  old        https://github.com/o/old                 HEAD  (whole repo)  off
+Off (off)  off
+  inherited  https://github.com/o/inherited           HEAD  (whole repo)  off
 ungrouped
-  loose      https://github.com/o/loose  HEAD  all
+  loose      https://github.com/o/loose               HEAD  (whole repo)  on
 "
+    );
+}
+
+#[test]
+fn without_groups_there_is_no_heading() {
+    let config = parse("[repos.a]\nurl = \"https://github.com/o/r\"\n").unwrap();
+    assert_eq!(
+        list(&config, false),
+        "  a  https://github.com/o/r  HEAD  (whole repo)  on\n"
+    );
+}
+
+#[test]
+fn a_group_heading_is_just_the_name_when_name_and_id_agree() {
+    let config = parse(
+        "[groups.same]\nname = \"same\"\n[repos.a]\nurl = \"https://github.com/o/r\"\ngroup = \"same\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        list(&config, false),
+        "same\n  a  https://github.com/o/r  HEAD  (whole repo)  on\n"
+    );
+}
+
+#[test]
+fn disabled_lines_are_dimmed_only_with_color() {
+    let config = parse(
+        "[repos.a]\nurl = \"https://github.com/o/r\"\n[repos.b]\nurl = \"https://github.com/o/r\"\nenabled = false\n",
+    )
+    .unwrap();
+    assert_eq!(
+        list(&config, true),
+        "  a  https://github.com/o/r  HEAD  (whole repo)  on\n\
+\x1b[2m  b  https://github.com/o/r  HEAD  (whole repo)  off\x1b[0m\n"
     );
 }
 
@@ -106,16 +140,14 @@ enabled = false
     };
 
     assert_eq!(
-        list_status(&config, &status),
-        "\
-ungrouped
-  ok      https://github.com/o/r  HEAD  all  1111111  ok
-  moved   https://github.com/o/r  HEAD  all  2222222  wrong SHA
-  gone    https://github.com/o/r  HEAD  all  3333333  missing
-  new     https://github.com/o/r  HEAD  all  -  not locked
-  hollow  https://github.com/o/r  HEAD  all  5555555  missing
-  alien   https://github.com/o/r  HEAD  all  4444444  foreign
-  off     https://github.com/o/r  HEAD  all  -  disabled
+        list_status(&config, &status, false),
+        "  ok      https://github.com/o/r  HEAD  (whole repo)  on   1111111  ok
+  moved   https://github.com/o/r  HEAD  (whole repo)  on   2222222  wrong SHA
+  gone    https://github.com/o/r  HEAD  (whole repo)  on   3333333  missing
+  new     https://github.com/o/r  HEAD  (whole repo)  on   -        not locked
+  hollow  https://github.com/o/r  HEAD  (whole repo)  on   5555555  missing
+  alien   https://github.com/o/r  HEAD  (whole repo)  on   4444444  foreign
+  off     https://github.com/o/r  HEAD  (whole repo)  off  -        disabled
 "
     );
 }
@@ -151,7 +183,7 @@ paths = ["a"]
         ]),
     };
 
-    let out = list_status(&config, &status);
+    let out = list_status(&config, &status, false);
     assert!(out.contains("1111111  ok\n"), "{out}");
     assert!(out.contains("1111111  wrong paths\n"), "{out}");
 }
@@ -164,7 +196,7 @@ fn status_without_a_lock_says_not_locked() {
         observed: HashMap::new(),
     };
     assert_eq!(
-        list_status(&config, &status),
-        "ungrouped\n  a  https://github.com/o/r  HEAD  all  -  not locked\n"
+        list_status(&config, &status, false),
+        "  a  https://github.com/o/r  HEAD  (whole repo)  on  -  not locked\n"
     );
 }
