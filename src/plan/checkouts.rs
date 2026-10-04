@@ -234,19 +234,33 @@ fn dirty(id: &str, files: &[String]) -> Refusal {
     }
 }
 
-/// Plan stage 2 against the Lock and what is on disk.
+/// What the plan does to the Managed block of every Agent file.
+#[derive(PartialEq)]
+enum Block {
+    Write(String),
+    Strip,
+    Leave,
+}
+
+/// Plan stage 2 against the Lock and what is on disk. `active` is the Repos the Lock
+/// covers. `withheld` names active Repos that stage 1 could not lock: they are left out of
+/// the block and their Checkouts are left alone, neither made, moved nor removed.
 pub fn plan_checkouts<'a>(
     active: &ActiveSet<'a>,
+    withheld: &[String],
     lock: &Lock,
     checkouts: &Checkouts,
     project: &ProjectObserved,
     force: bool,
 ) -> Result<Plan<'a>, NotLocked> {
-    // With no active Repo there is nothing to list: the block goes, markers included.
-    let block = if active.repos().next().is_none() {
-        None
+    // With no active Repo there is nothing to list: the block goes, markers included. If
+    // every active Repo is withheld the block is left as it is: there is nothing true to say.
+    let block = if active.repos().next().is_some() {
+        Block::Write(render(active, lock, &project.references_dir)?)
+    } else if withheld.is_empty() {
+        Block::Strip
     } else {
-        Some(render(active, lock, &project.references_dir)?)
+        Block::Leave
     };
     let mut stale = Vec::new();
     let mut current = Vec::new();
@@ -287,6 +301,9 @@ pub fn plan_checkouts<'a>(
     // Names refs no longer manages. Only a checkout refs made (`At`) is touched; anything
     // else is for `doctor` to report.
     for (name, observed) in checkouts.unmanaged(active) {
+        if withheld.contains(name) {
+            continue;
+        }
         match observed {
             Observed::At { dirty_files, .. } if !dirty_files.is_empty() && !force => {
                 refusals.push(dirty(name, dirty_files))
@@ -296,11 +313,11 @@ pub fn plan_checkouts<'a>(
         }
     }
     let mut writes = Vec::new();
-    for file in &project.agent_files {
+    for file in project.agent_files.iter().filter(|_| block != Block::Leave) {
         let current = file.text.as_deref().unwrap_or("");
         let planned = match &block {
-            Some(block) => splice(current, block),
-            None => strip(current),
+            Block::Write(block) => splice(current, block),
+            Block::Strip | Block::Leave => strip(current),
         };
         match planned {
             // an absent file with no block to add is not created

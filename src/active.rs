@@ -12,6 +12,27 @@ impl<'a> ActiveSet<'a> {
         self.sections.iter().flat_map(|s| s.repos.iter().copied())
     }
 
+    /// The set without the Repos named in `ids`; a Section left empty goes.
+    pub fn without(&self, ids: &[String]) -> ActiveSet<'a> {
+        let sections = self
+            .sections
+            .iter()
+            .filter_map(|s| {
+                let repos: Vec<_> = s
+                    .repos
+                    .iter()
+                    .copied()
+                    .filter(|r| !ids.iter().any(|id| id == r.id))
+                    .collect();
+                (!repos.is_empty()).then(|| Section {
+                    group: s.group,
+                    repos,
+                })
+            })
+            .collect();
+        ActiveSet { sections }
+    }
+
     pub fn get(&self, id: &str) -> Option<RepoRef<'a>> {
         self.repos().find(|r| r.id == id)
     }

@@ -81,7 +81,7 @@ fn plan_with(
     let config: &'static Config = Box::leak(Box::new(parse(CONFIG).unwrap()));
     let set = active(config);
     let observed = observe(source, &set, extra);
-    plan_checkouts(&set, &lock(), &observed, project, force).unwrap()
+    plan_checkouts(&set, &[], &lock(), &observed, project, force).unwrap()
 }
 
 /// Only `exclude` is set, and to `exclude`.
@@ -170,7 +170,7 @@ fn no_paths_in_the_config_equals_no_sparse_patterns_on_disk() {
     let mut project = project(&set);
     project.agent_files[0].text = Some(text);
     let observed = observe(&source, &set, &[]);
-    let plan = plan_checkouts(&set, &locked, &observed, &project, false).unwrap();
+    let plan = plan_checkouts(&set, &[], &locked, &observed, &project, false).unwrap();
     assert!(empty(&plan), "{plan:?}");
 }
 
@@ -465,6 +465,7 @@ fn a_repo_missing_from_the_lock_is_an_error() {
     };
     let err = plan_checkouts(
         &set,
+        &[],
         &empty,
         &observe(&FakeSource::new(), &set, &[]),
         &project(&set),
@@ -592,7 +593,7 @@ fn with_no_active_repo_the_block_is_removed_and_the_rest_kept() {
     );
     let empty_lock = Lock::new(vec![]);
     let observed = Checkouts::observe(&set, &[], |_| Ok::<_, ()>(Observed::Absent)).unwrap();
-    let plan = plan_checkouts(&set, &empty_lock, &observed, &project, false).unwrap();
+    let plan = plan_checkouts(&set, &[], &empty_lock, &observed, &project, false).unwrap();
     let writes: Vec<(&str, &str)> = plan
         .writes
         .iter()
@@ -636,4 +637,31 @@ fn outcomes_follow_from_the_plan() {
     assert_eq!(Plan::applied_outcome(true, false), Outcome::Refused);
     assert_eq!(Plan::applied_outcome(true, true), Outcome::Failed);
     assert!(refused.is_refused() && !absent.is_refused());
+}
+
+#[test]
+fn a_withheld_repo_keeps_its_checkout_and_is_not_in_the_block() {
+    let config = parse(CONFIG).unwrap();
+    let full = active(&config);
+    let covered = full.without(&["a".to_string()]);
+    let source = FakeSource::new();
+    source.seed("a", at(OTHER_SHA, &[], &[]));
+    source.seed("old", at(OTHER_SHA, &[], &[]));
+    let listing = vec!["a".to_string(), "old".to_string()];
+    let observed = Checkouts::observe(&covered, &listing, |n| source.inspect(n)).unwrap();
+    let project = with_agent_files(&covered, &[("AGENTS.md", Some(MARKED))]);
+
+    let plan = plan_checkouts(
+        &covered,
+        &["a".to_string()],
+        &Lock::new(vec![]),
+        &observed,
+        &project,
+        false,
+    )
+    .unwrap();
+
+    let removed: Vec<&str> = plan.repos.iter().map(|r| r.id()).collect();
+    assert_eq!(removed, ["old"], "a is left alone");
+    assert!(plan.writes.is_empty(), "no Repo to list: the block stays");
 }

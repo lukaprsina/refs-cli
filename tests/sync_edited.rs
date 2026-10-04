@@ -262,3 +262,56 @@ fn enabling_a_repo_that_does_not_resolve_writes_nothing_and_names_it() {
     assert_eq!(read(&dir, "refs.lock"), None);
     assert!(messages(&edited).contains("`b`"), "{}", messages(&edited));
 }
+
+/// `a`, `b` and `c` synced, then `b` stops verifying (its remote broke).
+fn synced_then_b_breaks() -> (TempDir, FakeSource) {
+    let dir = project();
+    fs::write(dir.path().join("refs.toml"), ABC).unwrap();
+    let source = FakeSource::new();
+    let first = run_edit(&dir, &source, &Edit::Enable(Target::Repo("a")));
+    assert_eq!(first.report.outcome, Outcome::InSync);
+    source.fail("b", Method::Verify, "remote gone");
+    (dir, source)
+}
+
+fn checked_out(source: &FakeSource, id: &str) -> bool {
+    !matches!(
+        refs_cli::source::Source::inspect(source, id).unwrap(),
+        refs_cli::source::Observed::Absent
+    )
+}
+
+#[test]
+fn a_disable_with_a_broken_repo_still_syncs_the_checkouts_and_the_block_of_the_others() {
+    let (dir, source) = synced_then_b_breaks();
+    let block = read(&dir, "AGENTS.md").unwrap();
+    assert!(block.contains("[a @"), "{block}");
+
+    let edited = run_edit(&dir, &source, &Edit::Disable(Target::Repo("a")));
+
+    assert_eq!(edited.change, Change::Written);
+    assert_eq!(edited.report.outcome, Outcome::Failed);
+    assert!(messages(&edited).contains("`b`"), "{}", messages(&edited));
+    assert!(!checked_out(&source, "a"), "the disabled Checkout goes");
+    assert!(
+        checked_out(&source, "b"),
+        "the broken Repo's Checkout is left alone"
+    );
+    assert!(checked_out(&source, "c"));
+    let after = read(&dir, "AGENTS.md").unwrap();
+    assert!(
+        after.contains("[c @") && !after.contains("[a @") && !after.contains("[b @"),
+        "{after}"
+    );
+}
+
+#[test]
+fn a_remove_with_a_broken_repo_drops_the_removed_checkout_too() {
+    let (dir, source) = synced_then_b_breaks();
+
+    let edited = run_edit(&dir, &source, &Edit::Remove("a"));
+
+    assert_eq!(edited.report.outcome, Outcome::Failed);
+    assert!(!checked_out(&source, "a"));
+    assert!(checked_out(&source, "b"));
+}
