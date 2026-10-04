@@ -233,7 +233,9 @@ fn an_edit_whose_sync_fails_keeps_refs_toml_and_hints_to_sync() {
     );
     assert!(
         ran.stderr
-            .ends_with("refs.toml was updated; run `refs sync` once the problem is fixed\n"),
+            .ends_with(
+                "refs.toml was updated; fix or remove the broken repo, then run `refs sync`\n"
+            ),
         "{}",
         ran.stderr
     );
@@ -376,7 +378,11 @@ fn the_binary_edits_without_sync_say_what_changed_and_hint() {
     let quiet = b.run(&["remove", "c", "--no-sync", "-q"]);
     assert_eq!(
         (quiet.code, quiet.stdout, quiet.stderr),
-        (0, "".into(), "".into())
+        (
+            0,
+            "".into(),
+            "run `refs sync` to bring the project up to date\n".into()
+        )
     );
 
     let nothing = b.run(&["enable", "a", "--no-sync"]);

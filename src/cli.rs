@@ -372,12 +372,13 @@ fn print_edited(edited: &Edited, no_sync: bool, console: &mut Console) -> u8 {
     print(&edited.report, false, console);
     let outcome = edited.report.outcome;
     if no_sync && edited.change == Change::Written {
-        console.status(HINT_SYNC);
+        // Not a status line: the project is incomplete, so `-q` does not hide it.
+        console.problem(HINT_SYNC);
     }
     if matches!(outcome, Outcome::Failed | Outcome::Refused) {
         match edited.change {
             Change::Written => console.problem(format_args!(
-                "{} was updated; {HINT_FIXED}",
+                "{} was updated; fix or remove the broken repo, then run `refs sync`",
                 project::CONFIG_FILE
             )),
             Change::Rejected => {
