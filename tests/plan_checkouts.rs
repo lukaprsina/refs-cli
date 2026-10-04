@@ -4,7 +4,7 @@ use refs_cli::config::{Config, parse};
 use refs_cli::diagnostic::Refusal;
 use refs_cli::lock::{Lock, LockedRepo};
 use refs_cli::plan::{
-    AgentFileText, Checkouts, Exclude, ExcludeAction, Outcome, Plan, ProjectObserved, RepoAction,
+    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Outcome, Plan, ProjectObserved, RepoAction,
     check_outcome, plan_checkouts,
 };
 use refs_cli::render::render;
@@ -211,6 +211,7 @@ fn a_dangling_checkout_is_replaced_with_a_note_and_force_changes_nothing() {
             "{plan:?}"
         );
         assert!(plan.is_drift());
+        assert_eq!(plan.repos[0].how(), Checkout::Created);
     }
 }
 
@@ -266,6 +267,7 @@ fn force_replaces_a_dirty_refusal_by_a_replace_without_a_note() {
         ) && plan.refusals.is_empty(),
         "{plan:?}"
     );
+    assert_eq!(plan.repos[0].how(), Checkout::Moved);
 }
 
 #[test]

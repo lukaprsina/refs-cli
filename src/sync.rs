@@ -518,7 +518,9 @@ fn run(
                 .map_err(|e| e.for_repo(repo.id))?;
             Ok(None)
         }
-        RepoAction::Replace { repo, pin, note } => {
+        RepoAction::Replace {
+            repo, pin, note, ..
+        } => {
             source.remove(repo.id).map_err(|e| e.for_repo(repo.id))?;
             source
                 .materialise(*repo, pin, opts)

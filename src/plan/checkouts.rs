@@ -95,11 +95,13 @@ pub enum RepoAction<'a> {
         pin: Pin,
         moving: bool,
     },
-    /// Remove the Checkout, then materialise it: a Dangling one, or a dirty one under
-    /// `--force`. `note` is reported once the whole action has succeeded.
+    /// Remove the Checkout, then materialise it: a Dangling one (`moving` false, nothing
+    /// was there to move), or a dirty one under `--force` (`moving` true). `note` is
+    /// reported once the whole action has succeeded.
     Replace {
         repo: RepoRef<'a>,
         pin: Pin,
+        moving: bool,
         note: Option<Note>,
     },
     /// Remove the Checkout of a name that is not Active, for example a disabled or deleted
@@ -126,9 +128,13 @@ impl RepoAction<'_> {
 
     pub fn how(&self) -> Checkout {
         match self {
-            RepoAction::Materialise { moving: false, .. } => Checkout::Created,
-            RepoAction::Replace { note: Some(_), .. } => Checkout::Created,
-            RepoAction::Materialise { .. } | RepoAction::Replace { .. } => Checkout::Moved,
+            RepoAction::Materialise { moving, .. } | RepoAction::Replace { moving, .. } => {
+                if *moving {
+                    Checkout::Moved
+                } else {
+                    Checkout::Created
+                }
+            }
             RepoAction::Remove { .. } => Checkout::Removed,
         }
     }
@@ -257,6 +263,7 @@ pub fn plan_checkouts<'a>(
             Observed::Dangling => current.push(RepoAction::Replace {
                 repo,
                 pin: pin(),
+                moving: false,
                 note: Some(Note::Recreated { id: repo.id.into() }),
             }),
             Observed::Foreign => refusals.push(Refusal::ForeignDir { id: repo.id.into() }),
@@ -271,6 +278,7 @@ pub fn plan_checkouts<'a>(
             Observed::At { .. } if force => current.push(RepoAction::Replace {
                 repo,
                 pin: pin(),
+                moving: true,
                 note: None,
             }),
             Observed::At { dirty_files, .. } => refusals.push(dirty(repo.id, dirty_files)),
