@@ -232,6 +232,9 @@ mod verify {
             "blob:none"
         );
         let refspecs = Command::new("git")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_WORK_TREE")
             .current_dir(&cache)
             .args(["config", "--get-all", "remote.origin.fetch"])
             .output()

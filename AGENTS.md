@@ -11,3 +11,7 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 ### Domain docs
 
 Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Checks
+
+Run `scripts/check` before committing; CI and `.githooks/pre-commit` run it too. Enable the hook with `git config core.hooksPath .githooks`.

@@ -26,6 +26,9 @@ impl Project {
     fn new(config: &str) -> Project {
         let dir = TempDir::new().unwrap();
         let status = std::process::Command::new("git")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_WORK_TREE")
             .current_dir(dir.path())
             .args(["init", "-q"])
             .status()

@@ -287,6 +287,9 @@ fn the_binary_locks_with_git_and_reports_an_unknown_ref() {
         ],
     ] {
         let status = Command::new("git")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_WORK_TREE")
             .current_dir(remote.path())
             .args(args)
             .status()

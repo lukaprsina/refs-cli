@@ -37,9 +37,24 @@ pub struct Cmd {
     stdin: Option<String>,
 }
 
+/// Variables that point git at a particular repository, index or object store.
+const INHERITED_REPOSITORY_VARS: [&str; 7] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+];
+
 impl Cmd {
     pub fn new() -> Cmd {
         let mut command = Command::new("git");
+        // A caller's repository (set by git itself inside hooks) must not redirect ours.
+        for var in INHERITED_REPOSITORY_VARS {
+            command.env_remove(var);
+        }
         command
             .env("GIT_ALLOW_PROTOCOL", ALLOWED_PROTOCOLS)
             .env("GIT_TERMINAL_PROMPT", "0");

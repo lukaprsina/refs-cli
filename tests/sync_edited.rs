@@ -32,6 +32,9 @@ fn add(dir: &TempDir, source: &FakeSource, name: &str, flags: &SyncFlags) -> Edi
 fn project() -> TempDir {
     let dir = TempDir::new().unwrap();
     let git = std::process::Command::new("git")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_WORK_TREE")
         .current_dir(dir.path())
         .args(["init", "-q"])
         .status()
