@@ -58,15 +58,12 @@ fn render(config: &Config, status: Option<&Status>, color: bool) -> String {
         match &section.group {
             Some(g) => {
                 let name = g.group.title(g.id);
-                let mut heading = if name == g.id {
+                let heading = if name == g.id {
                     name.to_string()
                 } else {
                     format!("{name} ({})", g.id)
                 };
-                if !g.enabled {
-                    heading.push_str("  off");
-                }
-                out.push_str(&dim(heading, g.enabled));
+                out.push_str(&dim(marked(&heading, g.enabled, ""), g.enabled));
                 out.push('\n');
             }
             None if has_groups => out.push_str("ungrouped\n"),
@@ -74,7 +71,7 @@ fn render(config: &Config, status: Option<&Status>, color: bool) -> String {
         }
         for (repo, row) in section.repos.iter().zip(rows) {
             let last = row.len() - 1;
-            let mut line = String::from("  ");
+            let mut line = String::new();
             for (i, cell) in row.iter().enumerate() {
                 if i > 0 {
                     line.push_str("  ");
@@ -84,14 +81,20 @@ fn render(config: &Config, status: Option<&Status>, color: bool) -> String {
                     line.extend(std::iter::repeat_n(' ', widths[i] - cell.chars().count()));
                 }
             }
-            out.push_str(&dim(line, repo.enabled));
+            out.push_str(&dim(marked(&line, repo.enabled, "  "), repo.enabled));
             out.push('\n');
         }
     }
     out
 }
 
-/// The cells of one repo's line: id, url, ref, paths, on/off, and with `--status` the short
+/// `line` led by the disabled marker `- `, which survives where colour does not (a pipe,
+/// `NO_COLOR`); an enabled line gets `indent` instead.
+fn marked(line: &str, enabled: bool, indent: &str) -> String {
+    format!("{}{line}", if enabled { indent } else { "- " })
+}
+
+/// The cells of one repo's line: id, url, ref, paths, and with `--status` the short
 /// locked SHA and the checkout state.
 fn cells(r: &LaidRepo, status: Option<&Status>) -> Vec<String> {
     let repo = r.repo.repo;
@@ -105,7 +108,6 @@ fn cells(r: &LaidRepo, status: Option<&Status>) -> Vec<String> {
         repo.url.as_ref().to_string(),
         repo.effective_ref().to_string(),
         paths,
-        if r.enabled { "on" } else { "off" }.to_string(),
     ];
     if let Some(status) = status {
         let sha = status

@@ -40,12 +40,12 @@ url = "https://github.com/o/loose"
         list(&config, false),
         "\
 SolidJS 2.0 (solid)
-  router     https://github.com/solidjs/solid-router  next  src, docs     on
-  old        https://github.com/o/old                 HEAD  (whole repo)  off
-Off (off)  off
-  inherited  https://github.com/o/inherited           HEAD  (whole repo)  off
+  router     https://github.com/solidjs/solid-router  next  src, docs
+- old        https://github.com/o/old                 HEAD  (whole repo)
+- Off (off)
+- inherited  https://github.com/o/inherited           HEAD  (whole repo)
 ungrouped
-  loose      https://github.com/o/loose               HEAD  (whole repo)  on
+  loose      https://github.com/o/loose               HEAD  (whole repo)
 "
     );
 }
@@ -55,7 +55,7 @@ fn without_groups_there_is_no_heading() {
     let config = parse("[repos.a]\nurl = \"https://github.com/o/r\"\n").unwrap();
     assert_eq!(
         list(&config, false),
-        "  a  https://github.com/o/r  HEAD  (whole repo)  on\n"
+        "  a  https://github.com/o/r  HEAD  (whole repo)\n"
     );
 }
 
@@ -67,7 +67,7 @@ fn a_group_heading_is_just_the_name_when_name_and_id_agree() {
     .unwrap();
     assert_eq!(
         list(&config, false),
-        "same\n  a  https://github.com/o/r  HEAD  (whole repo)  on\n"
+        "same\n  a  https://github.com/o/r  HEAD  (whole repo)\n"
     );
 }
 
@@ -79,8 +79,8 @@ fn disabled_lines_are_dimmed_only_with_color() {
     .unwrap();
     assert_eq!(
         list(&config, true),
-        "  a  https://github.com/o/r  HEAD  (whole repo)  on\n\
-\x1b[2m  b  https://github.com/o/r  HEAD  (whole repo)  off\x1b[0m\n"
+        "  a  https://github.com/o/r  HEAD  (whole repo)\n\
+\x1b[2m- b  https://github.com/o/r  HEAD  (whole repo)\x1b[0m\n"
     );
 }
 
@@ -141,13 +141,13 @@ enabled = false
 
     assert_eq!(
         list_status(&config, &status, false),
-        "  ok      https://github.com/o/r  HEAD  (whole repo)  on   1111111  ok
-  moved   https://github.com/o/r  HEAD  (whole repo)  on   2222222  wrong SHA
-  gone    https://github.com/o/r  HEAD  (whole repo)  on   3333333  missing
-  new     https://github.com/o/r  HEAD  (whole repo)  on   -        not locked
-  hollow  https://github.com/o/r  HEAD  (whole repo)  on   5555555  missing
-  alien   https://github.com/o/r  HEAD  (whole repo)  on   4444444  foreign
-  off     https://github.com/o/r  HEAD  (whole repo)  off  -        disabled
+        "  ok      https://github.com/o/r  HEAD  (whole repo)  1111111  ok
+  moved   https://github.com/o/r  HEAD  (whole repo)  2222222  wrong SHA
+  gone    https://github.com/o/r  HEAD  (whole repo)  3333333  missing
+  new     https://github.com/o/r  HEAD  (whole repo)  -        not locked
+  hollow  https://github.com/o/r  HEAD  (whole repo)  5555555  missing
+  alien   https://github.com/o/r  HEAD  (whole repo)  4444444  foreign
+- off     https://github.com/o/r  HEAD  (whole repo)  -        disabled
 "
     );
 }
@@ -197,6 +197,6 @@ fn status_without_a_lock_says_not_locked() {
     };
     assert_eq!(
         list_status(&config, &status, false),
-        "  a  https://github.com/o/r  HEAD  (whole repo)  on  -  not locked\n"
+        "  a  https://github.com/o/r  HEAD  (whole repo)  -  not locked\n"
     );
 }

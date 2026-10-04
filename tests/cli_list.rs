@@ -37,8 +37,8 @@ fn list_prints_one_aligned_line_per_repo_on_stdout_without_a_group_heading() {
     let (stdout, stderr) = refs(CONFIG, &["list"]);
     assert_eq!(
         stdout,
-        "  router  https://github.com/solidjs/solid-router  next  src, docs     on
-  old     https://github.com/o/old                 HEAD  (whole repo)  off
+        "  router  https://github.com/solidjs/solid-router  next  src, docs
+- old     https://github.com/o/old                 HEAD  (whole repo)
 "
     );
     assert_eq!(stderr, "");
@@ -49,8 +49,8 @@ fn list_status_keeps_the_base_columns_and_adds_the_sha_and_state() {
     let (stdout, _) = refs(CONFIG, &["list", "--status", "--no-color"]);
     assert_eq!(
         stdout,
-        "  router  https://github.com/solidjs/solid-router  next  src, docs     on   -  not locked
-  old     https://github.com/o/old                 HEAD  (whole repo)  off  -  disabled
+        "  router  https://github.com/solidjs/solid-router  next  src, docs     -  not locked
+- old     https://github.com/o/old                 HEAD  (whole repo)  -  disabled
 "
     );
 }
