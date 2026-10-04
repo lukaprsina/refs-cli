@@ -24,7 +24,7 @@ impl<'a> ActiveSet<'a> {
                     .copied()
                     .filter(|r| !ids.iter().any(|id| id == r.id))
                     .collect();
-                (!repos.is_empty()).then(|| Section {
+                (!repos.is_empty()).then_some(Section {
                     group: s.group,
                     repos,
                 })
@@ -131,7 +131,7 @@ pub fn active(config: &Config) -> ActiveSet<'_> {
                 .filter(|r| r.enabled)
                 .map(|r| r.repo)
                 .collect();
-            (!repos.is_empty()).then(|| Section {
+            (!repos.is_empty()).then_some(Section {
                 group: section.group.map(|g| (g.id, g.group)),
                 repos,
             })

@@ -140,6 +140,45 @@ fn a_bare_upgrade_reaches_the_plan_as_all_and_ids_as_ids() {
 }
 
 #[test]
+fn a_usage_error_is_styled_only_for_a_terminal() {
+    use refs_cli::cli::{Terminal, run_on, run_with};
+    use refs_cli::source::Source;
+    let p = Project::new(AB);
+    let args = || ["refs", "sync", "--frobnicate"].map(std::ffi::OsString::from);
+    let source = |_: &_, _: &_| Ok(Box::new(&p.source) as Box<dyn Source>);
+
+    let (mut out, mut plain) = (Vec::new(), Vec::new());
+    assert_eq!(
+        run_with(args(), p.dir.path(), source, &mut out, &mut plain),
+        2
+    );
+    let (mut out, mut styled) = (Vec::new(), Vec::new());
+    let terminal = Terminal {
+        out: false,
+        err: true,
+    };
+    assert_eq!(
+        run_on(
+            args(),
+            p.dir.path(),
+            source,
+            &mut out,
+            &mut styled,
+            terminal
+        ),
+        2
+    );
+
+    let (plain, styled) = (
+        String::from_utf8(plain).unwrap(),
+        String::from_utf8(styled).unwrap(),
+    );
+    assert!(!plain.contains('\x1b'), "{plain:?}");
+    assert!(styled.contains('\x1b'), "{styled:?}");
+    assert!(plain.contains("--frobnicate") && styled.contains("--frobnicate"));
+}
+
+#[test]
 fn a_usage_error_exits_2() {
     let p = Project::new(AB);
 

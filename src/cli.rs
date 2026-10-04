@@ -207,16 +207,30 @@ pub fn run<'a>(
     cwd: &Path,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
 ) -> u8 {
-    run_with(
+    use std::io::IsTerminal;
+    let terminal = Terminal {
+        out: std::io::stdout().is_terminal(),
+        err: std::io::stderr().is_terminal(),
+    };
+    run_on(
         args,
         cwd,
         make_source,
         &mut std::io::stdout(),
         &mut std::io::stderr(),
+        terminal,
     )
 }
 
-/// `run` with the two output streams given, so a test can read what went to each.
+/// Which of the output streams are terminals; clap's own messages are styled only for those.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Terminal {
+    pub out: bool,
+    pub err: bool,
+}
+
+/// `run` with the two output streams given, so a test can read what went to each. Neither is
+/// a terminal, so clap's messages are plain.
 pub fn run_with<'a>(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
@@ -224,10 +238,32 @@ pub fn run_with<'a>(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> u8 {
+    run_on(args, cwd, make_source, out, err, Terminal::default())
+}
+
+/// `run_with`, told which streams are terminals.
+pub fn run_on<'a>(
+    args: impl IntoIterator<Item = OsString>,
+    cwd: &Path,
+    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    terminal: Terminal,
+) -> u8 {
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(e) => {
-            let text = e.render().to_string();
+            let styled = if e.use_stderr() {
+                terminal.err
+            } else {
+                terminal.out
+            } && no_color_env_unset();
+            let rendered = e.render();
+            let text = if styled {
+                rendered.ansi().to_string()
+            } else {
+                rendered.to_string()
+            };
             let _ = if e.use_stderr() {
                 write!(err, "{text}")
             } else {
@@ -432,7 +468,11 @@ fn exit_code(outcome: Outcome) -> u8 {
 /// Dim only on a terminal, and not when `NO_COLOR` is set.
 fn stdout_is_colorful() -> bool {
     use std::io::IsTerminal;
-    std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
+    std::io::stdout().is_terminal() && no_color_env_unset()
+}
+
+fn no_color_env_unset() -> bool {
+    std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
 }
 
 fn install_report_handler(no_color: bool) {
