@@ -320,11 +320,7 @@ fn the_binary_init_reports_on_stderr_without_a_sync_hint_and_a_second_run_change
         "{}",
         first.stderr
     );
-    assert!(
-        first.stderr.contains("updated AGENTS.md"),
-        "{}",
-        first.stderr
-    );
+    assert!(!first.stderr.contains("updated AGENTS.md"), "{}", first.stderr);
     assert!(first.stderr.contains("refs add <url>"), "{}", first.stderr);
     assert!(!first.stderr.contains("refs sync"), "{}", first.stderr);
     let template = fs::read_to_string(b.dir.path().join("refs.toml")).unwrap();
@@ -351,7 +347,7 @@ fn the_binary_sync_with_nothing_to_fetch_says_what_it_changed_then_that_nothing_
 
     let first = b.run(&["sync"]);
     assert_eq!((first.code, first.stdout.as_str()), (0, ""));
-    assert_eq!(first.stderr, "updated refs.lock\nupdated AGENTS.md\n");
+    assert_eq!(first.stderr, "updated refs.lock\n");
 
     let second = b.run(&["sync"]);
     assert_eq!((second.code, second.stdout.as_str()), (0, ""));

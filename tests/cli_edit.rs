@@ -132,20 +132,11 @@ fn init_needs_no_project_and_a_second_run_changes_nothing() {
 
     assert_eq!(refs(dir.path(), &["init"]), 0);
     assert!(dir.path().join("refs.toml").is_file());
-    assert!(dir.path().join("AGENTS.md").is_file());
-    let before = (
-        config_text(&dir),
-        fs::read(dir.path().join("AGENTS.md")).unwrap(),
-    );
+    assert!(!dir.path().join("AGENTS.md").exists());
+    let before = config_text(&dir);
 
     assert_eq!(refs(dir.path(), &["init"]), 0);
-    assert_eq!(
-        (
-            config_text(&dir),
-            fs::read(dir.path().join("AGENTS.md")).unwrap()
-        ),
-        before
-    );
+    assert_eq!(config_text(&dir), before);
 }
 
 #[test]

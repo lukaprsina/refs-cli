@@ -6,7 +6,7 @@ use refs_cli::init::init;
 use tempfile::TempDir;
 
 #[test]
-fn init_creates_the_config_and_an_agent_file_with_an_empty_block() {
+fn init_creates_the_config_and_no_block_while_no_repo_is_active() {
     let dir = TempDir::new().unwrap();
     let done = init(dir.path()).unwrap();
 
@@ -14,10 +14,7 @@ fn init_creates_the_config_and_an_agent_file_with_an_empty_block() {
     let config = fs::read_to_string(dir.path().join("refs.toml")).unwrap();
     let parsed = refs_cli::config::parse(&config).unwrap();
     assert!(parsed.repos.is_empty() && parsed.groups.is_empty());
-    let agents = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
-    assert!(agents.starts_with("<!-- BEGIN:refs -->\n"), "{agents}");
-    assert!(agents.ends_with("<!-- END:refs -->\n"), "{agents}");
-    assert!(!agents.contains("###"), "no group headings: {agents}");
+    assert!(!dir.path().join("AGENTS.md").exists());
 }
 
 fn snapshot(dir: &TempDir) -> Vec<(String, String)> {
@@ -47,12 +44,11 @@ fn a_second_init_changes_nothing() {
 }
 
 #[test]
-fn init_keeps_an_existing_config_and_the_rest_of_an_existing_agent_file() {
+fn init_keeps_an_existing_config_and_leaves_agent_files_alone() {
     let dir = TempDir::new().unwrap();
-    let config = "[settings]\nagents_files = [\"AGENTS.md\", \"docs/AGENT.md\"]\n# mine\n";
+    let config = "[settings]\nagents_files = [\"AGENTS.md\"]\n# mine\n";
     fs::write(dir.path().join("refs.toml"), config).unwrap();
     fs::write(dir.path().join("AGENTS.md"), "# Rules\n\nBe kind.\n").unwrap();
-    fs::create_dir(dir.path().join("docs")).unwrap();
 
     init(dir.path()).unwrap();
 
@@ -60,13 +56,10 @@ fn init_keeps_an_existing_config_and_the_rest_of_an_existing_agent_file() {
         fs::read_to_string(dir.path().join("refs.toml")).unwrap(),
         config
     );
-    let agents = fs::read_to_string(dir.path().join("AGENTS.md")).unwrap();
-    assert!(
-        agents.starts_with("# Rules\n\nBe kind.\n\n<!-- BEGIN:refs -->"),
-        "{agents}"
+    assert_eq!(
+        fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(),
+        "# Rules\n\nBe kind.\n"
     );
-    let second = fs::read_to_string(dir.path().join("docs/AGENT.md")).unwrap();
-    assert!(second.starts_with("<!-- BEGIN:refs -->"), "{second}");
 }
 
 #[test]
@@ -81,27 +74,4 @@ fn init_excludes_the_references_dir_in_a_git_repo() {
         1,
         "{exclude}"
     );
-}
-
-#[test]
-fn init_refuses_an_agent_file_with_broken_markers_and_writes_no_block() {
-    let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join("AGENTS.md"), "<!-- BEGIN:refs -->\n").unwrap();
-    let err = init(dir.path()).unwrap_err();
-    assert!(matches!(err, refs_cli::diagnostic::InitError::Block(_)));
-    assert_eq!(
-        fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(),
-        "<!-- BEGIN:refs -->\n"
-    );
-}
-
-#[test]
-fn a_second_init_does_not_rewrite_the_agent_file() {
-    let dir = TempDir::new().unwrap();
-    init(dir.path()).unwrap();
-    let path = dir.path().join("AGENTS.md");
-    let before = fs::metadata(&path).unwrap().modified().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    init(dir.path()).unwrap();
-    assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), before);
 }

@@ -399,9 +399,6 @@ fn init(start: &Path, here: bool, console: &mut Console) -> u8 {
             if done.config_created {
                 console.status(format_args!("created {}", project::CONFIG_FILE));
             }
-            for file in &done.agent_files_updated {
-                console.status(format_args!("updated {file}"));
-            }
             if console.said == 0 {
                 console.status("nothing changed");
             } else {
