@@ -1,6 +1,6 @@
 # Architecture
 
-How `refs` is put together, and where new features go. Vocabulary is in `CONTEXT.md`; the decisions behind the shape are in `docs/adr/` (0001 for the structure, 0002 for diagnostics, 0006 for how `sync` is planned; 0003 and 0004 are superseded by it). Behaviour is specified in `docs/spec/spec.md`.
+How `refs` is put together, and where new features go. Vocabulary is in `GLOSSARY.md`; the decisions behind the shape are in `docs/adr/` (0001 for the structure, 0002 for diagnostics, 0006 for how `sync` is planned; 0003 and 0004 are superseded by it). Behaviour is specified in `docs/spec/spec.md`.
 
 ## Shape: a pure core with effectful edges
 

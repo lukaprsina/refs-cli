@@ -1,6 +1,6 @@
 # `refs` — local reference repos for coding agents
 
-**Status:** MVP spec. Vocabulary: `CONTEXT.md`. Structure: `docs/architecture.md`. Decisions: `docs/adr/`.
+**Status:** MVP spec. Vocabulary: `GLOSSARY.md`. Structure: `docs/architecture.md`. Decisions: `docs/adr/`.
 **Names:** crate `refs-cli`, binary `refs`, files `refs.toml` / `refs.lock`, block markers `BEGIN:refs` / `END:refs`.
 **Language:** Rust, single static binary.
 
