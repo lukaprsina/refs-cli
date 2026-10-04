@@ -63,6 +63,14 @@ impl Group {
     pub fn title<'a>(&'a self, id: &'a str) -> &'a str {
         self.name.as_ref().map_or(id, |name| name.get_ref())
     }
+
+    /// The heading in `refs list`: `name (id)`, or just the name when it is the id.
+    pub fn listed_as(&self, id: &str) -> String {
+        match self.title(id) {
+            title if title == id => title.to_string(),
+            title => format!("{title} ({id})"),
+        }
+    }
 }
 
 /// A Repo with its id. The `Repo` carries no id (the map is keyed by a spanned id), so

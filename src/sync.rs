@@ -180,9 +180,6 @@ pub enum Change {
 #[derive(Debug)]
 pub struct Edited {
     pub change: Change,
-    /// Whether the project was synced after the edit (not with `--no-sync`, nor when the
-    /// edit was rejected).
-    pub synced: bool,
     /// The Group the edit created (`add --group x` for a Group that was missing).
     pub group_created: Option<String>,
     /// The problems of the edit and of the sync that followed it.
@@ -192,14 +189,13 @@ pub struct Edited {
 fn rejected(report: Report) -> Edited {
     Edited {
         change: Change::Rejected,
-        synced: false,
         group_created: None,
         report,
     }
 }
 
 /// Apply `edit` to `<root>/refs.toml` and, unless `no_sync`, sync the project to it. The
-/// text is parsed once, here; `make_source` is asked for a `Source` only if there is a sync.
+/// edited text is parsed once, here, into the config the sync runs against; `make_source` is asked for a `Source` only if there is a sync.
 ///
 /// Stage 1 runs against the edited config, and `refs.toml` is written only if it passes
 /// (stage 1 writes the Lock), then stage 2 runs on the Lock stage 1 produced, so each Repo
@@ -228,9 +224,8 @@ pub fn edit<S: Source>(
         Ok(config) => config,
         Err(e) => return rejected(Report::failed(e)),
     };
-    let edited = |change, synced, report| Edited {
+    let edited = |change, report| Edited {
         change,
-        synced,
         group_created: applied.group_created.clone(),
         report,
     };
@@ -244,14 +239,14 @@ pub fn edit<S: Source>(
                 Err(e) => return rejected(Report::failed(e)),
             }
         };
-        return edited(change, false, Report::new(Outcome::InSync, vec![], vec![]));
+        return edited(change, Report::new(Outcome::InSync, vec![], vec![]));
     }
     let source = match make_source() {
         Ok(source) => source,
         Err(e) => return rejected(Report::failed(e)),
     };
     if unchanged {
-        return edited(Change::Unchanged, true, sync(&source, root, &config, flags));
+        return edited(Change::Unchanged, sync(&source, root, &config, flags));
     }
     let Preflight { active, old, drift } = match preflight(root, &config) {
         Ok(preflight) => preflight,
@@ -262,13 +257,17 @@ pub fn edit<S: Source>(
     } else {
         Keep::Passing
     };
-    let done = match stage_one_partial(&source, &active, old, &lock_flags(flags), root, keep) {
+    let done =
+        stage_one_partial(&source, &active, old, &lock_flags(flags), root, keep).and_then(|done| {
+            match keep {
+                Keep::AllOrNothing => done.clean(),
+                Keep::Passing => Ok(done),
+            }
+        });
+    let done = match done {
         Ok(done) => done,
         Err(report) => return rejected(report.with_drift(drift)),
     };
-    if keep == Keep::AllOrNothing && !done.errors.is_empty() {
-        return rejected(Report::new(Outcome::Failed, drift, done.errors));
-    }
     if let Err(e) = project::write_config(root, &after) {
         return rejected(Report::failed(e));
     }
@@ -277,11 +276,11 @@ pub fn edit<S: Source>(
         // for `refs sync`: the Lock does not cover every active Repo, so there is nothing to
         // plan them against.
         let report = Report::new(Outcome::Failed, drift, done.errors);
-        return edited(Change::Written, false, report.after_lock_write(done.wrote));
+        return edited(Change::Written, report.after_lock_write(done.wrote));
     }
     let report = plan_and_apply(&source, root, &config, &active, &done.lock, drift, flags)
         .after_lock_write(done.wrote);
-    edited(Change::Written, true, report)
+    edited(Change::Written, report)
 }
 
 /// The Lock and what `inspect` finds for every repo of the config, for `list --status`.
@@ -306,12 +305,8 @@ fn stage_one(
     flags: &LockFlags,
     root: &Path,
 ) -> Result<(Lock, bool), Report> {
-    let done = stage_one_partial(source, active, old, flags, root, Keep::AllOrNothing)?;
-    if done.errors.is_empty() {
-        Ok((done.lock, done.wrote))
-    } else {
-        Err(Report::new(Outcome::Failed, vec![], done.errors))
-    }
+    let done = stage_one_partial(source, active, old, flags, root, Keep::AllOrNothing)?.clean()?;
+    Ok((done.lock, done.wrote))
 }
 
 /// What stage 1 does with the Repos that did not resolve or verify.
@@ -330,6 +325,17 @@ struct StageOne {
     /// Whether the Lock file was written.
     wrote: bool,
     errors: Vec<miette::Report>,
+}
+
+impl StageOne {
+    /// Fail with every error if there is one: all or nothing.
+    fn clean(self) -> Result<StageOne, Report> {
+        if self.errors.is_empty() {
+            Ok(self)
+        } else {
+            Err(Report::new(Outcome::Failed, vec![], self.errors))
+        }
+    }
 }
 
 /// Stage 1, collecting every error. With `Keep::Passing` the Lock of the entries that

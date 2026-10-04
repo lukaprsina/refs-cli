@@ -4,8 +4,8 @@ use refs_cli::config::{Config, parse};
 use refs_cli::diagnostic::Refusal;
 use refs_cli::lock::{Lock, LockedRepo};
 use refs_cli::plan::{
-    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Outcome, Plan, ProjectObserved, RepoAction,
-    check_outcome, plan_checkouts,
+    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Outcome, Plan, ProjectObserved,
+    RepoAction, check_outcome, plan_checkouts,
 };
 use refs_cli::render::render;
 use refs_cli::source::fake::FakeSource;

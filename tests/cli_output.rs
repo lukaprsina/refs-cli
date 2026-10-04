@@ -232,10 +232,9 @@ fn an_edit_whose_sync_fails_keeps_refs_toml_and_hints_to_sync() {
         ran.stderr
     );
     assert!(
-        ran.stderr
-            .ends_with(
-                "refs.toml was updated; fix or remove the broken repo, then run `refs sync`\n"
-            ),
+        ran.stderr.ends_with(
+            "refs.toml was updated; fix or remove the broken repo, then run `refs sync`\n"
+        ),
         "{}",
         ran.stderr
     );
@@ -322,7 +321,11 @@ fn the_binary_init_reports_on_stderr_without_a_sync_hint_and_a_second_run_change
         "{}",
         first.stderr
     );
-    assert!(!first.stderr.contains("updated AGENTS.md"), "{}", first.stderr);
+    assert!(
+        !first.stderr.contains("updated AGENTS.md"),
+        "{}",
+        first.stderr
+    );
     assert!(first.stderr.contains("refs add <url>"), "{}", first.stderr);
     assert!(!first.stderr.contains("refs sync"), "{}", first.stderr);
     let template = fs::read_to_string(b.dir.path().join("refs.toml")).unwrap();

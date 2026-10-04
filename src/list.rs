@@ -57,12 +57,7 @@ fn render(config: &Config, status: Option<&Status>, color: bool) -> String {
     for (section, rows) in sections.iter().zip(&rows) {
         match &section.group {
             Some(g) => {
-                let name = g.group.title(g.id);
-                let heading = if name == g.id {
-                    name.to_string()
-                } else {
-                    format!("{name} ({})", g.id)
-                };
+                let heading = g.group.listed_as(g.id);
                 out.push_str(&dim(marked(&heading, g.enabled, ""), g.enabled));
                 out.push('\n');
             }
@@ -128,7 +123,8 @@ pub enum CheckoutState {
     /// Locked, but nothing (or a dangling directory) is checked out.
     Missing,
     WrongSha,
-    /// The right commit, checked out with other `paths` than the config asks for.
+    /// The right commit, checked out with other `paths` than the config asks for (a set, so
+    /// order does not count); `sync` checks it out again.
     WrongPaths,
     /// A directory that is not one of ours is in the way.
     Foreign,
