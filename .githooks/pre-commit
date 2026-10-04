@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# git sets GIT_DIR, GIT_INDEX_FILE and friends inside hooks; the tests run real
+# git in temp dirs and must not inherit them.
+root=$(git rev-parse --show-toplevel)
+for v in $(git rev-parse --local-env-vars); do unset "$v"; done
+exec "$root/scripts/check"
