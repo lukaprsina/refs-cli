@@ -52,9 +52,17 @@ impl Settings {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Group {
-    pub name: Spanned<String>,
+    /// The heading in the block; the group's id when absent (`add --group` makes bare groups).
+    pub name: Option<Spanned<String>>,
     pub description: Option<Spanned<String>>,
     pub enabled: Option<bool>,
+}
+
+impl Group {
+    /// The heading: the `name`, or the group's `id` when it has none.
+    pub fn title<'a>(&'a self, id: &'a str) -> &'a str {
+        self.name.as_ref().map_or(id, |name| name.get_ref())
+    }
 }
 
 /// A Repo with its id. The `Repo` carries no id (the map is keyed by a spanned id), so
@@ -125,8 +133,8 @@ fn validate(config: &Config, text: &str) -> Vec<ConfigError> {
         errors: Vec::new(),
     };
     v.settings(&config.settings);
-    for group in config.groups.values() {
-        v.group(group);
+    for (id, group) in &config.groups {
+        v.group(id, group);
     }
     for (id, repo) in &config.repos {
         v.repo(config, id, repo);
@@ -167,13 +175,12 @@ impl Validator<'_> {
         }
     }
 
-    fn group(&mut self, group: &Group) {
-        // the name becomes a heading; its charset check also covers marker text
-        if !is_heading_safe(group.name.get_ref()) {
-            self.report(&group.name, |src, span| ConfigError::BadGroupName {
-                src,
-                span,
-            });
+    fn group(&mut self, id: &Id, group: &Group) {
+        // the name (or, without one, the id) becomes a heading; its charset check also
+        // covers marker text
+        let heading = group.name.as_ref().unwrap_or(id);
+        if !is_heading_safe(heading.get_ref()) {
+            self.report(heading, |src, span| ConfigError::BadGroupName { src, span });
         }
         for text in group.description.iter() {
             self.text_line(text);

@@ -12,13 +12,13 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Parser, Subcommand};
 
 use crate::config::Config;
-use crate::diagnostic::{EditError, SourceError};
-use crate::edit::{self, AddRepo, Target};
+use crate::diagnostic::SourceError;
+use crate::edit::{AddRepo, Edit, Target};
 use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::source::Source;
-use crate::sync::{self, Change, Outcome, Report, SyncFlags};
+use crate::sync::{self, Change, Edited, Outcome, Report, SyncFlags};
 
 const EXIT_ERROR: u8 = 1;
 const EXIT_OUT_OF_DATE: u8 = 3;
@@ -214,8 +214,7 @@ fn run_config<'a>(
     color: bool,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
 ) -> u8 {
-    type Edit<'e> = Box<dyn Fn(&str) -> Result<String, EditError> + 'e>;
-    let (flags, edit): (&EditFlags, Edit) = match command {
+    let (flags, edit) = match command {
         ConfigCommand::List(args) if args.status => {
             return list_status(root, config, color, make_source);
         }
@@ -223,18 +222,19 @@ fn run_config<'a>(
             print!("{}", list(config, color));
             return 0;
         }
-        ConfigCommand::Add { repo, flags } => (flags, Box::new(|text| edit::add(text, repo))),
-        ConfigCommand::Remove(args) => (&args.flags, Box::new(|text| edit::remove(text, &args.id))),
-        ConfigCommand::Disable(args) => (
-            &args.flags,
-            Box::new(|text| edit::disable(text, args.target())),
-        ),
-        ConfigCommand::Enable(args) => (
-            &args.flags,
-            Box::new(|text| edit::enable(text, args.target())),
-        ),
+        ConfigCommand::Add { repo, flags } => (flags, Edit::Add(repo)),
+        ConfigCommand::Remove(args) => (&args.flags, Edit::Remove(&args.id)),
+        ConfigCommand::Disable(args) => (&args.flags, Edit::Disable(args.target())),
+        ConfigCommand::Enable(args) => (&args.flags, Edit::Enable(args.target())),
     };
-    edit_config(root, config, quiet, flags, make_source, &*edit)
+    let edited = sync::edit(
+        root,
+        &edit,
+        flags.no_sync,
+        || make_source(root, config),
+        &SyncFlags::default(),
+    );
+    print_edited(&edited, quiet, flags.no_sync)
 }
 
 /// `refs list --status`: the config, the Lock and what `inspect` finds for every repo.
@@ -289,70 +289,35 @@ fn run_source<'a>(
     exit_code(report.outcome)
 }
 
-/// Apply `edit` to the text of `<root>/refs.toml`. With `--no-sync` write the result and say
-/// to run `refs sync`; otherwise lock the edited config first and write it only if that
-/// passes, then sync (`sync::sync_edited`). A rejected edit writes nothing.
-fn edit_config<'a>(
-    root: &Path,
-    config: &Config,
-    quiet: bool,
-    flags: &EditFlags,
-    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
-    edit: &dyn Fn(&str) -> Result<String, EditError>,
-) -> u8 {
-    let edited = project::read_config(root)
-        .map_err(miette::Report::new)
-        .and_then(|text| Ok((edit(&text).map_err(miette::Report::new)?, text)));
-    let (after, before) = match edited {
-        Ok(both) => both,
-        Err(report) => return fail(report),
-    };
-    if flags.no_sync {
-        return write_only(root, quiet, &before, &after);
-    }
-    let source = match make_source(root, config) {
-        Ok(source) => source,
-        Err(e) => return fail(e),
-    };
-    let edited = sync::sync_edited(&*source, root, &before, &after, &SyncFlags::default());
-    match edited.change {
-        Change::Written if !quiet => println!("updated {}", project::CONFIG_FILE),
-        Change::Unchanged if !quiet => println!("{} already says that", project::CONFIG_FILE),
-        _ => {}
+/// Say what `sync::edit` did, and give the exit code.
+fn print_edited(edited: &Edited, quiet: bool, no_sync: bool) -> u8 {
+    if !quiet {
+        match edited.change {
+            Change::Written if no_sync => println!(
+                "updated {}; run `refs sync` to bring the project up to date",
+                project::CONFIG_FILE
+            ),
+            Change::Written => println!("updated {}", project::CONFIG_FILE),
+            Change::Unchanged => println!("{} already says that", project::CONFIG_FILE),
+            Change::Rejected => {}
+        }
+        if let Some(group) = &edited.group_created {
+            println!("created group `{group}`");
+        }
     }
     print(&edited.report, quiet);
-    if matches!(edited.report.outcome, Outcome::Failed | Outcome::Refused) {
+    let outcome = edited.report.outcome;
+    if matches!(outcome, Outcome::Failed | Outcome::Refused) {
         match edited.change {
             Change::Written => eprintln!(
-                "{} and refs.lock were updated; run `refs sync` once the problem is fixed",
+                "{} was updated; run `refs sync` once the problem is fixed",
                 project::CONFIG_FILE
             ),
             Change::Rejected => eprintln!("{} was not changed", project::CONFIG_FILE),
             Change::Unchanged => {}
         }
     }
-    exit_code(edited.report.outcome)
-}
-
-fn write_only(root: &Path, quiet: bool, text: &str, edited: &str) -> u8 {
-    if edited == text {
-        if !quiet {
-            println!("{} already says that", project::CONFIG_FILE);
-        }
-        return 0;
-    }
-    match project::write_config(root, edited) {
-        Ok(()) => {
-            if !quiet {
-                println!(
-                    "updated {}; run `refs sync` to bring the project up to date",
-                    project::CONFIG_FILE
-                );
-            }
-            0
-        }
-        Err(e) => fail(e),
-    }
+    exit_code(outcome)
 }
 
 /// `refs init`: it needs no loaded project, as there may be none yet.

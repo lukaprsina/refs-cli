@@ -259,6 +259,42 @@ pub enum SourceError {
     ObjectMissing { repo: String, oid: String },
 }
 
+impl SourceError {
+    /// This failure as a report that names the Repo it happened to, unless the message
+    /// already does. The code and help are the failure's own.
+    pub fn for_repo(self, id: &str) -> miette::Report {
+        match self {
+            SourceError::PathMissing { .. }
+            | SourceError::PathNotDir { .. }
+            | SourceError::StartMissing { .. }
+            | SourceError::ObjectMissing { .. } => miette::Report::new(self),
+            cause => miette::Report::new(RepoFailed {
+                id: id.into(),
+                cause,
+            }),
+        }
+    }
+}
+
+/// A `SourceError` with the id of the Repo it happened to.
+#[derive(Debug, Error)]
+#[error("repo `{id}`: {cause}")]
+pub struct RepoFailed {
+    pub id: String,
+    #[source]
+    pub cause: SourceError,
+}
+
+impl Diagnostic for RepoFailed {
+    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        self.cause.code()
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        self.cause.help()
+    }
+}
+
 /// A problem reading or writing `refs.lock`.
 #[derive(Debug, Error, Diagnostic)]
 pub enum LockError {

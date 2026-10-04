@@ -184,3 +184,30 @@ impl<S: Source + ?Sized> Source for &S {
         (**self).list()
     }
 }
+
+/// A boxed `Source` is a `Source`, so the CLI's factory can hand one to the edit operation.
+impl<S: Source + ?Sized> Source for Box<S> {
+    fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError> {
+        (**self).resolve(repo)
+    }
+    fn verify(&self, repo: RepoRef, pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError> {
+        (**self).verify(repo, pin, opts)
+    }
+    fn materialise(
+        &self,
+        repo: RepoRef,
+        pin: &Pin,
+        opts: MaterialiseOpts,
+    ) -> Result<(), SourceError> {
+        (**self).materialise(repo, pin, opts)
+    }
+    fn remove(&self, id: &str) -> Result<(), SourceError> {
+        (**self).remove(id)
+    }
+    fn inspect(&self, id: &str) -> Result<Observed, SourceError> {
+        (**self).inspect(id)
+    }
+    fn list(&self) -> Result<Vec<String>, SourceError> {
+        (**self).list()
+    }
+}

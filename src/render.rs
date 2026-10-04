@@ -76,7 +76,7 @@ fn preamble(dir: &str, first_id: Option<&str>, first_package: Option<&str>) -> S
 fn section_text<'a>(section: &Section, locked: impl Fn(RepoRef) -> &'a LockedRepo) -> String {
     let heading = section
         .group
-        .map_or("Ungrouped", |(_, group)| group.name.get_ref());
+        .map_or("Ungrouped", |(id, group)| group.title(id));
     let mut out = format!("### {heading}\n\n```text\n");
     if let Some((_, group)) = section.group
         && let Some(description) = &group.description

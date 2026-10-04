@@ -38,9 +38,58 @@ pub struct AddRepo {
     pub start: Vec<String>,
 }
 
+/// One edit of `refs.toml`, by what it does to the active set: it can grow it (a Repo
+/// becomes active) or only shrink it. The failure policy follows (ADR 0006).
+#[derive(Debug)]
+pub enum Edit<'a> {
+    Add(&'a AddRepo),
+    Remove(&'a str),
+    Disable(Target<'a>),
+    Enable(Target<'a>),
+}
+
+/// What an edit gave: the new text, and the Group it had to create for it.
+#[derive(Debug)]
+pub struct Applied {
+    pub text: String,
+    pub group_created: Option<String>,
+}
+
+impl Applied {
+    fn of(text: String) -> Applied {
+        Applied {
+            text,
+            group_created: None,
+        }
+    }
+}
+
+impl Edit<'_> {
+    /// The text this edit gives `text`.
+    pub fn apply(&self, text: &str) -> Result<Applied, EditError> {
+        match self {
+            Edit::Add(req) => add_creating_group(text, req),
+            Edit::Remove(id) => remove(text, id).map(Applied::of),
+            Edit::Disable(target) => disable(text, *target).map(Applied::of),
+            Edit::Enable(target) => enable(text, *target).map(Applied::of),
+        }
+    }
+
+    /// Whether the edit can make a Repo active (`add`, `enable`). Those are atomic; `remove`
+    /// and `disable` only shrink the set.
+    pub fn grows(&self) -> bool {
+        matches!(self, Edit::Add(_) | Edit::Enable(_))
+    }
+}
+
 /// Append a repo table to the end of `text`, after a blank line. The text before it is
-/// left as it was, so the edit cannot disturb it.
+/// left as it was, so the edit cannot disturb it. A `--group` that is not in the config is
+/// created, bare, just before the repo.
 pub fn add(text: &str, req: &AddRepo) -> Result<String, EditError> {
+    Ok(add_creating_group(text, req)?.text)
+}
+
+fn add_creating_group(text: &str, req: &AddRepo) -> Result<Applied, EditError> {
     let config = open(text)?;
     let id = req.id.clone().unwrap_or_else(|| id_from_url(&req.url));
     if config.repos.contains_key(id.as_str()) {
@@ -51,6 +100,20 @@ pub fn add(text: &str, req: &AddRepo) -> Result<String, EditError> {
             "`repos` is an inline table; write each repo as a `[repos.<id>]` table".into(),
         ));
     }
+    let group_created = req
+        .group
+        .as_ref()
+        .filter(|group| !config.groups.contains_key(group.as_str()))
+        .cloned();
+    if group_created.is_some()
+        && parse(text)?
+            .get("groups")
+            .is_some_and(Item::is_inline_table)
+    {
+        return Err(EditError::Unreadable(
+            "`groups` is an inline table; write each group as a `[groups.<id>]` table".into(),
+        ));
+    }
     let mut out = text.to_owned();
     if !out.is_empty() {
         if !out.ends_with('\n') {
@@ -58,17 +121,24 @@ pub fn add(text: &str, req: &AddRepo) -> Result<String, EditError> {
         }
         out.push('\n');
     }
-    out.push_str(&repo_table(&id, req));
+    if let Some(group) = &group_created {
+        out.push_str(&table_text("groups", group, Table::new()));
+        out.push('\n');
+    }
+    out.push_str(&table_text("repos", &id, repo_table(req)));
     match_line_endings(&mut out, text);
     if !text.is_empty() && !text.ends_with('\n') {
         out.pop();
     }
     config::parse(&out)?;
-    Ok(out)
+    Ok(Applied {
+        text: out,
+        group_created,
+    })
 }
 
-/// `[repos.<id>]` and its keys, as one block of text ending in a newline.
-fn repo_table(id: &str, req: &AddRepo) -> String {
+/// The keys of a repo table for `req`.
+fn repo_table(req: &AddRepo) -> Table {
     let mut table = Table::new();
     table["url"] = value(&req.url);
     if let Some(group) = &req.group {
@@ -89,11 +159,16 @@ fn repo_table(id: &str, req: &AddRepo) -> String {
             table[key] = value(items.iter().collect::<Array>());
         }
     }
-    let mut repos = Table::new();
-    repos.set_implicit(true);
-    repos.insert(id, Item::Table(table));
+    table
+}
+
+/// `[<parent>.<id>]` and its keys, as one block of text ending in a newline.
+fn table_text(parent: &str, id: &str, table: Table) -> String {
+    let mut parent_table = Table::new();
+    parent_table.set_implicit(true);
+    parent_table.insert(id, Item::Table(table));
     let mut doc = DocumentMut::new();
-    doc.insert("repos", Item::Table(repos));
+    doc.insert(parent, Item::Table(parent_table));
     doc.to_string()
 }
 

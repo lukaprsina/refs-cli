@@ -62,6 +62,15 @@ The format version stays 1. A Lock holding `paths` is still read (unknown keys a
 
 With no active Repo the Plan removes the Managed block, markers included, from every Agent file that has one. The rest of the file is untouched and the file is kept even if it is left empty; a file without markers, or a missing one, is left alone. `sync --check` reports a leftover block as out of date, and is in sync once it is gone.
 
+## Edits: one operation, one failure policy
+
+`sync::edit(root, edit, no_sync, make_source, flags)` is the one operation behind `add`, `remove`, `enable` and `disable`; the CLI parses arguments and prints the `Edited` it returns. The text of `refs.toml` is read and parsed once. `Edit::apply` is text in, text out (with the Group it had to create), and `--no-sync` is a flag on the operation: with it no `Source` is made and the edit is only written. The result is typed: `Change` (`Unchanged`, `Written`, `Rejected`), whether a sync followed, the Group created and the `Report`. No-op detection (`after == before`) and the written/rejected outcome exist only here.
+
+- **`add` and `enable` are atomic.** They grow the active set, so stage 1 runs against the edited config and `refs.toml` is written only if every Repo passes. An unresolvable Repo writes nothing, and the error names it.
+- **`remove` and `disable` always write.** They can only shrink the set, so a Repo they did not touch must not block them: stage 1 keeps going past a failure, the Lock gets the entries that passed, `refs.toml` is written, and each failing Repo is reported with exit 1. Stage 2 is skipped, since the Lock does not cover the active set; `refs sync` finishes it once the Repo is fixed.
+- Every Repo-specific error names the Repo id (`SourceError::for_repo`; the code and help stay the failure's own). "refs.toml was not changed" is printed only for a `Rejected` edit, and "updated" when it was written.
+- **Groups follow their Repos.** `add --group x` for a missing Group appends a bare `[groups.x]` (no name or description; the heading falls back to the id) and reports it. `remove` of a Group's last Repo removes the Group again when it has no description, so add and remove round-trip.
+
 ## Consequences
 
 - The fake `Source` is stateful and in-memory: seedable with any `Observed`, able to inject failures per Repo and method, and mutated by `materialise` and `remove`. The failure policy is tested as Plan data; the executor tests only check that it does what the Plan says.

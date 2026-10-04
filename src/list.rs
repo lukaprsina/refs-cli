@@ -57,7 +57,7 @@ fn render(config: &Config, status: Option<&Status>, color: bool) -> String {
     for (section, rows) in sections.iter().zip(&rows) {
         match &section.group {
             Some(g) => {
-                let name = g.group.name.as_ref();
+                let name = g.group.title(g.id);
                 let mut heading = if name == g.id {
                     name.to_string()
                 } else {

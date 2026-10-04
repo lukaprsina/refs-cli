@@ -529,3 +529,58 @@ fn list_status_works_with_no_lock_yet() {
     assert_eq!(p.run(&["list", "--status"]), 0);
     assert_eq!(p.lock_text(), None, "list writes nothing");
 }
+
+#[test]
+fn a_disable_writes_the_edit_then_reports_the_broken_repo_with_exit_1() {
+    let p = Project::new(&format!(
+        "{AB}\n[repos.c]\nurl = \"https://github.com/o/c\"\n"
+    ));
+    p.source.fail("b", Method::Resolve, "gone");
+
+    assert_eq!(p.run(&["disable", "a"]), 1);
+
+    let config = fs::read_to_string(p.path("refs.toml")).unwrap();
+    assert!(config.contains("enabled = false"), "{config}");
+    let lock = p.lock_text().unwrap();
+    assert!(
+        lock.contains("id = \"c\"") && !lock.contains("id = \"b\""),
+        "{lock}"
+    );
+}
+
+#[test]
+fn removing_the_broken_repo_succeeds() {
+    let p = Project::new(AB);
+    p.source.fail("b", Method::Resolve, "gone");
+
+    assert_eq!(p.run(&["remove", "b"]), 0);
+
+    assert!(
+        !fs::read_to_string(p.path("refs.toml"))
+            .unwrap()
+            .contains("[repos.b]")
+    );
+    assert_eq!(p.run(&["sync", "--check"]), 0);
+}
+
+#[test]
+fn add_with_a_missing_group_creates_it_and_remove_takes_it_away_again() {
+    let p = Project::new(AB);
+    assert_eq!(p.run(&["sync"]), 0);
+    let before = fs::read(p.path("refs.toml")).unwrap();
+
+    assert_eq!(
+        p.run(&["add", "https://github.com/o/c", "--group", "extra"]),
+        0
+    );
+    let config = fs::read_to_string(p.path("refs.toml")).unwrap();
+    assert!(config.contains("[groups.extra]"), "{config}");
+    assert!(
+        fs::read_to_string(p.path("AGENTS.md"))
+            .unwrap()
+            .contains("### extra")
+    );
+
+    assert_eq!(p.run(&["remove", "c"]), 0);
+    assert_eq!(fs::read(p.path("refs.toml")).unwrap(), before);
+}
