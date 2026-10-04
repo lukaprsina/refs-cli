@@ -12,7 +12,7 @@ use crate::diagnostic::{NotLocked, Note, SourceError};
 use crate::edit::Edit;
 use crate::list::Status;
 use crate::lock::Lock;
-pub use crate::plan::Outcome;
+pub use crate::plan::{Checkout, Outcome};
 use crate::plan::{
     Checkouts, Drift, ExcludeAction, LockFlags, LockPlan, Plan, RepoAction, Step, check_outcome,
     lock_drift, locked, plan_checkouts, plan_lock,
@@ -27,9 +27,23 @@ pub struct SyncFlags {
     pub check: bool,
 }
 
+/// Something a run changed on disk, for the CLI to say. `refs.toml` is not here: only `edit`
+/// writes it, and it says so in `Edited::change`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Changed {
+    /// `refs.lock` was written.
+    Lock,
+    /// The Checkout of this Repo was created, moved or removed.
+    Checkout { id: String, how: Checkout },
+    /// This Agent file was written (path relative to the Project).
+    AgentFile(String),
+}
+
 #[derive(Debug)]
 pub struct Report {
     pub outcome: Outcome,
+    /// What the run changed on disk, in the order it happened.
+    pub changes: Vec<Changed>,
     /// How the Lock differed from the config when the run began.
     pub drift: Vec<Drift>,
     /// Refusals, failures and notes, in the order they happened.
@@ -40,9 +54,22 @@ impl Report {
     fn new(outcome: Outcome, drift: Vec<Drift>, diagnostics: Vec<miette::Report>) -> Report {
         Report {
             outcome,
+            changes: Vec::new(),
             drift,
             diagnostics,
         }
+    }
+
+    fn with_changes(self, changes: Vec<Changed>) -> Report {
+        Report { changes, ..self }
+    }
+
+    /// Stage 1's Lock write came before everything in this report.
+    fn after_lock_write(mut self, wrote: bool) -> Report {
+        if wrote {
+            self.changes.insert(0, Changed::Lock);
+        }
+        self
     }
 
     /// Stage 1 builds its reports without knowing how the Lock differed; the caller does.
@@ -76,7 +103,7 @@ pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags
         Err(report) => return report,
     };
     match stage_one(source, &active, old, flags, root) {
-        Ok(_) => Report::new(Outcome::InSync, drift, vec![]),
+        Ok((_, wrote)) => Report::new(Outcome::InSync, drift, vec![]).after_lock_write(wrote),
         Err(report) => report.with_drift(drift),
     }
 }
@@ -87,19 +114,19 @@ pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
         Ok(preflight) => preflight,
         Err(report) => return report,
     };
-    let lock = if flags.check {
+    let (lock, wrote) = if flags.check {
         match old {
-            Some(lock) => lock,
+            Some(lock) => (lock, false),
             // Nothing to plan against: the Lock is what is out of date.
             None => return Report::new(check_outcome(None, true), drift, vec![]),
         }
     } else {
         match stage_one(source, &active, old, &lock_flags(flags), root) {
-            Ok(lock) => lock,
+            Ok(done) => done,
             Err(report) => return report.with_drift(drift),
         }
     };
-    plan_and_apply(source, root, config, &active, &lock, drift, flags)
+    plan_and_apply(source, root, config, &active, &lock, drift, flags).after_lock_write(wrote)
 }
 
 /// Stage 1 as `sync` runs it: only `offline` carries over.
@@ -249,13 +276,11 @@ pub fn edit<S: Source>(
         // The edit and the Lock entries that passed are written. The checkouts and blocks wait
         // for `refs sync`: the Lock does not cover every active Repo, so there is nothing to
         // plan them against.
-        return edited(
-            Change::Written,
-            false,
-            Report::new(Outcome::Failed, drift, done.errors),
-        );
+        let report = Report::new(Outcome::Failed, drift, done.errors);
+        return edited(Change::Written, false, report.after_lock_write(done.wrote));
     }
-    let report = plan_and_apply(&source, root, &config, &active, &done.lock, drift, flags);
+    let report = plan_and_apply(&source, root, &config, &active, &done.lock, drift, flags)
+        .after_lock_write(done.wrote);
     edited(Change::Written, true, report)
 }
 
@@ -271,18 +296,19 @@ pub fn status(source: &dyn Source, root: &Path, config: &Config) -> Result<Statu
     Ok(Status { lock, observed })
 }
 
-/// Resolve or reuse every Repo, verify them all, and write the Lock if it changed. Every
-/// error is collected; the Lock is written only when there are none.
+/// Resolve or reuse every Repo, verify them all, and write the Lock if it changed (the
+/// flag says whether it did). Every error is collected; the Lock is written only when there
+/// are none.
 fn stage_one(
     source: &dyn Source,
     active: &ActiveSet,
     old: Option<Lock>,
     flags: &LockFlags,
     root: &Path,
-) -> Result<Lock, Report> {
+) -> Result<(Lock, bool), Report> {
     let done = stage_one_partial(source, active, old, flags, root, Keep::AllOrNothing)?;
     if done.errors.is_empty() {
-        Ok(done.lock)
+        Ok((done.lock, done.wrote))
     } else {
         Err(Report::new(Outcome::Failed, vec![], done.errors))
     }
@@ -301,6 +327,8 @@ enum Keep {
 /// The Lock stage 1 made, and the errors of the Repos left out of it.
 struct StageOne {
     lock: Lock,
+    /// Whether the Lock file was written.
+    wrote: bool,
     errors: Vec<miette::Report>,
 }
 
@@ -341,14 +369,13 @@ fn stage_one_partial(
         }
     }
     let new = LockPlan::finish(passing, old.as_ref());
-    if (errors.is_empty() || keep == Keep::Passing)
-        && new.write
-        && let Err(e) = new.lock.write(&Lock::path(root))
-    {
+    let wrote = (errors.is_empty() || keep == Keep::Passing) && new.write;
+    if wrote && let Err(e) = new.lock.write(&Lock::path(root)) {
         return Err(Report::failed(e));
     }
     Ok(StageOne {
         lock: new.lock,
+        wrote,
         errors,
     })
 }
@@ -434,9 +461,16 @@ fn apply(
     let mut diagnostics: Vec<miette::Report> = Vec::new();
     let mut failed = false;
     let mut failed_actions = Vec::new();
+    let mut changes = Vec::new();
     for (i, action) in plan.repos.iter().enumerate() {
         match run(source, action, opts) {
-            Ok(note) => diagnostics.extend(note.map(miette::Report::new)),
+            Ok(note) => {
+                diagnostics.extend(note.map(miette::Report::new));
+                changes.push(Changed::Checkout {
+                    id: action.id().into(),
+                    how: action.how(),
+                });
+            }
             Err(e) => {
                 diagnostics.push(e);
                 failed = true;
@@ -449,9 +483,12 @@ fn apply(
     diagnostics.extend(plan.refusals.into_iter().map(miette::Report::new));
     if !held_back {
         for write in plan.writes {
-            if let Err(e) = agent_file::write(&root.join(&write.path), &write.text) {
-                diagnostics.push(e.into());
-                failed = true;
+            match agent_file::write(&root.join(&write.path), &write.text) {
+                Ok(()) => changes.push(Changed::AgentFile(write.path)),
+                Err(e) => {
+                    diagnostics.push(e.into());
+                    failed = true;
+                }
             }
         }
     }
@@ -465,7 +502,7 @@ fn apply(
         Some(ExcludeAction::NoGit) => diagnostics.push(Note::NoGitRepo.into()),
         None => {}
     }
-    Report::new(Plan::applied_outcome(refused, failed), drift, diagnostics)
+    Report::new(Plan::applied_outcome(refused, failed), drift, diagnostics).with_changes(changes)
 }
 
 /// Do one `RepoAction`; on success the note it carries, if any.
@@ -475,7 +512,7 @@ fn run(
     opts: MaterialiseOpts,
 ) -> Result<Option<Note>, miette::Report> {
     match action {
-        RepoAction::Materialise { repo, pin } => {
+        RepoAction::Materialise { repo, pin, .. } => {
             source
                 .materialise(*repo, pin, opts)
                 .map_err(|e| e.for_repo(repo.id))?;

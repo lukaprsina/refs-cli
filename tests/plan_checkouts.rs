@@ -122,7 +122,7 @@ fn an_absent_checkout_is_materialised_at_the_locked_pin() {
     let plan = plan(&FakeSource::new(), &project(&set), false);
     assert!(matches!(
         plan.repos.as_slice(),
-        [RepoAction::Materialise { repo, pin: p }] if repo.id == "a" && *p == pin(SHA)
+        [RepoAction::Materialise { repo, pin: p, .. }] if repo.id == "a" && *p == pin(SHA)
     ));
     assert!(plan.is_drift());
 }
@@ -436,7 +436,7 @@ fn applying_a_plan_to_the_fake_and_replanning_gives_an_empty_plan() {
     for action in &first.repos {
         match action {
             RepoAction::Remove { id } => source.remove(id).unwrap(),
-            RepoAction::Materialise { repo, pin } => {
+            RepoAction::Materialise { repo, pin, .. } => {
                 source.materialise(*repo, pin, Default::default()).unwrap()
             }
             RepoAction::Replace { .. } => panic!("unexpected {action:?}"),

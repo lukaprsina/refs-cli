@@ -89,8 +89,12 @@ pub struct ProjectObserved {
 /// are a single `Replace`, so nothing in the Plan depends on the order of two actions.
 #[derive(Debug)]
 pub enum RepoAction<'a> {
-    /// Create or move the Checkout to `pin`; `Source` tells which from what is on disk.
-    Materialise { repo: RepoRef<'a>, pin: Pin },
+    /// Create the Checkout (`moving` false) or move it to `pin` (`moving` true).
+    Materialise {
+        repo: RepoRef<'a>,
+        pin: Pin,
+        moving: bool,
+    },
     /// Remove the Checkout, then materialise it: a Dangling one, or a dirty one under
     /// `--force`. `note` is reported once the whole action has succeeded.
     Replace {
@@ -103,7 +107,32 @@ pub enum RepoAction<'a> {
     Remove { id: String },
 }
 
+/// What an action does to a Checkout, for the status line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Checkout {
+    Created,
+    Moved,
+    Removed,
+}
+
 impl RepoAction<'_> {
+    /// The Repo the action is for.
+    pub fn id(&self) -> &str {
+        match self {
+            RepoAction::Materialise { repo, .. } | RepoAction::Replace { repo, .. } => repo.id,
+            RepoAction::Remove { id } => id,
+        }
+    }
+
+    pub fn how(&self) -> Checkout {
+        match self {
+            RepoAction::Materialise { moving: false, .. } => Checkout::Created,
+            RepoAction::Replace { note: Some(_), .. } => Checkout::Created,
+            RepoAction::Materialise { .. } | RepoAction::Replace { .. } => Checkout::Moved,
+            RepoAction::Remove { .. } => Checkout::Removed,
+        }
+    }
+
     /// Whether the block lists this Repo's Checkout, so that the block must not be written
     /// if the action failed. A Checkout that is only being removed is not listed.
     pub fn gates_writes(&self) -> bool {
@@ -220,7 +249,11 @@ pub fn plan_checkouts<'a>(
         let locked = lock.get(repo.id).expect("render checked the Lock");
         let pin = || locked.pin.clone();
         match checkouts.of(repo.id) {
-            Observed::Absent => current.push(RepoAction::Materialise { repo, pin: pin() }),
+            Observed::Absent => current.push(RepoAction::Materialise {
+                repo,
+                pin: pin(),
+                moving: false,
+            }),
             Observed::Dangling => current.push(RepoAction::Replace {
                 repo,
                 pin: pin(),
@@ -229,7 +262,11 @@ pub fn plan_checkouts<'a>(
             Observed::Foreign => refusals.push(Refusal::ForeignDir { id: repo.id.into() }),
             seen @ Observed::At { .. } if seen.matches(repo.repo, &locked.pin) => {}
             Observed::At { dirty_files, .. } if dirty_files.is_empty() => {
-                current.push(RepoAction::Materialise { repo, pin: pin() })
+                current.push(RepoAction::Materialise {
+                    repo,
+                    pin: pin(),
+                    moving: true,
+                })
             }
             Observed::At { .. } if force => current.push(RepoAction::Replace {
                 repo,

@@ -5,3 +5,9 @@
 Known divergences, kept on purpose: `enable`/`disable` and Groups (uv has neither; Repos and Groups are not colocated in the TOML, so a switch earns its place), and `add` metadata flags (`--paths`, `--packages`, `--start`, `--description`), which override what `add` infers (spec §3.2, rank 1).
 
 Where the CLI still differs from uv by accident, not by design, it is a bug to fix, not a precedent: see the alignment batch in spec §3.2.
+
+## Output and exit codes
+
+Like uv, a command that changes something says so in short status lines on stderr, one consistent style (lowercase, verb and object, no full stop): `refs.toml`, the Lock, each Checkout created, moved or removed, each Agent file updated, each Group created. A command that changed nothing says so in one line, an in-sync `sync` included. `-q` silences status lines, problems are always printed, and stdout carries data only. "Run `refs sync`" is printed only when the Project is left incomplete (a failed sync, or an edit with `--no-sync`), never as an unconditional reminder.
+
+Exit codes are `0`, `1` and `2` as in uv, plus `3` for `sync --check` finding the Project out of date. That `3` is a recorded divergence from uv, which exits 1 for a failed `--check`: CI and pre-commit hooks need to tell "out of date" from "refused or broke", so refusals and errors keep `1`.
