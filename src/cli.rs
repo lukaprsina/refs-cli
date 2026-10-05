@@ -1,4 +1,4 @@
-//! The command line: parsing, output and exit codes. No logic (architecture.md): every
+//! The command line: parsing, output and exit codes. No logic: every
 //! decision is made by `sync` and `plan`.
 //!
 //! The `Source` is injected into `run` as a function of the loaded project (the real one
