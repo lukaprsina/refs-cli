@@ -12,4 +12,5 @@ pub mod plan;
 pub mod project;
 pub mod render;
 pub mod source;
+pub mod status;
 pub mod sync;

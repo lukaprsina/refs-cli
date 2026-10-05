@@ -1,10 +1,9 @@
 use refs_cli::config::parse;
 use std::collections::HashMap;
 
-use refs_cli::list::{Status, list, list_status};
-use refs_cli::lock::{Lock, LockedRepo};
+use refs_cli::list::{list, list_status};
 use refs_cli::plan::{Cause, CheckoutState};
-use refs_cli::source::Pin;
+use refs_cli::status::{Kind, Row, Status};
 
 #[test]
 fn lists_repos_under_their_groups_with_ref_paths_and_disabled_marks() {
@@ -85,10 +84,6 @@ fn disabled_lines_are_dimmed_only_with_color() {
     );
 }
 
-fn pin(sha: &str) -> Pin {
-    Pin::git("https://github.com/o/r", "HEAD", sha, None)
-}
-
 #[test]
 fn status_adds_the_locked_sha_and_the_label_of_each_checkout() {
     use CheckoutState::{Absent, Dangling, Foreign, InSync, Stale};
@@ -118,38 +113,42 @@ enabled = false
 "#,
     )
     .unwrap();
-    let sha = |c: char| c.to_string().repeat(40);
-    let entry = |id: &str, c| LockedRepo {
-        id: id.into(),
-        pin: pin(&sha(c)),
-    };
-    let lock = Lock::new(vec![
-        entry("ok", '1'),
-        entry("moved", '2'),
-        entry("paths", '3'),
-        entry("dirty", '4'),
-        entry("dirtypaths", '8'),
-        entry("gone", '5'),
-        entry("alien", '6'),
-        entry("hollow", '7'),
-    ]);
     let stale = |cause, dirty: &[&str]| Stale {
         cause,
         dirty_files: dirty.iter().map(|f| f.to_string()).collect(),
     };
-    let states = HashMap::from([
-        ("ok".to_string(), InSync),
-        ("moved".to_string(), stale(Cause::Commit, &[])),
-        ("paths".to_string(), stale(Cause::Paths, &[])),
-        ("dirty".to_string(), stale(Cause::Commit, &["x"])),
-        ("dirtypaths".to_string(), stale(Cause::Paths, &["x"])),
-        ("gone".to_string(), Absent),
-        ("alien".to_string(), Foreign),
-        ("hollow".to_string(), Dangling),
-    ]);
+    let row = |c: char, state| Row {
+        sha: Some(c.to_string().repeat(7)),
+        kind: Kind::Checkout(state),
+    };
     let status = Status {
-        lock: Some(lock),
-        states,
+        rows: HashMap::from([
+            ("ok".to_string(), row('1', InSync)),
+            ("moved".to_string(), row('2', stale(Cause::Commit, &[]))),
+            ("paths".to_string(), row('3', stale(Cause::Paths, &[]))),
+            ("dirty".to_string(), row('4', stale(Cause::Commit, &["x"]))),
+            (
+                "dirtypaths".to_string(),
+                row('8', stale(Cause::Paths, &["x"])),
+            ),
+            ("gone".to_string(), row('5', Absent)),
+            (
+                "new".to_string(),
+                Row {
+                    sha: None,
+                    kind: Kind::NotLocked,
+                },
+            ),
+            ("alien".to_string(), row('6', Foreign)),
+            ("hollow".to_string(), row('7', Dangling)),
+            (
+                "off".to_string(),
+                Row {
+                    sha: None,
+                    kind: Kind::Disabled,
+                },
+            ),
+        ]),
     };
 
     assert_eq!(
@@ -177,8 +176,13 @@ url = \"https://github.com/o/r\"
     )
     .unwrap();
     let status = Status {
-        lock: None,
-        states: HashMap::new(),
+        rows: HashMap::from([(
+            "a".to_string(),
+            Row {
+                sha: None,
+                kind: Kind::NotLocked,
+            },
+        )]),
     };
     assert_eq!(
         list_status(&config, &status, false),

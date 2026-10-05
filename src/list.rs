@@ -1,22 +1,11 @@
 //! `refs list`: every repo in the config, grouped, with its ref, paths and whether it is
-//! enabled. Pure: `list` reads the config only; `list_status` also takes the Lock and the
-//! Checkout state of each locked Repo, which `sync::status` collects. Both walk
-//! `active::layout`.
-
-use std::collections::HashMap;
+//! enabled. Pure: `list` reads the config only; `list_status` also takes the per-Repo rows
+//! `status::build` collects, and only renders them. Both walk `active::layout`.
 
 use crate::active::{LaidRepo, layout};
 use crate::config::Config;
-use crate::lock::Lock;
 use crate::plan::{Cause, CheckoutState};
-
-/// What `refs list --status` adds to the config: the Lock and the Checkout state of each
-/// active Repo the Lock has a Pin for, by repo id. A Repo that is disabled or not locked has
-/// no entry: `list` labels those itself.
-pub struct Status {
-    pub lock: Option<Lock>,
-    pub states: HashMap<String, CheckoutState>,
-}
+use crate::status::{Kind, Row, Status};
 
 /// `color` dims the disabled lines with ANSI escapes.
 pub fn list(config: &Config, color: bool) -> String {
@@ -108,13 +97,9 @@ fn cells(r: &LaidRepo, status: Option<&Status>) -> Vec<String> {
         paths,
     ];
     if let Some(status) = status {
-        let sha = status
-            .lock
-            .as_ref()
-            .and_then(|lock| lock.get(r.repo.id))
-            .map_or("-", |l| l.pin.short_id());
-        cells.push(sha.to_string());
-        cells.push(status_label(status, r).to_string());
+        let row = status.rows.get(r.repo.id);
+        cells.push(row.and_then(|row| row.sha.clone()).unwrap_or("-".into()));
+        cells.push(label(row).to_string());
     }
     cells
 }
@@ -160,28 +145,23 @@ impl std::fmt::Display for StatusLabel {
     }
 }
 
-fn status_label(status: &Status, laid: &LaidRepo) -> StatusLabel {
-    let id = laid.repo.id;
-    if !laid.enabled {
-        return StatusLabel::Disabled;
-    }
-    if status.lock.as_ref().and_then(|lock| lock.get(id)).is_none() {
-        return StatusLabel::NotLocked;
-    }
-    match status
-        .states
-        .get(id)
-        .expect("every locked, active Repo has a state")
-    {
-        CheckoutState::InSync => StatusLabel::Ok,
-        CheckoutState::Absent | CheckoutState::Dangling => StatusLabel::Missing,
-        CheckoutState::Foreign => StatusLabel::Foreign,
-        CheckoutState::Stale { cause, dirty_files } => {
-            let dirty = !dirty_files.is_empty();
-            match cause {
-                Cause::Commit => StatusLabel::WrongSha { dirty },
-                Cause::Paths => StatusLabel::WrongPaths { dirty },
+/// A Repo with no row has not been through `status::build`: nothing is known of it, so it
+/// reads as not locked.
+fn label(row: Option<&Row>) -> StatusLabel {
+    match row.map(|row| &row.kind) {
+        None | Some(Kind::NotLocked) => StatusLabel::NotLocked,
+        Some(Kind::Disabled) => StatusLabel::Disabled,
+        Some(Kind::Checkout(state)) => match state {
+            CheckoutState::InSync => StatusLabel::Ok,
+            CheckoutState::Absent | CheckoutState::Dangling => StatusLabel::Missing,
+            CheckoutState::Foreign => StatusLabel::Foreign,
+            CheckoutState::Stale { cause, dirty_files } => {
+                let dirty = !dirty_files.is_empty();
+                match cause {
+                    Cause::Commit => StatusLabel::WrongSha { dirty },
+                    Cause::Paths => StatusLabel::WrongPaths { dirty },
+                }
             }
-        }
+        },
     }
 }
