@@ -43,7 +43,7 @@ Plan { repos: Vec<RepoAction>, writes: Vec<WriteAgentFile>, exclude: Option<Excl
 
 A Lock entry is `id` plus a Pin (`source`, `url`, `ref`, `sha`, `branch`). It has no `paths`: they do not change which commit a Repo resolves to, and `verify` checks `paths` and `start` against that commit on every sync anyway. A Lock is stale when a Repo is added or removed or its url or Ref changed, so a `paths`-only edit (including reordering or repeating entries) leaves `refs.lock` byte for byte as it was, and `sync --check`, `sync` and `list --status` agree. `paths` is a set everywhere.
 
-Two rules decide matching, both defined in `source`: `Pin::drift_from(repo)` (url and Ref) for Lock drift, pin reuse and the checkout stage's input, and `Observed::matches(repo, locked)` (same commit as the locked Pin, `paths` as a set) for the checkout stage and `list --status`. Lock-entry construction takes the Pin straight from `resolve`.
+Two rules decide matching. `Pin::drift_from(repo)` (url and Ref, defined in `source`) decides Lock drift, pin reuse and the checkout stage's input. `plan::classify(observed, repo, locked)` (same commit as the locked Pin, `paths` as a set, plus whether a mismatch is dirty) decides a Checkout's state once, for the checkout stage and `list --status`: the plan maps the state to actions and refusals, and `list` maps it to labels, adding `disabled` and `not locked` itself because `classify` only runs for a locked Pin. Lock-entry construction takes the Pin straight from `resolve`.
 
 The format version stays 1. A Lock holding `paths` is still read (unknown keys are ignored), is current if url and Ref match, and loses the keys the next time the Lock is written for another reason; nothing rewrites it just to drop them.
 
