@@ -259,6 +259,42 @@ pub enum SourceError {
     ObjectMissing { repo: String, oid: String },
 }
 
+impl SourceError {
+    /// This failure as a report that names the Repo it happened to, unless the message
+    /// already does. The code and help are the failure's own.
+    pub fn for_repo(self, id: &str) -> miette::Report {
+        match self {
+            SourceError::PathMissing { .. }
+            | SourceError::PathNotDir { .. }
+            | SourceError::StartMissing { .. }
+            | SourceError::ObjectMissing { .. } => miette::Report::new(self),
+            cause => miette::Report::new(RepoFailed {
+                id: id.into(),
+                cause,
+            }),
+        }
+    }
+}
+
+/// A `SourceError` with the id of the Repo it happened to.
+#[derive(Debug, Error)]
+#[error("repo `{id}`: {cause}")]
+pub struct RepoFailed {
+    pub id: String,
+    #[source]
+    pub cause: SourceError,
+}
+
+impl Diagnostic for RepoFailed {
+    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        self.cause.code()
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        self.cause.help()
+    }
+}
+
 /// A problem reading or writing `refs.lock`.
 #[derive(Debug, Error, Diagnostic)]
 pub enum LockError {
@@ -337,18 +373,6 @@ pub struct NotLocked {
     pub ids: Vec<String>,
 }
 
-/// Stage 2 was given an observation that does not cover every active Repo: a bug in the
-/// caller, not drift.
-#[derive(Debug, Error, Diagnostic)]
-#[error("no checkout was observed for: {}", ids.join(", "))]
-#[diagnostic(
-    code(refs::plan::not_observed),
-    help("this is a bug in refs; please report it")
-)]
-pub struct NotObserved {
-    pub ids: Vec<String>,
-}
-
 /// `plan_lock` was asked for something it must not do.
 #[derive(Debug, Error, Diagnostic)]
 pub enum LockRefusal {
@@ -398,7 +422,7 @@ pub enum Refusal {
 }
 
 /// An autofix `sync` announces; not drift.
-#[derive(Debug, Error, Diagnostic)]
+#[derive(Debug, Clone, Error, Diagnostic)]
 #[diagnostic(severity(Advice))]
 pub enum Note {
     #[error("not a git repository, so the exclude rule for the references directory was not added")]

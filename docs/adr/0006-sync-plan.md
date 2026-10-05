@@ -1,11 +1,10 @@
 ---
 status: accepted
-supersedes: 0003, 0004
 ---
 
 # `sync` is planned in two pure stages, grouped by Repo; `Source` only reports and executes
 
-This is the one statement of how `sync` decides and acts. It replaces ADR 0003 (decisions live in `plan`, mechanics in `Source`) and ADR 0004 (two-stage plan), which had grown into a chain of refinements, and it changes the shape of the Plan: a flat `Vec<Action>` whose order carried implicit dependencies that only the executor knew became a Plan grouped by Repo, so the failure policy is data.
+This is the one statement of how `sync` decides and acts. `plan` decides everything that is a decision: which names are observed, how Lock entries are built, whether the Lock is written, which actions run, what a failure holds back, and how a Plan becomes an outcome (in sync, out of date, refused, failed). `sync` is a loop: it runs the typed actions through `Source`, collects the failures and reports. The Plan is grouped by Repo rather than a flat list of actions whose order carried implicit dependencies that only the executor knew, so the failure policy is data.
 
 ## Decisions in `plan`, mechanics in `Source`
 
@@ -28,7 +27,7 @@ Which Repos re-resolve is a pure decision, but the pins it produces exist only a
 Plan { repos: Vec<RepoAction>, writes: Vec<WriteAgentFile>, exclude: Option<ExcludeAction>, refusals: Vec<Refusal> }
 ```
 
-- A `RepoAction` is one unit per Repo: `Materialise { repo, pin }` (create or move; `Source` tells which), `Replace { repo, pin, note }` (remove, then materialise: a Dangling Checkout, or a dirty one under `--force`) and `Remove { id }` (a Checkout of a name that is no longer active; a Checkout can outlive its config entry, so this takes an id). Actions for active Repos carry the `RepoRef`, so the executor never looks a Repo up again.
+- A `RepoAction` is one unit per Repo: `Materialise { repo, pin, moving }` (create, or move when `moving`; decided in `plan` from what was observed), `Replace { repo, pin, moving, note }` (remove, then materialise: a Dangling Checkout, `moving` false, or a dirty one under `--force`, `moving` true) and `Remove { id }` (a Checkout of a name that is no longer active; a Checkout can outlive its config entry, so this takes an id). Actions for active Repos carry the `RepoRef`, so the executor never looks a Repo up again.
 - The one dependency that used to be implicit, a Repo's materialise after its remove, no longer exists: it is one action, and its `note` (`recreated`) is reported by the executor only if the action succeeded.
 - **Agent file writes depend on the checkouts they list.** A write runs only if every `Materialise` and `Replace` succeeded, and not after a failed one; a failed `Remove` of an inactive name does not hold it back, since the block does not list that Repo. Each Agent file is written independently. The rule is a method on the action type, so it is tested as data.
 - Any refusal clears the writes at plan time (a block listing a Repo with no Checkout is the harm). The exclude rule is independent of both.
@@ -37,7 +36,15 @@ Plan { repos: Vec<RepoAction>, writes: Vec<WriteAgentFile>, exclude: Option<Excl
 
 ## What stage 2 observes
 
-`Checkouts` is the observation of every Repo the plan has to judge: each active Repo, and each non-active name found in `references_dir` (from `Source::list`). It is built by one constructor that checks every active id is present and returns an error otherwise, so an omitted entry is not read as `Absent`. There is no separate listing. A non-active name that is `At` is removed (refused if dirty and not forced); `Foreign` or `Absent` is ignored. The old Lock is not read, so a retry after a failed stage 2 still finds them. `ProjectObserved` is the rest: the `references_dir` setting, the text of each Agent file and the exclude rule (`Present`, `Missing` or `NoGit`; `NoGit` is a note, not drift).
+`Checkouts` is the observation of every Repo the plan has to judge: each active Repo, and each non-active name found in `references_dir` (from `Source::list`). It is built by one constructor, `Checkouts::observe(active, listing, inspect)`, which decides the names and calls `inspect` for each, so a missing observation cannot be represented and an omitted entry cannot be read as `Absent`. There is no separate listing. A non-active name that is `At` is removed (refused if dirty and not forced); `Foreign` or `Absent` is ignored. The old Lock is not read, so a retry after a failed stage 2 still finds them. `ProjectObserved` is the rest: the `references_dir` setting, the text of each Agent file and the exclude rule (`Present`, `Missing` or `NoGit`; `NoGit` is a note, not drift).
+
+## The Lock records the commit, not the Paths
+
+A Lock entry is `id` plus a Pin (`source`, `url`, `ref`, `sha`, `branch`). It has no `paths`: they do not change which commit a Repo resolves to, and `verify` checks `paths` and `start` against that commit on every sync anyway. A Lock is stale when a Repo is added or removed or its url or Ref changed, so a `paths`-only edit (including reordering or repeating entries) leaves `refs.lock` byte for byte as it was, and `sync --check`, `sync` and `list --status` agree. `paths` is a set everywhere.
+
+Two rules decide matching, both defined in `source`: `Pin::drift_from(repo)` (url and Ref) for Lock drift, pin reuse and the checkout stage's input, and `Observed::matches(repo, locked)` (same commit as the locked Pin, `paths` as a set) for the checkout stage and `list --status`. Lock-entry construction takes the Pin straight from `resolve`.
+
+The format version stays 1. A Lock holding `paths` is still read (unknown keys are ignored), is current if url and Ref match, and loses the keys the next time the Lock is written for another reason; nothing rewrites it just to drop them.
 
 ## Verification and offline
 
@@ -48,8 +55,21 @@ Plan { repos: Vec<RepoAction>, writes: Vec<WriteAgentFile>, exclude: Option<Excl
 
 - Stage 1 collects all errors and writes the Lock only if there are none.
 - Stage 2 runs sequentially and collects failures. A failure of one Repo does not stop the others (every action is idempotent, so a retry is safe); only the writes that list a failed Repo are held back. The run exits 1 with all diagnostics.
-- A Lock that does not cover the active Repos is drift only under `--check`; after stage 1 it cannot happen, so a real `sync` reports it as a failure.
+- A Lock that does not cover the active Repos is drift under `--check` (no Plan is made, and `check_outcome(None, ..)` is out of date); after stage 1 it cannot happen.
 - `sync --check` exits 3 for plain drift and 1 for refusals: "run `refs sync`" is the wrong advice when `sync` will also refuse.
+
+## No active Repo
+
+With no active Repo the Plan removes the Managed block, markers included, from every Agent file that has one. The rest of the file is untouched and the file is kept even if it is left empty; a file without markers, or a missing one, is left alone. `sync --check` reports a leftover block as out of date, and is in sync once it is gone.
+
+## Edits: one operation, one failure policy
+
+`sync::edit(root, edit, no_sync, make_source, flags)` is the one operation behind `add`, `remove`, `enable` and `disable`; the CLI parses arguments and prints the `Edited` it returns. `refs.toml` is read once, and the edited text is parsed once into the config the sync runs against. `Edit::apply` is text in, text out (with the Group it had to create), and validates its own result, and `--no-sync` is a flag on the operation: with it no `Source` is made and the edit is only written. The result is typed: `Change` (`Unchanged`, `Written`, `Rejected`), the Group created and the `Report`. No-op detection (`after == before`) and the written/rejected outcome exist only here.
+
+- **`add` and `enable` are atomic.** They grow the active set, so stage 1 runs against the edited config and `refs.toml` is written only if every Repo passes. An unresolvable Repo writes nothing, and the error names it.
+- **`remove` and `disable` always write.** They can only shrink the set, so a Repo they did not touch must not block them: stage 1 keeps going past a failure, the Lock gets the entries that passed, `refs.toml` is written, and each failing Repo is reported with exit 1. Stage 2 then runs against that partial Lock: `plan_checkouts` takes the Repos the Lock covers plus the ids it could not lock (`withheld`), so the Checkouts and the Managed block follow the Repos that did lock, the removed or disabled Repo's Checkout goes, and a withheld Repo's Checkout is left alone (neither made, moved nor removed; it is not in the block). If every active Repo is withheld the block is left as it is. The outcome is Failed either way; `refs sync` finishes the withheld Repo once it is fixed.
+- Every Repo-specific error names the Repo id (`SourceError::for_repo`; the code and help stay the failure's own). "refs.toml was not changed" is printed only for a `Rejected` edit, and "updated" when it was written.
+- **Groups follow their Repos.** `add --group x` for a missing Group appends a bare `[groups.x]` (no name or description; the heading falls back to the id) and reports it. `remove` of a Group's last Repo removes the Group again when it has no description, so add and remove round-trip.
 
 ## Consequences
 

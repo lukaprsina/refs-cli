@@ -7,18 +7,20 @@
 //! cannot be pointed at a fake.
 
 use std::ffi::OsString;
+use std::fmt::Display;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 
 use crate::config::Config;
-use crate::diagnostic::{EditError, SourceError};
-use crate::edit::{self, AddRepo, Target};
+use crate::diagnostic::SourceError;
+use crate::edit::{AddRepo, Edit, Target};
 use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::source::Source;
-use crate::sync::{self, Change, Outcome, Report, SyncFlags};
+use crate::sync::{self, Change, Changed, Checkout, Edited, Outcome, Report, SyncFlags};
 
 const EXIT_ERROR: u8 = 1;
 const EXIT_OUT_OF_DATE: u8 = 3;
@@ -161,6 +163,42 @@ impl LockArgs {
     }
 }
 
+/// Where a run's output goes, in uv's style: status lines on stderr (silenced by `-q`),
+/// problems on stderr always, and stdout for data only.
+struct Console<'w> {
+    out: &'w mut dyn Write,
+    err: &'w mut dyn Write,
+    quiet: bool,
+    /// How many status lines were asked for, shown or not: "nothing changed" is for a run
+    /// that had none.
+    said: usize,
+}
+
+impl Console<'_> {
+    /// Data: what the command is for, such as the `list` table.
+    fn data(&mut self, text: &str) {
+        // A closed pipe is the reader's choice, not an error of ours.
+        let _ = write!(self.out, "{text}");
+    }
+
+    /// A status line: what changed, or that nothing did.
+    fn status(&mut self, line: impl Display) {
+        self.said += 1;
+        if !self.quiet {
+            let _ = writeln!(self.err, "{line}");
+        }
+    }
+
+    /// A problem, or a hint about one: always printed.
+    fn problem(&mut self, line: impl Display) {
+        let _ = writeln!(self.err, "{line}");
+    }
+
+    fn report(&mut self, report: impl std::fmt::Debug) {
+        self.problem(format!("{report:?}"));
+    }
+}
+
 /// Run `refs` with `args` (the first is the program name) from `cwd`, and return the exit
 /// code: 0 in sync, 1 error or refusal, 2 usage, 3 `--check` found drift. `make_source` is
 /// given the project root and config once they are loaded.
@@ -169,24 +207,90 @@ pub fn run<'a>(
     cwd: &Path,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
 ) -> u8 {
+    use std::io::IsTerminal;
+    let terminal = Terminal {
+        out: std::io::stdout().is_terminal(),
+        err: std::io::stderr().is_terminal(),
+    };
+    run_on(
+        args,
+        cwd,
+        make_source,
+        &mut std::io::stdout(),
+        &mut std::io::stderr(),
+        terminal,
+    )
+}
+
+/// Which of the output streams are terminals; clap's own messages are styled only for those.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Terminal {
+    pub out: bool,
+    pub err: bool,
+}
+
+/// `run` with the two output streams given, so a test can read what went to each. Neither is
+/// a terminal, so clap's messages are plain.
+pub fn run_with<'a>(
+    args: impl IntoIterator<Item = OsString>,
+    cwd: &Path,
+    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> u8 {
+    run_on(args, cwd, make_source, out, err, Terminal::default())
+}
+
+/// `run_with`, told which streams are terminals.
+pub fn run_on<'a>(
+    args: impl IntoIterator<Item = OsString>,
+    cwd: &Path,
+    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    terminal: Terminal,
+) -> u8 {
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(e) => {
-            let _ = e.print();
+            let styled = if e.use_stderr() {
+                terminal.err
+            } else {
+                terminal.out
+            } && no_color_env_unset();
+            let rendered = e.render();
+            let text = if styled {
+                rendered.ansi().to_string()
+            } else {
+                rendered.to_string()
+            };
+            let _ = if e.use_stderr() {
+                write!(err, "{text}")
+            } else {
+                write!(out, "{text}")
+            };
             return u8::try_from(e.exit_code()).unwrap_or(EXIT_ERROR);
         }
     };
     install_report_handler(cli.no_color);
     let start = cli.project.as_deref().unwrap_or(cwd);
-    let quiet = cli.quiet;
+    let color = !cli.no_color && stdout_is_colorful();
+    let mut console = Console {
+        out,
+        err,
+        quiet: cli.quiet,
+        said: 0,
+    };
     match cli.command {
-        Command::Init(args) => init(start, args.here, quiet),
-        Command::Config(command) => match load(start) {
-            Ok((root, config)) => run_config(&command, &root, &config, quiet, make_source),
+        Command::Init(args) => init(start, args.here, &mut console),
+        Command::Config(command) => match load(start, &mut console) {
+            Ok((root, config)) => {
+                run_config(&command, &root, &config, color, make_source, &mut console)
+            }
             Err(code) => code,
         },
-        Command::Source(command) => match load(start) {
-            Ok((root, config)) => run_source(&command, &root, &config, quiet, make_source),
+        Command::Source(command) => match load(start, &mut console) {
+            Ok((root, config)) => run_source(&command, &root, &config, make_source, &mut console),
             Err(code) => code,
         },
     }
@@ -194,10 +298,10 @@ pub fn run<'a>(
 
 /// The project at or above `start`; on failure the problems are printed and the exit code
 /// returned.
-fn load(start: &Path) -> Result<(PathBuf, Config), u8> {
+fn load(start: &Path, console: &mut Console) -> Result<(PathBuf, Config), u8> {
     project::load(start).map_err(|reports| {
         for report in reports {
-            eprintln!("{report:?}");
+            console.report(report);
         }
         EXIT_ERROR
     })
@@ -207,47 +311,50 @@ fn run_config<'a>(
     command: &ConfigCommand,
     root: &Path,
     config: &Config,
-    quiet: bool,
+    color: bool,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    console: &mut Console,
 ) -> u8 {
-    type Edit<'e> = Box<dyn Fn(&str) -> Result<String, EditError> + 'e>;
-    let (flags, edit): (&EditFlags, Edit) = match command {
+    let (flags, edit) = match command {
         ConfigCommand::List(args) if args.status => {
-            return list_status(root, config, make_source);
+            return list_status(root, config, color, make_source, console);
         }
         ConfigCommand::List(_) => {
-            print!("{}", list(config));
+            console.data(&list(config, color));
             return 0;
         }
-        ConfigCommand::Add { repo, flags } => (flags, Box::new(|text| edit::add(text, repo))),
-        ConfigCommand::Remove(args) => (&args.flags, Box::new(|text| edit::remove(text, &args.id))),
-        ConfigCommand::Disable(args) => (
-            &args.flags,
-            Box::new(|text| edit::disable(text, args.target())),
-        ),
-        ConfigCommand::Enable(args) => (
-            &args.flags,
-            Box::new(|text| edit::enable(text, args.target())),
-        ),
+        ConfigCommand::Add { repo, flags } => (flags, Edit::Add(repo)),
+        ConfigCommand::Remove(args) => (&args.flags, Edit::Remove(&args.id)),
+        ConfigCommand::Disable(args) => (&args.flags, Edit::Disable(args.target())),
+        ConfigCommand::Enable(args) => (&args.flags, Edit::Enable(args.target())),
     };
-    edit_config(root, config, quiet, flags, make_source, &*edit)
+    let edited = sync::edit(
+        root,
+        &edit,
+        flags.no_sync,
+        || make_source(root, config),
+        &SyncFlags::default(),
+    );
+    print_edited(&edited, flags.no_sync, console)
 }
 
 /// `refs list --status`: the config, the Lock and what `inspect` finds for every repo.
 fn list_status<'a>(
     root: &Path,
     config: &Config,
+    color: bool,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    console: &mut Console,
 ) -> u8 {
     let result = make_source(root, config)
         .map_err(miette::Report::new)
         .and_then(|source| sync::status(&*source, root, config));
     match result {
         Ok(status) => {
-            print!("{}", crate::list::list_status(config, &status));
+            console.data(&crate::list::list_status(config, &status, color));
             0
         }
-        Err(report) => fail(report),
+        Err(report) => fail(report, console),
     }
 }
 
@@ -255,21 +362,21 @@ fn run_source<'a>(
     command: &SourceCommand,
     root: &Path,
     config: &Config,
-    quiet: bool,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    console: &mut Console,
 ) -> u8 {
     let source = match make_source(root, config) {
         Ok(source) => source,
-        Err(e) => return fail(e),
+        Err(e) => return fail(e, console),
     };
     let source = &*source;
-    let report = match command {
+    let (report, check, retry) = match command {
         SourceCommand::Lock(args) => {
             let flags = LockFlags {
                 upgrade: args.upgrade(),
                 offline: false,
             };
-            sync::lock(source, root, config, &flags)
+            (sync::lock(source, root, config, &flags), false, false)
         }
         SourceCommand::Sync(args) => {
             let flags = SyncFlags {
@@ -277,108 +384,76 @@ fn run_source<'a>(
                 force: args.force,
                 check: args.check,
             };
-            sync::sync(source, root, config, &flags)
+            (sync::sync(source, root, config, &flags), args.check, true)
         }
     };
-    print(&report, quiet);
+    print(&report, check, console);
+    if retry && matches!(report.outcome, Outcome::Failed | Outcome::Refused) {
+        console.problem(HINT_FIXED);
+    }
     exit_code(report.outcome)
 }
 
-/// Apply `edit` to the text of `<root>/refs.toml`. With `--no-sync` write the result and say
-/// to run `refs sync`; otherwise lock the edited config first and write it only if that
-/// passes, then sync (`sync::sync_edited`). A rejected edit writes nothing.
-fn edit_config<'a>(
-    root: &Path,
-    config: &Config,
-    quiet: bool,
-    flags: &EditFlags,
-    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
-    edit: &dyn Fn(&str) -> Result<String, EditError>,
-) -> u8 {
-    let edited = project::read_config(root)
-        .map_err(miette::Report::new)
-        .and_then(|text| Ok((edit(&text).map_err(miette::Report::new)?, text)));
-    let (after, before) = match edited {
-        Ok(both) => both,
-        Err(report) => return fail(report),
-    };
-    if flags.no_sync {
-        return write_only(root, quiet, &before, &after);
-    }
-    let source = match make_source(root, config) {
-        Ok(source) => source,
-        Err(e) => return fail(e),
-    };
-    let edited = sync::sync_edited(&*source, root, &before, &after, &SyncFlags::default());
-    match edited.change {
-        Change::Written if !quiet => println!("updated {}", project::CONFIG_FILE),
-        Change::Unchanged if !quiet => println!("{} already says that", project::CONFIG_FILE),
-        _ => {}
-    }
-    print(&edited.report, quiet);
-    if matches!(edited.report.outcome, Outcome::Failed | Outcome::Refused) {
-        match edited.change {
-            Change::Written => eprintln!(
-                "{} and refs.lock were updated; run `refs sync` once the problem is fixed",
-                project::CONFIG_FILE
-            ),
-            Change::Rejected => eprintln!("{} was not changed", project::CONFIG_FILE),
-            Change::Unchanged => {}
-        }
-    }
-    exit_code(edited.report.outcome)
-}
+const HINT_SYNC: &str = "run `refs sync` to bring the project up to date";
+const HINT_FIXED: &str = "run `refs sync` once the problem is fixed";
 
-fn write_only(root: &Path, quiet: bool, text: &str, edited: &str) -> u8 {
-    if edited == text {
-        if !quiet {
-            println!("{} already says that", project::CONFIG_FILE);
-        }
-        return 0;
+/// Say what `sync::edit` did, and give the exit code.
+fn print_edited(edited: &Edited, no_sync: bool, console: &mut Console) -> u8 {
+    if edited.change == Change::Written {
+        console.status(format_args!("updated {}", project::CONFIG_FILE));
     }
-    match project::write_config(root, edited) {
-        Ok(()) => {
-            if !quiet {
-                println!(
-                    "updated {}; run `refs sync` to bring the project up to date",
-                    project::CONFIG_FILE
-                );
+    if let Some(group) = &edited.group_created {
+        console.status(format_args!("created group `{group}`"));
+    }
+    print(&edited.report, false, console);
+    let outcome = edited.report.outcome;
+    if no_sync && edited.change == Change::Written {
+        // Not a status line: the project is incomplete, so `-q` does not hide it.
+        console.problem(HINT_SYNC);
+    }
+    if matches!(outcome, Outcome::Failed | Outcome::Refused) {
+        match edited.change {
+            Change::Written => console.problem(format_args!(
+                "{} was updated; fix or remove the broken repo, then run `refs sync`",
+                project::CONFIG_FILE
+            )),
+            Change::Rejected => {
+                console.problem(format_args!("{} was not changed", project::CONFIG_FILE))
             }
-            0
+            Change::Unchanged => console.problem(HINT_FIXED),
         }
-        Err(e) => fail(e),
     }
+    exit_code(outcome)
 }
 
 /// `refs init`: it needs no loaded project, as there may be none yet.
-fn init(start: &Path, here: bool, quiet: bool) -> u8 {
+fn init(start: &Path, here: bool, console: &mut Console) -> u8 {
     let result = project::init_root(start, here)
         .map_err(miette::Report::new)
         .and_then(|root| crate::init::init(&root).map_err(miette::Report::new));
     match result {
         Ok(done) => {
-            if !quiet {
-                if done.config_created {
-                    println!("created {}", project::CONFIG_FILE);
-                }
-                println!("{REMINDERS}");
+            if done.config_created {
+                console.status(format_args!("created {}", project::CONFIG_FILE));
+            }
+            if console.said == 0 {
+                console.status("nothing changed");
+            } else {
+                console.status(REMINDERS);
             }
             0
         }
-        Err(report) => {
-            eprintln!("{report:?}");
-            EXIT_ERROR
-        }
+        Err(report) => fail(report, console),
     }
 }
 
-const REMINDERS: &str = "Add a repo with `refs add <url>`, then run `refs sync`.
+const REMINDERS: &str = "Add a repo with `refs add <url>`.
 Linters, formatters and type checkers are yours to configure: exclude the references dir from them.
 Claude Code reads AGENTS.md only when there is no CLAUDE.md; to use CLAUDE.md, list it in `agents_files`.";
 
 /// Print `error` as a report and give the exit code for a failure.
-fn fail(error: impl Into<miette::Report>) -> u8 {
-    eprintln!("{:?}", error.into());
+fn fail(error: impl Into<miette::Report>, console: &mut Console) -> u8 {
+    console.report(error.into());
     EXIT_ERROR
 }
 
@@ -388,6 +463,16 @@ fn exit_code(outcome: Outcome) -> u8 {
         Outcome::OutOfDate => EXIT_OUT_OF_DATE,
         Outcome::Refused | Outcome::Failed => EXIT_ERROR,
     }
+}
+
+/// Dim only on a terminal, and not when `NO_COLOR` is set.
+fn stdout_is_colorful() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal() && no_color_env_unset()
+}
+
+fn no_color_env_unset() -> bool {
+    std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
 }
 
 fn install_report_handler(no_color: bool) {
@@ -401,17 +486,39 @@ fn install_report_handler(no_color: bool) {
     }
 }
 
-fn print(report: &Report, quiet: bool) {
+/// One status line per change, the problems, and "nothing changed" for a run that did no
+/// change and had no problem (`--check` changes nothing by design: it says "up to date").
+fn print(report: &Report, check: bool, console: &mut Console) {
+    for change in &report.changes {
+        match change {
+            Changed::Lock => console.status(format_args!("updated {}", crate::lock::FILE)),
+            Changed::Checkout { id, how } => {
+                let how = match how {
+                    Checkout::Created => "created",
+                    Checkout::Moved => "moved",
+                    Checkout::Removed => "removed",
+                };
+                console.status(format_args!("{how} checkout `{id}`"));
+            }
+            Changed::AgentFile(path) => console.status(format_args!("updated {path}")),
+        }
+    }
     for diagnostic in &report.diagnostics {
-        if quiet && report.outcome == Outcome::InSync {
+        if console.quiet && report.outcome == Outcome::InSync {
             continue;
         }
-        eprintln!("{diagnostic:?}");
+        console.report(diagnostic);
     }
     if report.outcome == Outcome::OutOfDate {
         for drift in &report.drift {
-            eprintln!("out of date: {drift}");
+            console.problem(format_args!("out of date: {drift}"));
         }
-        eprintln!("run `refs sync` to bring the project up to date");
+    }
+    if report.outcome == Outcome::InSync && console.said == 0 {
+        console.status(if check {
+            "up to date"
+        } else {
+            "nothing changed"
+        });
     }
 }

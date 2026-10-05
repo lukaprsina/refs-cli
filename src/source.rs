@@ -4,6 +4,8 @@
 pub mod fake;
 pub mod git;
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Repo, RepoRef, is_full_sha};
@@ -47,8 +49,8 @@ impl Pin {
         }
     }
 
-    /// The fields of `repo` that no longer match what this pin resolved (`Paths` is the
-    /// locked Repo's, not the pin's).
+    /// The fields of `repo` that no longer match what this pin resolved. Empty means the
+    /// pin still serves the Repo: this is the one rule behind lock drift and pin reuse.
     pub fn drift_from(&self, repo: &Repo) -> Vec<Field> {
         match &self.0 {
             PinKind::Git { url, git_ref, .. } => [
@@ -94,6 +96,19 @@ impl Pin {
             } if git_ref == "HEAD" => branch.as_deref().unwrap_or(git_ref),
             PinKind::Git { git_ref, .. } => git_ref,
         }
+    }
+}
+
+impl Observed {
+    /// Whether this is a Checkout of `locked` with the Paths `repo` asks for (as a set, so
+    /// order and repeats do not matter). The one rule behind the checkout stage of the
+    /// Plan and `list --status`; a `Pin`'s `branch` does not count.
+    pub fn matches(&self, repo: &Repo, locked: &Pin) -> bool {
+        let Observed::At { pin, paths, .. } = self else {
+            return false;
+        };
+        let set = |v: &[String]| v.iter().cloned().collect::<BTreeSet<_>>();
+        pin.same_commit(locked) && set(paths) == set(&repo.path_strings())
     }
 }
 
@@ -145,6 +160,33 @@ pub trait Source {
 
 /// A borrowed `Source` is a `Source`, so a caller can lend one to `cli::run`.
 impl<S: Source + ?Sized> Source for &S {
+    fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError> {
+        (**self).resolve(repo)
+    }
+    fn verify(&self, repo: RepoRef, pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError> {
+        (**self).verify(repo, pin, opts)
+    }
+    fn materialise(
+        &self,
+        repo: RepoRef,
+        pin: &Pin,
+        opts: MaterialiseOpts,
+    ) -> Result<(), SourceError> {
+        (**self).materialise(repo, pin, opts)
+    }
+    fn remove(&self, id: &str) -> Result<(), SourceError> {
+        (**self).remove(id)
+    }
+    fn inspect(&self, id: &str) -> Result<Observed, SourceError> {
+        (**self).inspect(id)
+    }
+    fn list(&self) -> Result<Vec<String>, SourceError> {
+        (**self).list()
+    }
+}
+
+/// A boxed `Source` is a `Source`, so the CLI's factory can hand one to the edit operation.
+impl<S: Source + ?Sized> Source for Box<S> {
     fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError> {
         (**self).resolve(repo)
     }

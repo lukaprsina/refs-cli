@@ -10,7 +10,6 @@ source = "git"
 url = "https://github.com/solidjs/solid"
 ref = "next"
 sha = "1a2b3c4d5e6f0000000000000000000000000000"
-paths = ["packages", "documentation"]
 
 [[repo]]
 id = "zed"
@@ -145,4 +144,14 @@ mod read {
         let err = Lock::read(&Lock::path(dir.path())).unwrap_err();
         assert_eq!(err.code().unwrap().to_string(), "refs::lock::read_failed");
     }
+}
+
+#[test]
+fn a_lock_that_still_records_paths_is_read_and_loses_them_on_write() {
+    let old = LOCK.replace(
+        "sha = \"1a2b3c4d5e6f0000000000000000000000000000\"\n",
+        "sha = \"1a2b3c4d5e6f0000000000000000000000000000\"\npaths = [\"packages\"]\n",
+    );
+    let lock = Lock::parse(&old).unwrap();
+    assert_eq!(lock.to_toml(), LOCK);
 }

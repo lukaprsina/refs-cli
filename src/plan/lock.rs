@@ -21,13 +21,38 @@ pub enum Drift {
 pub enum Step<'a> {
     /// Ask the Source for a new pin: a new, re-enabled or changed Repo, or an upgrade.
     Resolve(RepoRef<'a>),
-    /// Keep the locked pin; `paths` are already the config's.
+    /// Keep the locked entry.
     Reuse(LockedRepo),
 }
 
 #[derive(Debug)]
 pub struct LockPlan<'a> {
     pub steps: Vec<Step<'a>>,
+}
+
+impl LockPlan<'_> {
+    /// The Lock made of the `entries` the steps produced (reused, or built by `locked`), and
+    /// whether it has to be written: only when it differs from the Lock on disk.
+    pub fn finish(entries: Vec<LockedRepo>, old: Option<&Lock>) -> NewLock {
+        let lock = Lock::new(entries);
+        let write = old != Some(&lock);
+        NewLock { lock, write }
+    }
+}
+
+/// The Lock stage 1 produced and whether to write it.
+#[derive(Debug)]
+pub struct NewLock {
+    pub lock: Lock,
+    pub write: bool,
+}
+
+/// The Lock entry for a Repo that `resolve` gave `pin`: the Pin goes in as it came.
+pub fn locked(repo: RepoRef, pin: crate::source::Pin) -> LockedRepo {
+    LockedRepo {
+        id: repo.id.into(),
+        pin,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -56,13 +81,11 @@ pub fn lock_drift(active: &ActiveSet, lock: Option<&Lock>) -> Vec<Drift> {
         match lock.get(repo.id) {
             None => drift.push(Drift::Added(repo.id.into())),
             Some(entry) => {
-                let mut fields = entry.pin.drift_from(repo.repo);
-                if entry.paths != repo.repo.path_strings() {
-                    fields.push(Field::Paths);
-                }
-                drift.extend(fields.into_iter().map(|field| Drift::Changed {
-                    id: repo.id.into(),
-                    field,
+                drift.extend(entry.pin.drift_from(repo.repo).into_iter().map(|field| {
+                    Drift::Changed {
+                        id: repo.id.into(),
+                        field,
+                    }
                 }));
             }
         }
@@ -108,10 +131,7 @@ pub fn plan_lock<'a>(
                 Some(entry)
                     if entry.pin.drift_from(repo.repo).is_empty() && !flags.upgrades(repo) =>
                 {
-                    Step::Reuse(LockedRepo {
-                        paths: repo.repo.path_strings(),
-                        ..entry.clone()
-                    })
+                    Step::Reuse(entry.clone())
                 }
                 _ => Step::Resolve(repo),
             })

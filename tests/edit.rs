@@ -1,4 +1,4 @@
-use refs_cli::edit::{AddRepo, Target, add, disable, enable, remove};
+use refs_cli::edit::{AddRepo, Edit, Target, add, disable, enable, remove};
 
 const CONFIG: &str = r#"# My references.
 
@@ -79,13 +79,40 @@ fn add_rejects_a_url_or_ref_that_fails_validation() {
 }
 
 #[test]
-fn add_rejects_a_group_that_is_not_in_the_config() {
+fn add_creates_a_bare_group_that_is_not_in_the_config_and_remove_takes_it_away_again() {
     let req = AddRepo {
-        group: Some("nope".into()),
+        group: Some("router".into()),
         ..new_repo("https://github.com/solidjs/solid-router")
     };
-    let err = add(CONFIG, &req).unwrap_err();
-    assert_eq!(codes(&err), ["refs::config::dangling_group"]);
+
+    let added = add(CONFIG, &req).unwrap();
+
+    assert!(added.contains("\n[groups.router]\n"), "{added}");
+    let config = refs_cli::config::parse(&added).unwrap();
+    let group = config.groups.get("router").unwrap();
+    assert!(group.name.is_none() && group.description.is_none());
+    assert_eq!(remove(&added, "solid-router").unwrap(), CONFIG);
+}
+
+#[test]
+fn applying_an_add_says_which_group_it_created() {
+    let req = AddRepo {
+        group: Some("router".into()),
+        ..new_repo("https://github.com/solidjs/solid-router")
+    };
+    assert_eq!(
+        Edit::Add(&req).apply(CONFIG).unwrap().group_created,
+        Some("router".into())
+    );
+
+    let existing = AddRepo {
+        group: Some("solid".into()),
+        ..new_repo("https://github.com/solidjs/solid-router")
+    };
+    assert_eq!(
+        Edit::Add(&existing).apply(CONFIG).unwrap().group_created,
+        None
+    );
 }
 
 #[test]

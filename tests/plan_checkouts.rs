@@ -1,12 +1,10 @@
-use std::collections::HashMap;
-
 use miette::Diagnostic;
 use refs_cli::active::{ActiveSet, active};
 use refs_cli::config::{Config, parse};
 use refs_cli::diagnostic::Refusal;
 use refs_cli::lock::{Lock, LockedRepo};
 use refs_cli::plan::{
-    AgentFileText, Checkouts, Exclude, ExcludeAction, Plan, ProjectObserved, RepoAction,
+    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Plan, ProjectObserved, RepoAction,
     plan_checkouts,
 };
 use refs_cli::render::render;
@@ -33,7 +31,6 @@ fn lock() -> Lock {
         repo: vec![LockedRepo {
             id: "a".into(),
             pin: pin(SHA),
-            paths: vec!["docs".into(), "src".into()],
         }],
     }
 }
@@ -49,12 +46,8 @@ fn at(sha: &str, paths: &[&str], dirty: &[&str]) -> Observed {
 /// What `sync` would read: every active repo and every `extra` name in the references
 /// directory, inspected.
 fn observe(source: &FakeSource, set: &ActiveSet, extra: &[&str]) -> Checkouts {
-    let seen = set
-        .repos()
-        .map(|r| r.id)
-        .chain(extra.iter().copied())
-        .map(|id| (id.to_string(), source.inspect(id).unwrap()));
-    Checkouts::new(set, seen).unwrap()
+    let listing: Vec<String> = extra.iter().map(|n| n.to_string()).collect();
+    Checkouts::observe(set, &listing, |name| source.inspect(name)).unwrap()
 }
 
 /// The agent file as it is after a clean `sync`.
@@ -88,7 +81,7 @@ fn plan_with(
     let config: &'static Config = Box::leak(Box::new(parse(CONFIG).unwrap()));
     let set = active(config);
     let observed = observe(source, &set, extra);
-    plan_checkouts(&set, &lock(), &observed, project, force).unwrap()
+    plan_checkouts(&set, &[], &lock(), &observed, project, force).unwrap()
 }
 
 /// Only `exclude` is set, and to `exclude`.
@@ -129,7 +122,7 @@ fn an_absent_checkout_is_materialised_at_the_locked_pin() {
     let plan = plan(&FakeSource::new(), &project(&set), false);
     assert!(matches!(
         plan.repos.as_slice(),
-        [RepoAction::Materialise { repo, pin: p }] if repo.id == "a" && *p == pin(SHA)
+        [RepoAction::Materialise { repo, pin: p, .. }] if repo.id == "a" && *p == pin(SHA)
     ));
     assert!(plan.is_drift());
 }
@@ -170,15 +163,14 @@ fn paths_are_compared_as_sets() {
 fn no_paths_in_the_config_equals_no_sparse_patterns_on_disk() {
     let config = parse(&CONFIG.replace(r#"paths = ["docs", "src"]"#, "")).unwrap();
     let set = active(&config);
-    let mut locked = lock();
-    locked.repo[0].paths = vec![];
+    let locked = lock();
     let source = FakeSource::new();
     source.seed("a", at(SHA, &[], &[]));
     let text = format!("{}\n", render(&set, &locked, ".references").unwrap());
     let mut project = project(&set);
     project.agent_files[0].text = Some(text);
     let observed = observe(&source, &set, &[]);
-    let plan = plan_checkouts(&set, &locked, &observed, &project, false).unwrap();
+    let plan = plan_checkouts(&set, &[], &locked, &observed, &project, false).unwrap();
     assert!(empty(&plan), "{plan:?}");
 }
 
@@ -219,6 +211,7 @@ fn a_dangling_checkout_is_replaced_with_a_note_and_force_changes_nothing() {
             "{plan:?}"
         );
         assert!(plan.is_drift());
+        assert_eq!(plan.repos[0].how(), Checkout::Created);
     }
 }
 
@@ -274,6 +267,7 @@ fn force_replaces_a_dirty_refusal_by_a_replace_without_a_note() {
         ) && plan.refusals.is_empty(),
         "{plan:?}"
     );
+    assert_eq!(plan.repos[0].how(), Checkout::Moved);
 }
 
 #[test]
@@ -444,7 +438,7 @@ fn applying_a_plan_to_the_fake_and_replanning_gives_an_empty_plan() {
     for action in &first.repos {
         match action {
             RepoAction::Remove { id } => source.remove(id).unwrap(),
-            RepoAction::Materialise { repo, pin } => {
+            RepoAction::Materialise { repo, pin, .. } => {
                 source.materialise(*repo, pin, Default::default()).unwrap()
             }
             RepoAction::Replace { .. } => panic!("unexpected {action:?}"),
@@ -471,6 +465,7 @@ fn a_repo_missing_from_the_lock_is_an_error() {
     };
     let err = plan_checkouts(
         &set,
+        &[],
         &empty,
         &observe(&FakeSource::new(), &set, &[]),
         &project(&set),
@@ -521,22 +516,6 @@ fn a_dangling_non_active_name_is_left_for_doctor() {
 }
 
 #[test]
-fn an_observation_missing_an_active_repo_is_an_error() {
-    let config = parse(CONFIG).unwrap();
-    let set = active(&config);
-    let err = Checkouts::new(&set, HashMap::<String, Observed>::new()).unwrap_err();
-    assert_eq!(err.ids, vec!["a".to_string()]);
-}
-
-#[test]
-fn a_name_that_is_not_active_does_not_satisfy_an_active_repo() {
-    let config = parse(CONFIG).unwrap();
-    let set = active(&config);
-    let seen = [("other".to_string(), Observed::Absent)];
-    assert!(Checkouts::new(&set, seen).is_err());
-}
-
-#[test]
 fn only_actions_on_a_checkout_the_block_lists_gate_the_agent_file_writes() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
@@ -569,4 +548,30 @@ fn a_replace_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
         [RepoAction::Replace { .. }]
     ));
     assert!(plan.repos[0].gates_writes());
+}
+
+const MARKED: &str = "# Notes\n\n<!-- BEGIN:refs -->\nold\n<!-- END:refs -->\n\nafter\n";
+
+#[test]
+fn with_no_active_repo_the_block_is_removed_and_the_rest_kept() {
+    let config = parse("[settings]\n").unwrap();
+    let set = active(&config);
+    let project = with_agent_files(
+        &set,
+        &[
+            ("AGENTS.md", Some(MARKED)),
+            ("CLAUDE.md", Some("no markers\n")),
+            ("OTHER.md", None),
+        ],
+    );
+    let empty_lock = Lock::new(vec![]);
+    let observed = Checkouts::observe(&set, &[], |_| Ok::<_, ()>(Observed::Absent)).unwrap();
+    let plan = plan_checkouts(&set, &[], &empty_lock, &observed, &project, false).unwrap();
+    let writes: Vec<(&str, &str)> = plan
+        .writes
+        .iter()
+        .map(|w| (w.path.as_str(), w.text.as_str()))
+        .collect();
+    assert_eq!(writes, [("AGENTS.md", "# Notes\n\n\n\nafter\n")]);
+    assert!(plan.is_drift());
 }

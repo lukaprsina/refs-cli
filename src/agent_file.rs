@@ -35,6 +35,15 @@ pub fn splice(text: &str, block: &str) -> Result<String, BlockError> {
     }
 }
 
+/// `text` without the marked region, markers included; everything else is kept byte for
+/// byte, even if that leaves nothing. Text with no markers comes back unchanged.
+pub fn strip(text: &str) -> Result<String, BlockError> {
+    Ok(match find_region(text)? {
+        Some(region) => format!("{}{}", &text[..region.start], &text[region.end..]),
+        None => text.to_string(),
+    })
+}
+
 /// Byte range from the start of the BEGIN marker to the end of the END marker.
 fn find_region(text: &str) -> Result<Option<std::ops::Range<usize>>, BlockError> {
     // A marker is a whole line, so prose that quotes one is left alone.

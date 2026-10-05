@@ -132,20 +132,11 @@ fn init_needs_no_project_and_a_second_run_changes_nothing() {
 
     assert_eq!(refs(dir.path(), &["init"]), 0);
     assert!(dir.path().join("refs.toml").is_file());
-    assert!(dir.path().join("AGENTS.md").is_file());
-    let before = (
-        config_text(&dir),
-        fs::read(dir.path().join("AGENTS.md")).unwrap(),
-    );
+    assert!(!dir.path().join("AGENTS.md").exists());
+    let before = config_text(&dir);
 
     assert_eq!(refs(dir.path(), &["init"]), 0);
-    assert_eq!(
-        (
-            config_text(&dir),
-            fs::read(dir.path().join("AGENTS.md")).unwrap()
-        ),
-        before
-    );
+    assert_eq!(config_text(&dir), before);
 }
 
 #[test]
@@ -178,4 +169,27 @@ fn enabling_what_is_already_enabled_succeeds_and_writes_nothing() {
         .modified()
         .unwrap();
     assert_eq!(before, after);
+}
+
+#[test]
+fn add_with_a_missing_group_then_remove_leave_refs_toml_byte_identical() {
+    let dir = project(CONFIG);
+
+    assert_eq!(
+        refs(
+            dir.path(),
+            &[
+                "add",
+                "https://github.com/o/r",
+                "--group",
+                "extra",
+                "--no-sync"
+            ]
+        ),
+        0
+    );
+    assert!(config_text(&dir).contains("[groups.extra]"));
+
+    assert_eq!(refs(dir.path(), &["remove", "r", "--no-sync"]), 0);
+    assert_eq!(config_text(&dir), CONFIG);
 }

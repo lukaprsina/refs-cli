@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# The repo's checks. CI and the pre-commit hook both run this.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test

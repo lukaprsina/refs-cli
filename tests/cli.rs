@@ -6,6 +6,7 @@ mod common;
 
 use common::git;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use std::process::Command;
@@ -140,6 +141,45 @@ fn a_bare_upgrade_reaches_the_plan_as_all_and_ids_as_ids() {
 }
 
 #[test]
+fn a_usage_error_is_styled_only_for_a_terminal() {
+    use refs_cli::cli::{Terminal, run_on, run_with};
+    use refs_cli::source::Source;
+    let p = Project::new(AB);
+    let args = || ["refs", "sync", "--frobnicate"].map(std::ffi::OsString::from);
+    let source = |_: &_, _: &_| Ok(Box::new(&p.source) as Box<dyn Source>);
+
+    let (mut out, mut plain) = (Vec::new(), Vec::new());
+    assert_eq!(
+        run_with(args(), p.dir.path(), source, &mut out, &mut plain),
+        2
+    );
+    let (mut out, mut styled) = (Vec::new(), Vec::new());
+    let terminal = Terminal {
+        out: false,
+        err: true,
+    };
+    assert_eq!(
+        run_on(
+            args(),
+            p.dir.path(),
+            source,
+            &mut out,
+            &mut styled,
+            terminal
+        ),
+        2
+    );
+
+    let (plain, styled) = (
+        String::from_utf8(plain).unwrap(),
+        String::from_utf8(styled).unwrap(),
+    );
+    assert!(!plain.contains('\x1b'), "{plain:?}");
+    assert!(styled.contains('\x1b'), "{styled:?}");
+    assert!(plain.contains("--frobnicate") && styled.contains("--frobnicate"));
+}
+
+#[test]
 fn a_usage_error_exits_2() {
     let p = Project::new(AB);
 
@@ -168,6 +208,7 @@ fn a_missing_refs_toml_exits_1() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_references_dir_symlink_that_leaves_the_project_is_rejected_before_any_write() {
     let p = Project::new(AB);
     let outside = TempDir::new().unwrap();
@@ -248,6 +289,9 @@ fn the_binary_locks_with_git_and_reports_an_unknown_ref() {
         ],
     ] {
         let status = Command::new("git")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_WORK_TREE")
             .current_dir(remote.path())
             .args(args)
             .status()
@@ -528,4 +572,59 @@ fn list_status_works_with_no_lock_yet() {
     let p = Project::new(AB);
     assert_eq!(p.run(&["list", "--status"]), 0);
     assert_eq!(p.lock_text(), None, "list writes nothing");
+}
+
+#[test]
+fn a_disable_writes_the_edit_then_reports_the_broken_repo_with_exit_1() {
+    let p = Project::new(&format!(
+        "{AB}\n[repos.c]\nurl = \"https://github.com/o/c\"\n"
+    ));
+    p.source.fail("b", Method::Resolve, "gone");
+
+    assert_eq!(p.run(&["disable", "a"]), 1);
+
+    let config = fs::read_to_string(p.path("refs.toml")).unwrap();
+    assert!(config.contains("enabled = false"), "{config}");
+    let lock = p.lock_text().unwrap();
+    assert!(
+        lock.contains("id = \"c\"") && !lock.contains("id = \"b\""),
+        "{lock}"
+    );
+}
+
+#[test]
+fn removing_the_broken_repo_succeeds() {
+    let p = Project::new(AB);
+    p.source.fail("b", Method::Resolve, "gone");
+
+    assert_eq!(p.run(&["remove", "b"]), 0);
+
+    assert!(
+        !fs::read_to_string(p.path("refs.toml"))
+            .unwrap()
+            .contains("[repos.b]")
+    );
+    assert_eq!(p.run(&["sync", "--check"]), 0);
+}
+
+#[test]
+fn add_with_a_missing_group_creates_it_and_remove_takes_it_away_again() {
+    let p = Project::new(AB);
+    assert_eq!(p.run(&["sync"]), 0);
+    let before = fs::read(p.path("refs.toml")).unwrap();
+
+    assert_eq!(
+        p.run(&["add", "https://github.com/o/c", "--group", "extra"]),
+        0
+    );
+    let config = fs::read_to_string(p.path("refs.toml")).unwrap();
+    assert!(config.contains("[groups.extra]"), "{config}");
+    assert!(
+        fs::read_to_string(p.path("AGENTS.md"))
+            .unwrap()
+            .contains("### extra")
+    );
+
+    assert_eq!(p.run(&["remove", "c"]), 0);
+    assert_eq!(fs::read(p.path("refs.toml")).unwrap(), before);
 }
