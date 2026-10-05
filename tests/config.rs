@@ -316,7 +316,8 @@ fn unknown_keys_are_rejected_in_every_table() {
 #[test]
 fn settings_paths_stay_inside_the_project() {
     let bad_dirs = [
-        "", "/abs", "../x", "a/../b", ".", "./", "a/..", "has`tick", "a\\nb",
+        "", "/abs", "../x", "a/../b", ".", "./", "a/..", "has`tick", "a\\nb", "..\\\\x", "a\\\\b",
+        "C:/x", "C:x",
     ];
     for bad in bad_dirs {
         code_and_span(
