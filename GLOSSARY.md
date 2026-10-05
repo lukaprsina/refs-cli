@@ -92,6 +92,14 @@ _Avoid_: Conflict, unmanaged
 A Checkout with changes made by hand, including untracked files. It is not moved or removed unless forced.
 _Avoid_: Modified, tainted
 
+**Covered**:
+An active Repo the Lock has a Pin for. Every active Repo is covered unless stage 1 could not lock it during a `remove` or `disable`.
+_Avoid_: Locked (a Repo can be locked yet inactive)
+
+**Withheld**:
+An active Repo the Lock could not get a Pin for during a `remove` or `disable`. Its Checkout is left alone (neither made, moved nor removed) and it is left out of the Managed block until `refs sync` locks it.
+_Avoid_: Failed, skipped
+
 **Plan**:
 The ordered changes a sync would make, decided from the Lock and what is on disk before anything is touched. A sync applies it; a check only reports it.
 _Avoid_: Diff, dry run
