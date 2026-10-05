@@ -120,6 +120,112 @@ url = \"https://github.com/o/c\"
     assert!(block.contains("[a @") && block.contains("[c @"), "{block}");
 }
 
+const RUN_SYNC: &str = "run `refs sync` to bring the project up to date";
+const ONCE_FIXED: &str = "run `refs sync` once the problem is fixed";
+const FIX_OR_REMOVE: &str =
+    "refs.toml was updated; fix or remove the broken repo, then run `refs sync`";
+const NOT_CHANGED: &str = "refs.toml was not changed";
+
+/// The hint is the last line stderr ends with, and it is printed under `-q` too.
+fn last_line(ran: &Ran) -> &str {
+    ran.stderr.lines().last().unwrap_or_default()
+}
+
+#[test]
+fn an_edit_with_no_sync_says_to_run_sync_even_under_q() {
+    for args in [
+        &["add", "https://github.com/o/c", "--no-sync"][..],
+        &["-q", "add", "https://github.com/o/c", "--no-sync"][..],
+    ] {
+        let p = Project::new(AB);
+
+        let ran = p.run(args);
+
+        assert_eq!(ran.code, 0, "{}", ran.stderr);
+        assert_eq!(last_line(&ran), RUN_SYNC, "{}", ran.stderr);
+    }
+}
+
+#[test]
+fn a_sync_that_failed_or_was_refused_says_to_run_sync_once_fixed_even_under_q() {
+    let failed = Project::new(AB);
+    failed.source.fail("a", Method::Resolve, "remote gone");
+    let refused = Project::new(AB);
+    refused.source.seed("a", Observed::Foreign);
+
+    for (p, args) in [
+        (&failed, &["sync"][..]),
+        (&failed, &["-q", "sync"][..]),
+        (&refused, &["sync"][..]),
+        (&refused, &["sync", "--check"][..]),
+    ] {
+        let ran = p.run(args);
+
+        assert_eq!(ran.code, 1, "{}", ran.stderr);
+        assert_eq!(last_line(&ran), ONCE_FIXED, "{}", ran.stderr);
+    }
+}
+
+#[test]
+fn an_edit_written_but_then_failed_says_fix_or_remove_the_broken_repo() {
+    let p = Project::new(AB);
+    assert_eq!(p.run(&["sync"]).code, 0);
+    p.source.fail("c", Method::Materialise, "disk full");
+
+    let ran = p.run(&["add", "https://github.com/o/c"]);
+
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    assert_eq!(last_line(&ran), FIX_OR_REMOVE, "{}", ran.stderr);
+    assert!(
+        fs::read_to_string(p.dir.path().join("refs.toml"))
+            .unwrap()
+            .contains("o/c")
+    );
+}
+
+#[test]
+fn a_rejected_edit_says_refs_toml_was_not_changed() {
+    let p = Project::new(AB);
+    p.source.fail("c", Method::Resolve, "remote gone");
+
+    let ran = p.run(&["add", "https://github.com/o/c"]);
+
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    assert_eq!(last_line(&ran), NOT_CHANGED, "{}", ran.stderr);
+}
+
+#[test]
+fn an_edit_that_changes_nothing_and_then_fails_says_to_run_sync_once_fixed() {
+    let p = Project::new(AB);
+    p.source.fail("a", Method::Resolve, "remote gone");
+
+    let ran = p.run(&["enable", "a"]);
+
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    assert_eq!(last_line(&ran), ONCE_FIXED, "{}", ran.stderr);
+}
+
+#[test]
+fn a_run_that_left_nothing_to_fix_prints_no_sync_hint() {
+    let p = Project::new(AB);
+    let failed_lock = Project::new(AB);
+    failed_lock.source.fail("a", Method::Resolve, "remote gone");
+
+    let ok = p.run(&["sync"]);
+    let again = p.run(&["-q", "sync"]);
+    let lock = p.run(&["lock"]);
+    let stale = Project::new(AB).run(&["sync", "--check"]);
+    let lock_failed = failed_lock.run(&["lock"]);
+
+    for ran in [&ok, &again, &lock, &stale, &lock_failed] {
+        assert!(!ran.stderr.contains("run `refs sync`"), "{}", ran.stderr);
+    }
+    assert_eq!(
+        (ok.code, again.code, lock.code, stale.code, lock_failed.code),
+        (0, 0, 0, 3, 1)
+    );
+}
+
 struct Binary {
     dir: TempDir,
     cache: TempDir,
