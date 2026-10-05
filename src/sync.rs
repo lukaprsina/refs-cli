@@ -11,10 +11,11 @@ use crate::diagnostic::{NotLocked, Note, SourceError};
 use crate::edit::Edit;
 use crate::exclude;
 use crate::lock::Lock;
-pub use crate::plan::{Checkout, Outcome};
+pub use crate::plan::{Change, Checkout, Hint, Outcome};
 use crate::plan::{
-    Checkouts, Coverage, Drift, ExcludeAction, Failure, Keep, LockFlags, Plan, RepoAction, Settled,
-    Step, check_outcome, conclude, lock_drift, locked, plan_checkouts, plan_lock, settle,
+    Checkouts, Command, Coverage, Drift, ExcludeAction, Failure, Keep, LockFlags, Plan, RepoAction,
+    Settled, Step, check_outcome, conclude, hint, lock_drift, locked, plan_checkouts, plan_lock,
+    settle,
 };
 use crate::project;
 use crate::source::{MaterialiseOpts, Source, VerifyOpts};
@@ -36,44 +37,6 @@ pub enum Changed {
     Checkout { id: String, how: Checkout },
     /// This Agent file was written (path relative to the Project).
     AgentFile(String),
-}
-
-/// The follow-up the CLI gives a user whose project a run left incomplete or failed, named
-/// for why it is given. Decided here (`hint`); `cli` only gives each its words (ADR 0005).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Hint {
-    /// `refs.toml` was written without a sync (`--no-sync`): the project is incomplete.
-    RunSync,
-    /// A `sync` failed or was refused, or an edit that changed nothing did.
-    RunSyncOnceFixed,
-    /// `refs.toml` was written, then the sync failed or was refused.
-    FixOrRemoveThenSync,
-    /// The edit was rejected, so `refs.toml` is as it was.
-    ConfigUnchanged,
-}
-
-/// The command a Report is for, as far as its hint goes. `lock` has no hint.
-enum Origin {
-    Sync,
-    Edit { change: Change, no_sync: bool },
-}
-
-/// At most one hint per run: with `no_sync` an edit does not sync, so it cannot also fail.
-fn hint(origin: Origin, outcome: Outcome) -> Option<Hint> {
-    let incomplete = matches!(outcome, Outcome::Failed | Outcome::Refused);
-    match origin {
-        Origin::Sync => incomplete.then_some(Hint::RunSyncOnceFixed),
-        Origin::Edit { change, no_sync } => {
-            if no_sync && change == Change::Written {
-                return Some(Hint::RunSync);
-            }
-            incomplete.then_some(match change {
-                Change::Written => Hint::FixOrRemoveThenSync,
-                Change::Rejected => Hint::ConfigUnchanged,
-                Change::Unchanged => Hint::RunSyncOnceFixed,
-            })
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -100,8 +63,8 @@ impl Report {
         }
     }
 
-    fn with_hint(mut self, origin: Origin) -> Report {
-        self.hint = hint(origin, self.outcome);
+    fn with_hint(mut self, command: Command) -> Report {
+        self.hint = hint(command, self.outcome);
         self
     }
 
@@ -207,7 +170,7 @@ pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags
 
 /// `refs sync`. With `check`, nothing is resolved, verified, fetched or written.
 pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
-    run_sync(source, root, config, flags).with_hint(Origin::Sync)
+    run_sync(source, root, config, flags).with_hint(Command::Sync)
 }
 
 fn run_sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
@@ -288,17 +251,6 @@ fn plan_and_apply(
     finish(stage_one, drift, stage_two)
 }
 
-/// What happened to `refs.toml` in `edit`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Change {
-    /// The edit gave the text it already had; nothing was written.
-    Unchanged,
-    /// `refs.toml` was written.
-    Written,
-    /// The edit or stage 1 failed against it: nothing was written.
-    Rejected,
-}
-
 /// The result of `edit`: what happened to `refs.toml`, and what followed.
 #[derive(Debug)]
 pub struct Edited {
@@ -311,14 +263,14 @@ pub struct Edited {
 
 fn rejected(report: Report) -> Edited {
     // A rejected edit never syncs, so `no_sync` does not change its hint.
-    let origin = Origin::Edit {
+    let command = Command::Edit {
         change: Change::Rejected,
         no_sync: false,
     };
     Edited {
         change: Change::Rejected,
         group_created: None,
-        report: report.with_hint(origin),
+        report: report.with_hint(command),
     }
 }
 
@@ -355,7 +307,7 @@ pub fn edit<S: Source>(
     let edited = |change, report: Report| Edited {
         change,
         group_created: applied.group_created.clone(),
-        report: report.with_hint(Origin::Edit { change, no_sync }),
+        report: report.with_hint(Command::Edit { change, no_sync }),
     };
     let unchanged = after == before;
     if no_sync {

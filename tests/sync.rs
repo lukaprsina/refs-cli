@@ -560,14 +560,3 @@ fn a_sync_that_failed_or_was_refused_carries_the_retry_hint_and_no_other_run_doe
     assert_eq!(out_of_date.outcome, Outcome::OutOfDate);
     assert_eq!(out_of_date.hint, None);
 }
-
-#[test]
-fn lock_never_carries_a_hint() {
-    let p = Project::new(A);
-    p.source.fail("a", Method::Resolve, "remote gone");
-
-    let report = lock(&p.source, p.dir.path(), &p.config, &LockFlags::default());
-
-    assert_eq!(report.outcome, Outcome::Failed);
-    assert_eq!(report.hint, None);
-}

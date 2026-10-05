@@ -52,3 +52,54 @@ pub fn conclude(
         diagnostics,
     }
 }
+
+/// What happened to `refs.toml` in `edit`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Change {
+    /// The edit gave the text it already had; nothing was written.
+    Unchanged,
+    /// `refs.toml` was written.
+    Written,
+    /// The edit or stage 1 failed against it: nothing was written.
+    Rejected,
+}
+
+/// The follow-up the CLI gives a user whose project a run left incomplete or failed, named
+/// for why it is given. Decided by `hint`; `cli` only gives each its words (ADR 0005).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hint {
+    /// `refs.toml` was written without a sync (`--no-sync`): the project is incomplete.
+    RunSync,
+    /// A `sync` failed or was refused, or an edit that changed nothing did.
+    RunSyncOnceFixed,
+    /// `refs.toml` was written, then the sync failed or was refused.
+    FixOrRemoveThenSync,
+    /// The edit was rejected, so `refs.toml` is as it was.
+    ConfigUnchanged,
+}
+
+/// The command a run was, as far as its hint goes. `lock` has no hint.
+#[derive(Debug, Clone, Copy)]
+pub enum Command {
+    Sync,
+    Edit { change: Change, no_sync: bool },
+}
+
+/// The hint of a run: at most one, since with `no_sync` an edit does not sync, so it cannot
+/// also fail.
+pub fn hint(command: Command, outcome: Outcome) -> Option<Hint> {
+    let incomplete = matches!(outcome, Outcome::Failed | Outcome::Refused);
+    match command {
+        Command::Sync => incomplete.then_some(Hint::RunSyncOnceFixed),
+        Command::Edit { change, no_sync } => {
+            if no_sync && change == Change::Written {
+                return Some(Hint::RunSync);
+            }
+            incomplete.then_some(match change {
+                Change::Written => Hint::FixOrRemoveThenSync,
+                Change::Rejected => Hint::ConfigUnchanged,
+                Change::Unchanged => Hint::RunSyncOnceFixed,
+            })
+        }
+    }
+}

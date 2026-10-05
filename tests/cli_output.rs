@@ -126,8 +126,10 @@ const FIX_OR_REMOVE: &str =
     "refs.toml was updated; fix or remove the broken repo, then run `refs sync`";
 const NOT_CHANGED: &str = "refs.toml was not changed";
 
-/// The hint is the last line stderr ends with, and it is printed under `-q` too.
+/// The hint is the last line stderr ends with, and it is printed under `-q` too; stdout stays
+/// data only.
 fn last_line(ran: &Ran) -> &str {
+    assert_eq!(ran.stdout, "");
     ran.stderr.lines().last().unwrap_or_default()
 }
 
