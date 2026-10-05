@@ -6,6 +6,7 @@ mod common;
 
 use common::git;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use std::process::Command;
@@ -207,6 +208,7 @@ fn a_missing_refs_toml_exits_1() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_references_dir_symlink_that_leaves_the_project_is_rejected_before_any_write() {
     let p = Project::new(AB);
     let outside = TempDir::new().unwrap();

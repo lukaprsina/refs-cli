@@ -31,6 +31,7 @@ fn no_refs_toml_anywhere_up_is_an_error() {
 
 mod outputs {
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
 
     use miette::Diagnostic;
@@ -47,6 +48,7 @@ mod outputs {
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_references_dir_symlink_that_leaves_the_project_is_rejected() {
         let root = TempDir::new().unwrap();
         let outside = TempDir::new().unwrap();
@@ -56,6 +58,7 @@ mod outputs {
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_missing_references_dir_under_a_symlinked_ancestor_that_leaves_is_rejected() {
         let root = TempDir::new().unwrap();
         let outside = TempDir::new().unwrap();
@@ -66,6 +69,7 @@ mod outputs {
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_broken_symlink_is_rejected() {
         let root = TempDir::new().unwrap();
         symlink(root.path().join("nowhere"), root.path().join(".references")).unwrap();
@@ -90,6 +94,7 @@ mod outputs {
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_project_with_nothing_yet_is_fine_and_a_symlinked_agents_file_inside_is_followed() {
         let root = TempDir::new().unwrap();
         assert!(codes(&root, "").is_empty());
