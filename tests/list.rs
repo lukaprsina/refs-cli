@@ -1,8 +1,9 @@
 use refs_cli::config::parse;
 
+use refs_cli::active::LaidRepo;
 use refs_cli::list::{list, list_status};
 use refs_cli::plan::{Cause, CheckoutState};
-use refs_cli::status::{Kind, Row, Status};
+use refs_cli::status::{Kind, Row};
 
 #[test]
 fn lists_repos_under_their_groups_with_ref_paths_and_disabled_marks() {
@@ -116,33 +117,27 @@ enabled = false
         cause,
         dirty_files: dirty.iter().map(|f| f.to_string()).collect(),
     };
-    let row = |id: &str, c: char, state| Row {
-        id: id.into(),
+    let row = |c: char, state| Row {
         sha: Some(c.to_string().repeat(7)),
         kind: Kind::Checkout(state),
     };
-    let bare = |id: &str, kind| Row {
-        id: id.into(),
-        sha: None,
-        kind,
-    };
-    let status = Status {
-        rows: vec![
-            row("ok", '1', InSync),
-            row("moved", '2', stale(Cause::Commit, &[])),
-            row("paths", '3', stale(Cause::Paths, &[])),
-            row("dirty", '4', stale(Cause::Commit, &["x"])),
-            row("dirtypaths", '8', stale(Cause::Paths, &["x"])),
-            row("gone", '5', Absent),
-            bare("new", Kind::NotLocked),
-            row("hollow", '7', Dangling),
-            row("alien", '6', Foreign),
-            bare("off", Kind::Disabled),
-        ],
+    let bare = |kind| Row { sha: None, kind };
+    let row_of = |laid: &LaidRepo| match laid.repo.id {
+        "ok" => row('1', InSync),
+        "moved" => row('2', stale(Cause::Commit, &[])),
+        "paths" => row('3', stale(Cause::Paths, &[])),
+        "dirty" => row('4', stale(Cause::Commit, &["x"])),
+        "dirtypaths" => row('8', stale(Cause::Paths, &["x"])),
+        "gone" => row('5', Absent),
+        "new" => bare(Kind::NotLocked),
+        "hollow" => row('7', Dangling),
+        "alien" => row('6', Foreign),
+        "off" => bare(Kind::Disabled),
+        id => panic!("no row for {id}"),
     };
 
     assert_eq!(
-        list_status(&config, &status, false),
+        list_status(&config, row_of, false),
         "  ok          https://github.com/o/r  HEAD  (whole repo)  1111111  ok
   moved       https://github.com/o/r  HEAD  (whole repo)  2222222  wrong SHA
   paths       https://github.com/o/r  HEAD  (whole repo)  3333333  wrong paths
@@ -165,15 +160,12 @@ url = \"https://github.com/o/r\"
 ",
     )
     .unwrap();
-    let status = Status {
-        rows: vec![Row {
-            id: "a".into(),
-            sha: None,
-            kind: Kind::NotLocked,
-        }],
+    let row_of = |_: &LaidRepo| Row {
+        sha: None,
+        kind: Kind::NotLocked,
     };
     assert_eq!(
-        list_status(&config, &status, false),
+        list_status(&config, row_of, false),
         "  a  https://github.com/o/r  HEAD  (whole repo)  -  not locked
 "
     );

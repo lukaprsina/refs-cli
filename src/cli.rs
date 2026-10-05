@@ -346,7 +346,11 @@ fn list_status<'a>(
         .and_then(|source| crate::status::build(&*source, root, config));
     match result {
         Ok(status) => {
-            console.data(&crate::list::list_status(config, &status, color));
+            console.data(&crate::list::list_status(
+                config,
+                |laid| status.row(laid),
+                color,
+            ));
             0
         }
         Err(reports) => fail_all(reports, console),

@@ -1,9 +1,9 @@
-//! What `refs list --status` knows about each Repo: one row per Repo in the config, built
-//! from the Lock and the Checkout state `inspect` finds. `list` only renders the rows.
+//! What `refs list --status` knows about each Repo: a row from the Lock and the Checkout
+//! state `inspect` finds. `list` only renders the rows.
 
 use std::path::Path;
 
-use crate::active::{active, layout};
+use crate::active::{LaidRepo, active};
 use crate::config::Config;
 use crate::lock::Lock;
 use crate::plan::{CheckoutState, Checkouts, classify};
@@ -18,54 +18,48 @@ pub enum Kind {
     Checkout(CheckoutState),
 }
 
-/// One Repo's row: its id, the short locked SHA (when the Lock has a Pin for it, disabled or
-/// not) and its `Kind`.
+/// One Repo's row: the short locked SHA (when the Lock has a Pin for it, disabled or not)
+/// and its `Kind`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
-    pub id: String,
     pub sha: Option<String>,
     pub kind: Kind,
 }
 
-/// The rows of every Repo in the config, in the order `active::layout` walks it, so `list`
-/// pairs each Repo with its row by position and a Repo cannot lack one.
-#[derive(Debug, Clone, Default)]
+/// What `build` found: the Lock and the Checkouts of the active Repos. `row` answers for any
+/// Repo, so `list` asks as it walks the config and has no row to pair or to lack.
+#[derive(Debug)]
 pub struct Status {
-    pub rows: Vec<Row>,
+    lock: Option<Lock>,
+    checkouts: Checkouts,
 }
 
-/// One row per Repo. Only active Repos are inspected, as the plan does, so a broken disabled
-/// Repo does not fail it. Every inspect failure is collected.
+impl Status {
+    pub fn row(&self, laid: &LaidRepo) -> Row {
+        let id = laid.repo.id;
+        let locked = self.lock.as_ref().and_then(|lock| lock.get(id));
+        let sha = locked.map(|l| l.pin.short_id().to_string());
+        let kind = match (laid.enabled, locked, self.checkouts.get(id)) {
+            (false, _, _) => Kind::Disabled,
+            (true, Some(locked), Some(observed)) => {
+                Kind::Checkout(classify(observed, laid.repo.repo, &locked.pin))
+            }
+            (true, _, _) => Kind::NotLocked,
+        };
+        Row { sha, kind }
+    }
+}
+
+/// Read the Lock and inspect every active Repo, as the plan does, so a broken disabled Repo
+/// does not fail it. Every inspect failure is collected.
 pub fn build(
     source: &dyn Source,
     root: &Path,
     config: &Config,
 ) -> Result<Status, Vec<miette::Report>> {
     let lock = Lock::read(&Lock::path(root)).map_err(|e| vec![miette::Report::new(e)])?;
-    let set = active(config);
-    let checkouts = Checkouts::observe(&set, &[], |name| {
+    let checkouts = Checkouts::observe(&active(config), &[], |name| {
         source.inspect(name).map_err(|e| e.for_repo(name))
     })?;
-    let rows = layout(config)
-        .iter()
-        .flat_map(|section| &section.repos)
-        .map(|laid| {
-            let id = laid.repo.id;
-            let locked = lock.as_ref().and_then(|lock| lock.get(id));
-            let sha = locked.map(|l| l.pin.short_id().to_string());
-            let kind = match (laid.enabled, locked, checkouts.get(id)) {
-                (false, _, _) => Kind::Disabled,
-                (true, Some(locked), Some(observed)) => {
-                    Kind::Checkout(classify(observed, laid.repo.repo, &locked.pin))
-                }
-                (true, _, _) => Kind::NotLocked,
-            };
-            Row {
-                id: id.to_string(),
-                sha,
-                kind,
-            }
-        })
-        .collect();
-    Ok(Status { rows })
+    Ok(Status { lock, checkouts })
 }

@@ -1,11 +1,11 @@
 //! `refs list`: every repo in the config, grouped, with its ref, paths and whether it is
-//! enabled. Pure: `list` reads the config only; `list_status` also takes the per-Repo rows
-//! `status::build` collects, and only renders them. Both walk `active::layout`.
+//! enabled. Pure: `list` reads the config only; `list_status` also asks for the row of each
+//! Repo (from `status`), and only renders it. Both walk `active::layout`.
 
 use crate::active::{LaidRepo, layout};
 use crate::config::Config;
 use crate::plan::{Cause, CheckoutState};
-use crate::status::{Kind, Row, Status};
+use crate::status::{Kind, Row};
 
 /// `color` dims the disabled lines with ANSI escapes.
 pub fn list(config: &Config, color: bool) -> String {
@@ -14,31 +14,21 @@ pub fn list(config: &Config, color: bool) -> String {
 
 /// `list` with the locked SHA (short) and the state of each checkout: ok, missing, wrong
 /// SHA, wrong paths (either also `dirty` when sync would refuse to move it), foreign, not
-/// locked, or disabled.
-pub fn list_status(config: &Config, status: &Status, color: bool) -> String {
-    render(config, Some(status), color)
+/// locked, or disabled. `row_of` gives the row of each Repo as the listing walks the config.
+pub fn list_status(config: &Config, row_of: impl Fn(&LaidRepo) -> Row, color: bool) -> String {
+    render(config, Some(&row_of), color)
 }
 
-fn render(config: &Config, status: Option<&Status>, color: bool) -> String {
+fn render(config: &Config, row_of: Option<&dyn Fn(&LaidRepo) -> Row>, color: bool) -> String {
     let sections = layout(config);
     let has_groups = !config.groups.is_empty();
     // One row of cells per repo; the columns are aligned across the whole listing.
-    // The status rows come in the order `layout` walks the config; a row for another Repo
-    // means `status::build` was given a different config.
-    let mut status_rows = status.map(|s| s.rows.iter());
     let rows: Vec<Vec<Vec<String>>> = sections
         .iter()
         .map(|s| {
             s.repos
                 .iter()
-                .map(|r| {
-                    let row = status_rows.as_mut().map(|rows| {
-                        rows.next()
-                            .filter(|row| row.id == r.repo.id)
-                            .expect("`status::build` made a row for every Repo, in config order")
-                    });
-                    cells(r, row)
-                })
+                .map(|r| cells(r, row_of.map(|row_of| row_of(r))))
                 .collect()
         })
         .collect();
@@ -98,7 +88,7 @@ fn marked(line: &str, enabled: bool, indent: &str) -> String {
 
 /// The cells of one repo's line: id, url, ref, paths, and with `--status` the short
 /// locked SHA and the checkout state.
-fn cells(r: &LaidRepo, row: Option<&Row>) -> Vec<String> {
+fn cells(r: &LaidRepo, row: Option<Row>) -> Vec<String> {
     let repo = r.repo.repo;
     let paths = if repo.paths.is_empty() {
         "(whole repo)".to_string()
@@ -113,7 +103,7 @@ fn cells(r: &LaidRepo, row: Option<&Row>) -> Vec<String> {
     ];
     if let Some(row) = row {
         cells.push(row.sha.clone().unwrap_or("-".into()));
-        cells.push(label(row).to_string());
+        cells.push(label(&row).to_string());
     }
     cells
 }
