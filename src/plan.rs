@@ -12,5 +12,5 @@ pub use checkouts::{
 };
 pub use classify::{Cause, CheckoutState, classify};
 pub use lock::{Drift, LockFlags, LockPlan, Step, Upgrade, lock_drift, locked, plan_lock};
-pub use outcome::{Concluded, Outcome, check_outcome, conclude};
+pub use outcome::{Change, Command, Concluded, Hint, Outcome, check_outcome, conclude, hint};
 pub use settle::{Coverage, Failure, Keep, Settled, settle};

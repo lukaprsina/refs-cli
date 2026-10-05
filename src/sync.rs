@@ -11,10 +11,11 @@ use crate::diagnostic::{NotLocked, Note, SourceError};
 use crate::edit::Edit;
 use crate::exclude;
 use crate::lock::Lock;
-pub use crate::plan::{Checkout, Outcome};
+pub use crate::plan::{Change, Checkout, Hint, Outcome};
 use crate::plan::{
-    Checkouts, Coverage, Drift, ExcludeAction, Failure, Keep, LockFlags, Plan, RepoAction, Settled,
-    Step, check_outcome, conclude, lock_drift, locked, plan_checkouts, plan_lock, settle,
+    Checkouts, Command, Coverage, Drift, ExcludeAction, Failure, Keep, LockFlags, Plan, RepoAction,
+    Settled, Step, check_outcome, conclude, hint, lock_drift, locked, plan_checkouts, plan_lock,
+    settle,
 };
 use crate::project;
 use crate::source::{MaterialiseOpts, Source, VerifyOpts};
@@ -47,6 +48,8 @@ pub struct Report {
     pub drift: Vec<Drift>,
     /// Refusals, failures and notes, in the order they happened.
     pub diagnostics: Vec<miette::Report>,
+    /// What to tell the user to do next, if anything.
+    pub hint: Option<Hint>,
 }
 
 impl Report {
@@ -56,7 +59,13 @@ impl Report {
             changes: Vec::new(),
             drift,
             diagnostics,
+            hint: None,
         }
+    }
+
+    fn with_hint(mut self, command: Command) -> Report {
+        self.hint = hint(command, self.outcome);
+        self
     }
 
     fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
@@ -122,6 +131,7 @@ fn finish(stage_one: StageOne, drift: Vec<Drift>, stage_two: StageTwo) -> Report
         changes,
         drift,
         diagnostics: concluded.diagnostics,
+        hint: None,
     }
 }
 
@@ -160,6 +170,10 @@ pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags
 
 /// `refs sync`. With `check`, nothing is resolved, verified, fetched or written.
 pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
+    run_sync(source, root, config, flags).with_hint(Command::Sync)
+}
+
+fn run_sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
     let Preflight { active, old, drift } = match preflight(root, config) {
         Ok(preflight) => preflight,
         Err(report) => return report,
@@ -237,17 +251,6 @@ fn plan_and_apply(
     finish(stage_one, drift, stage_two)
 }
 
-/// What happened to `refs.toml` in `edit`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Change {
-    /// The edit gave the text it already had; nothing was written.
-    Unchanged,
-    /// `refs.toml` was written.
-    Written,
-    /// The edit or stage 1 failed against it: nothing was written.
-    Rejected,
-}
-
 /// The result of `edit`: what happened to `refs.toml`, and what followed.
 #[derive(Debug)]
 pub struct Edited {
@@ -259,10 +262,15 @@ pub struct Edited {
 }
 
 fn rejected(report: Report) -> Edited {
+    // A rejected edit never syncs, so `no_sync` does not change its hint.
+    let command = Command::Edit {
+        change: Change::Rejected,
+        no_sync: false,
+    };
     Edited {
         change: Change::Rejected,
         group_created: None,
-        report,
+        report: report.with_hint(command),
     }
 }
 
@@ -296,10 +304,10 @@ pub fn edit<S: Source>(
         Ok(config) => config,
         Err(e) => return rejected(Report::failed(e)),
     };
-    let edited = |change, report| Edited {
+    let edited = |change, report: Report| Edited {
         change,
         group_created: applied.group_created.clone(),
-        report,
+        report: report.with_hint(Command::Edit { change, no_sync }),
     };
     let unchanged = after == before;
     if no_sync {
