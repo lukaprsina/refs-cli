@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::config::{self, Config};
 use crate::diagnostic::InitError;
+use crate::exclude;
 use crate::project;
 
 /// The `refs.toml` a new Project starts with: every key commented out, no repos.
@@ -41,6 +42,6 @@ pub fn init(root: &Path) -> Result<Initialised, InitError> {
         project::write_config(root, TEMPLATE)?;
     }
     let config: Config = config::parse(&project::read_config(root)?)?;
-    project::ensure_exclude(root, config.settings.references_dir())?;
+    exclude::ensure(root, config.settings.references_dir())?;
     Ok(Initialised { config_created })
 }

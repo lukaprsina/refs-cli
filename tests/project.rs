@@ -110,8 +110,9 @@ mod observed {
 
     use crate::common::git;
     use refs_cli::config::parse;
+    use refs_cli::exclude::ensure as ensure_exclude;
     use refs_cli::plan::Exclude;
-    use refs_cli::project::{ensure_exclude, observe};
+    use refs_cli::project::observe;
     use tempfile::TempDir;
 
     const CONFIG: &str = r#"
@@ -171,26 +172,108 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
     }
 
     #[test]
-    fn the_rule_is_appended_on_its_own_line_to_a_file_without_a_final_newline() {
-        let dir = git_project();
-        fs::write(dir.path().join(".git/info/exclude"), "*.log").unwrap();
-
-        ensure_exclude(dir.path(), "refs").unwrap();
-
-        assert_eq!(
-            fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap(),
-            "*.log\n/refs/\n"
-        );
+    fn what_the_exclude_file_holds_decides_whether_the_rule_is_present() {
+        let cases = [
+            (
+                "the rule alone",
+                "/refs/
+",
+                Exclude::Present,
+            ),
+            (
+                "the rule among others",
+                "target/
+/refs/
+*.log
+",
+                Exclude::Present,
+            ),
+            (
+                "absent",
+                "target/
+*.log
+",
+                Exclude::Missing,
+            ),
+            (
+                "another directory's rule",
+                "/other/
+",
+                Exclude::Missing,
+            ),
+            (
+                "the same name anchored elsewhere",
+                "/sub/refs/
+",
+                Exclude::Missing,
+            ),
+            (
+                "a trailing-whitespace line",
+                "/refs/  
+",
+                Exclude::Present,
+            ),
+            (
+                "no final newline",
+                "target/
+/refs/",
+                Exclude::Present,
+            ),
+            ("empty file", "", Exclude::Missing),
+        ];
+        let config = parse(CONFIG).unwrap();
+        for (name, text, expected) in cases {
+            let dir = git_project();
+            fs::write(dir.path().join(".git/info/exclude"), text).unwrap();
+            let observed = observe(dir.path(), &config).unwrap();
+            assert_eq!(observed.exclude, expected, "{name}");
+        }
     }
 
     #[test]
-    fn a_rule_for_another_directory_does_not_count() {
-        let dir = git_project();
-        fs::write(dir.path().join(".git/info/exclude"), "/other/\n").unwrap();
+    fn ensuring_appends_the_rule_on_its_own_line_and_never_twice() {
+        let cases = [
+            (
+                "empty file",
+                "",
+                "/refs/
+",
+            ),
+            (
+                "final newline",
+                "target/
+",
+                "target/
+/refs/
+",
+            ),
+            (
+                "no final newline",
+                "target/",
+                "target/
+/refs/
+",
+            ),
+            (
+                "already there",
+                "target/
+/refs/
+",
+                "target/
+/refs/
+",
+            ),
+            ("there without a final newline", "/refs/", "/refs/"),
+        ];
+        for (name, text, expected) in cases {
+            let dir = git_project();
+            let file = dir.path().join(".git/info/exclude");
+            fs::write(&file, text).unwrap();
 
-        let observed = observe(dir.path(), &parse(CONFIG).unwrap()).unwrap();
+            ensure_exclude(dir.path(), "refs").unwrap();
 
-        assert_eq!(observed.exclude, Exclude::Missing);
+            assert_eq!(fs::read_to_string(&file).unwrap(), expected, "{name}");
+        }
     }
 
     /// How many lines of `<git_dir>/info/exclude` are exactly `rule`.

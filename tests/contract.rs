@@ -14,9 +14,14 @@ use refs_cli::source::git::GitSource;
 use refs_cli::source::{MaterialiseOpts, Observed, Pin, Source};
 use tempfile::TempDir;
 
+/// The one Repo every row is about, and the paths the config asks for; `OTHER_PATHS` is what a
+/// Checkout made under another config holds. Both exist in the remote of `GitHarness`.
 const ID: &str = "r";
 const PATHS: [&str; 1] = ["docs"];
+const OTHER_PATHS: [&str; 1] = ["src"];
 const STRAY: &str = "stray.txt";
+/// The fake's remote: it is never fetched, so any URL will do.
+const FAKE_URL: &str = "https://example.com/r";
 
 /// A world to seed and a `Source` over it. Test support only: `Source` has no way to seed.
 trait Harness {
@@ -27,6 +32,10 @@ trait Harness {
     /// Put `ID` into `state`. An `At` must use one of `pins()`.
     fn seed(&self, state: Observed);
     fn source(&self) -> &dyn Source;
+    /// The Repo `ID` on `url()`, as a user would write it, with the paths `PATHS`.
+    fn repo(&self) -> Repo {
+        repo_with(&self.url(), &PATHS)
+    }
 }
 
 struct FakeHarness {
@@ -43,10 +52,10 @@ impl FakeHarness {
 
 impl Harness for FakeHarness {
     fn url(&self) -> String {
-        "https://example.com/r".into()
+        FAKE_URL.into()
     }
     fn pins(&self) -> [Pin; 2] {
-        ["a", "b"].map(|c| Pin::git("https://example.com/r", "main", &c.repeat(40), None))
+        ["a", "b"].map(|c| Pin::git(FAKE_URL, "main", &c.repeat(40), None))
     }
     fn seed(&self, state: Observed) {
         self.source.seed(ID, state);
@@ -57,6 +66,11 @@ impl Harness for FakeHarness {
 }
 
 /// A local remote with two commits, a Cache and a references directory.
+///
+/// Seeding an `At` goes through `materialise`, the code the rows test: the Cache layout and the
+/// Record beside git's worktree are private to the adapter, so seeding without it is not cheap.
+/// What keeps the `inspect` rows honest is that the expected value is the test's own literal
+/// while `inspect` reads git's HEAD and status; the fake's rows are a round trip of its seed.
 struct GitHarness {
     dir: TempDir,
     remote: PathBuf,
@@ -69,11 +83,13 @@ impl GitHarness {
         let dir = TempDir::new().unwrap();
         let remote = dir.path().join("remote");
         fs::create_dir_all(remote.join("docs")).unwrap();
+        fs::create_dir_all(remote.join("src")).unwrap();
         git(&remote, &["init", "-q", "-b", "main"]);
         git(&remote, &["config", "uploadpack.allowFilter", "true"]);
         let mut shas = vec![];
         for text in ["one", "two"] {
             fs::write(remote.join("docs/a.md"), text).unwrap();
+            fs::write(remote.join("src/b.md"), text).unwrap();
             git(&remote, &["add", "."]);
             git(&remote, &["commit", "-q", "-m", text]);
             shas.push(git(&remote, &["rev-parse", "HEAD"]));
@@ -91,8 +107,8 @@ impl GitHarness {
         self.dir.path().join("refs").join(ID)
     }
 
-    fn materialise(&self, pin: &Pin) {
-        let repo = repo(&self.url());
+    fn materialise(&self, pin: &Pin, paths: &[String]) {
+        let repo = repo_with(&self.url(), paths);
         self.source
             .materialise(
                 RepoRef {
@@ -123,13 +139,15 @@ impl Harness for GitHarness {
                 fs::write(self.checkout().join("mine.txt"), "mine").unwrap();
             }
             Observed::Dangling => {
-                self.materialise(&self.pins()[0]);
+                self.materialise(&self.pins()[0], &PATHS.map(String::from));
                 fs::remove_dir_all(self.dir.path().join("cache")).unwrap();
             }
             Observed::At {
-                pin, dirty_files, ..
+                pin,
+                paths,
+                dirty_files,
             } => {
-                self.materialise(&pin);
+                self.materialise(&pin, &paths);
                 for file in dirty_files {
                     fs::write(self.checkout().join(file), "stray").unwrap();
                 }
@@ -141,31 +159,39 @@ impl Harness for GitHarness {
     }
 }
 
-/// The Repo `ID` on `url`, as a user would write it.
-fn repo(url: &str) -> Repo {
-    let text = format!("[repos.{ID}]\nurl = \"{url}\"\nref = \"main\"\npaths = [\"docs\"]\n");
+/// The Repo `ID` on `url` with `paths`, as a user would write it.
+fn repo_with(url: &str, paths: &[impl AsRef<str>]) -> Repo {
+    let paths: Vec<String> = paths
+        .iter()
+        .map(|p| format!("\"{}\"", p.as_ref()))
+        .collect();
+    let text = format!(
+        "[repos.{ID}]\nurl = \"{url}\"\nref = \"main\"\npaths = [{}]\n",
+        paths.join(", ")
+    );
     parse(&text).unwrap().repos.into_values().next().unwrap()
 }
 
-fn at(pin: Pin, dirty: bool) -> Observed {
+fn at(pin: Pin, paths: &[&str], dirty: bool) -> Observed {
     Observed::At {
         pin,
-        paths: PATHS.map(String::from).to_vec(),
+        paths: paths.iter().map(|p| p.to_string()).collect(),
         dirty_files: if dirty { vec![STRAY.into()] } else { vec![] },
     }
 }
 
-/// Every state a Checkout can be observed in, by name. `At` is at the first commit unless the
-/// name says otherwise.
+/// Every state a Checkout can be observed in, by name. `At` is at the first commit, with `PATHS`,
+/// unless the name says otherwise.
 fn states(h: &impl Harness) -> Vec<(&'static str, Observed)> {
     let [first, second] = h.pins();
     vec![
         ("absent", Observed::Absent),
         ("dangling", Observed::Dangling),
         ("foreign", Observed::Foreign),
-        ("at, same commit", at(first.clone(), false)),
-        ("at, other commit", at(second, false)),
-        ("at, dirty", at(first, true)),
+        ("at, same commit", at(first.clone(), &PATHS, false)),
+        ("at, other commit", at(second, &PATHS, false)),
+        ("at, other paths", at(first.clone(), &OTHER_PATHS, false)),
+        ("at, dirty", at(first, &PATHS, true)),
     ]
 }
 
@@ -217,7 +243,7 @@ fn materialise_rows<H: Harness>(new: &impl Fn() -> H) {
         let h = new();
         let [first, _] = h.pins();
         h.seed(state.clone());
-        let repo = repo(&h.url());
+        let repo = h.repo();
         let result = h.source().materialise(
             RepoRef {
                 id: ID,
@@ -228,7 +254,7 @@ fn materialise_rows<H: Harness>(new: &impl Fn() -> H) {
         );
         let (ok, left) = match state {
             Observed::Foreign | Observed::Dangling => (false, state),
-            _ => (true, at(first, false)),
+            _ => (true, at(first, &PATHS, false)),
         };
         assert_eq!(result.is_ok(), ok, "materialise: {name}: {result:?}");
         assert_eq!(
