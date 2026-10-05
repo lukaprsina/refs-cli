@@ -38,12 +38,13 @@ pub fn classify(observed: &Observed, repo: &Repo, locked: &Pin) -> CheckoutState
         Observed::At {
             pin, dirty_files, ..
         } => {
-            let cause = if observed.matches(repo, locked) {
+            if observed.matches(repo, locked) {
                 return CheckoutState::InSync;
-            } else if !pin.same_commit(locked) {
-                Cause::Commit
-            } else {
+            }
+            let cause = if pin.same_commit(locked) {
                 Cause::Paths
+            } else {
+                Cause::Commit
             };
             CheckoutState::Stale {
                 cause,

@@ -52,6 +52,15 @@ fn classifies_what_is_on_disk_against_the_lock() {
             InSync,
         ),
         (
+            "a different branch on the same commit",
+            Observed::At {
+                pin: Pin::git("https://github.com/o/a", "next", SHA, Some("other")),
+                paths: vec!["docs".into(), "src".into()],
+                dirty_files: vec![],
+            },
+            InSync,
+        ),
+        (
             "wrong commit",
             at(OTHER_SHA, &["docs", "src"], &[]),
             stale(Cause::Commit, &[]),
