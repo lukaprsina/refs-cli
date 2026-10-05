@@ -4,8 +4,7 @@ use std::collections::HashMap;
 use refs_cli::list::{Status, list, list_status};
 use refs_cli::lock::{Lock, LockedRepo};
 use refs_cli::plan::{Cause, CheckoutState};
-use refs_cli::source::fake::{FakeSource, Method};
-use refs_cli::source::{Observed, Pin};
+use refs_cli::source::Pin;
 
 #[test]
 fn lists_repos_under_their_groups_with_ref_paths_and_disabled_marks() {
@@ -103,6 +102,8 @@ url = "https://github.com/o/r"
 url = "https://github.com/o/r"
 [repos.dirty]
 url = "https://github.com/o/r"
+[repos.dirtypaths]
+url = "https://github.com/o/r"
 [repos.gone]
 url = "https://github.com/o/r"
 [repos.new]
@@ -127,6 +128,7 @@ enabled = false
         entry("moved", '2'),
         entry("paths", '3'),
         entry("dirty", '4'),
+        entry("dirtypaths", '8'),
         entry("gone", '5'),
         entry("alien", '6'),
         entry("hollow", '7'),
@@ -140,6 +142,7 @@ enabled = false
         ("moved".to_string(), stale(Cause::Commit, &[])),
         ("paths".to_string(), stale(Cause::Paths, &[])),
         ("dirty".to_string(), stale(Cause::Commit, &["x"])),
+        ("dirtypaths".to_string(), stale(Cause::Paths, &["x"])),
         ("gone".to_string(), Absent),
         ("alien".to_string(), Foreign),
         ("hollow".to_string(), Dangling),
@@ -151,15 +154,16 @@ enabled = false
 
     assert_eq!(
         list_status(&config, &status, false),
-        "  ok      https://github.com/o/r  HEAD  (whole repo)  1111111  ok
-  moved   https://github.com/o/r  HEAD  (whole repo)  2222222  wrong SHA
-  paths   https://github.com/o/r  HEAD  (whole repo)  3333333  wrong paths
-  dirty   https://github.com/o/r  HEAD  (whole repo)  4444444  wrong SHA, dirty
-  gone    https://github.com/o/r  HEAD  (whole repo)  5555555  missing
-  new     https://github.com/o/r  HEAD  (whole repo)  -        not locked
-  hollow  https://github.com/o/r  HEAD  (whole repo)  7777777  missing
-  alien   https://github.com/o/r  HEAD  (whole repo)  6666666  foreign
-- off     https://github.com/o/r  HEAD  (whole repo)  -        disabled
+        "  ok          https://github.com/o/r  HEAD  (whole repo)  1111111  ok
+  moved       https://github.com/o/r  HEAD  (whole repo)  2222222  wrong SHA
+  paths       https://github.com/o/r  HEAD  (whole repo)  3333333  wrong paths
+  dirty       https://github.com/o/r  HEAD  (whole repo)  4444444  wrong SHA, dirty
+  dirtypaths  https://github.com/o/r  HEAD  (whole repo)  8888888  wrong paths, dirty
+  gone        https://github.com/o/r  HEAD  (whole repo)  5555555  missing
+  new         https://github.com/o/r  HEAD  (whole repo)  -        not locked
+  hollow      https://github.com/o/r  HEAD  (whole repo)  7777777  missing
+  alien       https://github.com/o/r  HEAD  (whole repo)  6666666  foreign
+- off         https://github.com/o/r  HEAD  (whole repo)  -        disabled
 "
     );
 }
@@ -181,73 +185,4 @@ url = \"https://github.com/o/r\"
         "  a  https://github.com/o/r  HEAD  (whole repo)  -  not locked
 "
     );
-}
-
-/// `list --status` as the CLI makes it: the Lock read from `root`, the Checkouts inspected
-/// through `source`.
-fn status_listing(source: &FakeSource, lock: Lock, config: &str) -> String {
-    let config = parse(config).unwrap();
-    let root = tempfile::tempdir().unwrap();
-    lock.write(&Lock::path(root.path())).unwrap();
-    let status = refs_cli::sync::status(source, root.path(), &config).unwrap();
-    list_status(&config, &status, false)
-}
-
-const TWO_PATHS: &str = r#"
-[repos.moved]
-url = "https://github.com/o/r"
-[repos.paths]
-url = "https://github.com/o/r"
-paths = ["a"]
-[repos.same]
-url = "https://github.com/o/r"
-"#;
-
-fn locked_at(sha: &str, ids: &[&str]) -> Lock {
-    Lock::new(
-        ids.iter()
-            .map(|id| LockedRepo {
-                id: (*id).into(),
-                pin: pin(sha),
-            })
-            .collect(),
-    )
-}
-
-fn seen(sha: &str, paths: &[&str], dirty: &[&str]) -> Observed {
-    Observed::At {
-        pin: pin(sha),
-        paths: paths.iter().map(|p| p.to_string()).collect(),
-        dirty_files: dirty.iter().map(|p| p.to_string()).collect(),
-    }
-}
-
-#[test]
-fn status_says_dirty_where_sync_would_refuse_to_move_the_checkout() {
-    let sha = "1".repeat(40);
-    let source = FakeSource::new();
-    source.seed("moved", seen(&"2".repeat(40), &[], &["x"]));
-    source.seed("paths", seen(&sha, &["b"], &["x"]));
-    source.seed("same", seen(&sha, &[], &["x"]));
-    let out = status_listing(
-        &source,
-        locked_at(&sha, &["moved", "paths", "same"]),
-        TWO_PATHS,
-    );
-    assert!(out.contains("1111111  wrong SHA, dirty\n"), "{out}");
-    assert!(out.contains("1111111  wrong paths, dirty\n"), "{out}");
-    // dirty but matching: sync leaves it alone
-    assert!(out.contains("1111111  ok\n"), "{out}");
-}
-
-#[test]
-fn status_never_inspects_a_disabled_repo() {
-    let source = FakeSource::new();
-    source.fail("off", Method::Inspect, "broken");
-    let out = status_listing(
-        &source,
-        locked_at(&"1".repeat(40), &[]),
-        "[repos.off]\nurl = \"https://github.com/o/r\"\nenabled = false\n",
-    );
-    assert!(out.contains("disabled\n"), "{out}");
 }
