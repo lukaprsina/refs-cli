@@ -7,6 +7,7 @@ use crate::agent_file::{splice, strip};
 use crate::config::RepoRef;
 use crate::diagnostic::{NotLocked, Note, Refusal};
 use crate::lock::Lock;
+use crate::plan::settle::Coverage;
 use crate::render::render;
 use crate::source::{Observed, Pin};
 
@@ -242,17 +243,17 @@ enum Block {
     Leave,
 }
 
-/// Plan stage 2 against the Lock and what is on disk. `active` is the Repos the Lock
-/// covers. `withheld` names active Repos that stage 1 could not lock: they are left out of
-/// the block and their Checkouts are left alone, neither made, moved nor removed.
+/// Plan stage 2 against the Lock and what is on disk. The Repos in `coverage` are planned
+/// for; the Withheld ones, which stage 1 could not lock, are left out of the block and their
+/// Checkouts are left alone, neither made, moved nor removed.
 pub fn plan_checkouts<'a>(
-    active: &ActiveSet<'a>,
-    withheld: &[String],
+    coverage: &Coverage<'a>,
     lock: &Lock,
     checkouts: &Checkouts,
     project: &ProjectObserved,
     force: bool,
 ) -> Result<Plan<'a>, NotLocked> {
+    let Coverage { active, withheld } = coverage;
     // With no active Repo there is nothing to list: the block goes, markers included. If
     // every active Repo is withheld the block is left as it is: there is nothing true to say.
     let block = if active.repos().next().is_some() {

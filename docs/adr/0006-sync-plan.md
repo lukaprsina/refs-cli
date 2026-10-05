@@ -2,9 +2,9 @@
 status: accepted
 ---
 
-# `sync` is planned in two pure stages, grouped by Repo; `Source` only reports and executes
+# `sync` is planned in two pure stages with a third pure step between them, grouped by Repo; `Source` only reports and executes
 
-This is the one statement of how `sync` decides and acts. `plan` decides everything that is a decision: which names are observed, how Lock entries are built, whether the Lock is written, which actions run, what a failure holds back, and how a Plan becomes an outcome (in sync, out of date, refused, failed). `sync` is a loop: it runs the typed actions through `Source`, collects the failures and reports. The Plan is grouped by Repo rather than a flat list of actions whose order carried implicit dependencies that only the executor knew, so the failure policy is data.
+This is the one statement of how `sync` decides and acts. `plan` decides everything that is a decision: which names are observed, how Lock entries are built, whether the Lock is written, which actions run, what a failure holds back (`settle`), and how a Plan becomes an outcome (in sync, out of date, refused, failed). `sync` is a loop: it runs the typed actions through `Source`, collects the failures and reports. The Plan is grouped by Repo rather than a flat list of actions whose order carried implicit dependencies that only the executor knew, so the failure policy is data.
 
 ## Decisions in `plan`, mechanics in `Source`
 
@@ -14,12 +14,13 @@ This is the one statement of how `sync` decides and acts. `plan` decides everyth
 
 ## Two stages
 
-Which Repos re-resolve is a pure decision, but the pins it produces exist only after `resolve` has run, so one `plan` over (config, Lock, `Observed`) cannot also decide the checkouts. Planning is two pure functions with the executor between them.
+Which Repos re-resolve is a pure decision, but the pins it produces exist only after `resolve` has run, so one `plan` over (config, Lock, `Observed`) cannot also decide the checkouts. Planning is two pure functions with the executor between them, and for the failures of stage 1 a third pure step.
 
 1. `plan_lock(active, lock, flags)` decides which Repos to resolve or reuse (pin reuse keyed on url, ref and source; `--upgrade`; newly active). Verification is not a decision: the executor verifies every active Repo. `lock_drift(active, lock)` is the stale check on its own, which `sync --check` needs. With `--offline`, a missing or stale Lock, or any `--upgrade`, is a refusal here.
-2. `plan_checkouts(active, lock, checkouts, project, force)` returns a `Plan`.
+2. `settle(active, old Lock, passed entries, failures, keep)` is the pure step after the executor has resolved and verified, and before stage 2. The failure policy `keep` is an input: `AllOrNothing` (nothing is written unless every Repo passed) or `Passing` (the entries that passed are written); `plan` does not know which edit asked for which. It returns the Lock to write, whether to write it (the policy keeps it and it differs from the Lock on disk), the `Coverage`, the errors in the order the failures came, and whether the edit is accepted, that is may be written to `refs.toml`. It is a separate step because Coverage depends on results that only exist after stage 1's I/O.
+3. `plan_checkouts(coverage, lock, checkouts, project, force)` returns a `Plan`. `Coverage` is the active Repos the Lock covers (**Covered**) and the ids it could not lock (**Withheld**); a plain `sync` or `--check` passes full coverage.
 
-`refs lock` is stage 1 plus a write. `sync` always runs stage 1 (with a current Lock every step is a reuse, but every Repo is verified, and the Lock is written only if it changed), then stage 2. `sync --check` runs stage 2 only, against the existing Lock; a missing or stale Lock is out of date without resolving.
+`refs lock` is stage 1 plus a write. `sync` always runs stage 1 (with `AllOrNothing`) (with a current Lock every step is a reuse, but every Repo is verified, and the Lock is written only if it changed), then stage 2. `sync --check` runs stage 2 only, against the existing Lock; a missing or stale Lock is out of date without resolving.
 
 ## The Plan is grouped by Repo
 
@@ -53,7 +54,7 @@ The format version stays 1. A Lock holding `paths` is still read (unknown keys a
 
 ## Failures and exit codes
 
-- Stage 1 collects all errors and writes the Lock only if there are none.
+- Stage 1 collects all errors. Under `AllOrNothing` (`lock`, `sync`, `add`, `enable`) the Lock is written only if there are none; under `Passing` (`remove`, `disable`) the entries that passed are written.
 - Stage 2 runs sequentially and collects failures. A failure of one Repo does not stop the others (every action is idempotent, so a retry is safe); only the writes that list a failed Repo are held back. The run exits 1 with all diagnostics.
 - A Lock that does not cover the active Repos is drift under `--check` (no Plan is made, and `check_outcome(None, ..)` is out of date); after stage 1 it cannot happen.
 - `sync --check` exits 3 for plain drift and 1 for refusals: "run `refs sync`" is the wrong advice when `sync` will also refuse.
@@ -67,7 +68,8 @@ With no active Repo the Plan removes the Managed block, markers included, from e
 `sync::edit(root, edit, no_sync, make_source, flags)` is the one operation behind `add`, `remove`, `enable` and `disable`; the CLI parses arguments and prints the `Edited` it returns. `refs.toml` is read once, and the edited text is parsed once into the config the sync runs against. `Edit::apply` is text in, text out (with the Group it had to create), and validates its own result, and `--no-sync` is a flag on the operation: with it no `Source` is made and the edit is only written. The result is typed: `Change` (`Unchanged`, `Written`, `Rejected`), the Group created and the `Report`. No-op detection (`after == before`) and the written/rejected outcome exist only here.
 
 - **`add` and `enable` are atomic.** They grow the active set, so stage 1 runs against the edited config and `refs.toml` is written only if every Repo passes. An unresolvable Repo writes nothing, and the error names it.
-- **`remove` and `disable` always write.** They can only shrink the set, so a Repo they did not touch must not block them: stage 1 keeps going past a failure, the Lock gets the entries that passed, `refs.toml` is written, and each failing Repo is reported with exit 1. Stage 2 then runs against that partial Lock: `plan_checkouts` takes the Repos the Lock covers plus the ids it could not lock (`withheld`), so the Checkouts and the Managed block follow the Repos that did lock, the removed or disabled Repo's Checkout goes, and a withheld Repo's Checkout is left alone (neither made, moved nor removed; it is not in the block). If every active Repo is withheld the block is left as it is. The outcome is Failed either way; `refs sync` finishes the withheld Repo once it is fixed.
+- The mapping from edit to policy is one line in `sync::edit` (`Edit::grows`): `add` and `enable` use `AllOrNothing`, `remove` and `disable` use `Passing`.
+- **`remove` and `disable` always write.** They can only shrink the set, so a Repo they did not touch must not block them: stage 1 keeps going past a failure, the Lock gets the entries that passed, `refs.toml` is written, and each failing Repo is reported with exit 1. Stage 2 then runs against that partial Lock: `plan_checkouts` takes the `Coverage` that `settle` returned (the Repos the Lock covers and the ids it could not lock, `withheld`), so the Checkouts and the Managed block follow the Repos that did lock, the removed or disabled Repo's Checkout goes, and a withheld Repo's Checkout is left alone (neither made, moved nor removed; it is not in the block). If every active Repo is withheld the block is left as it is. The outcome is Failed either way; `refs sync` finishes the withheld Repo once it is fixed.
 - Every Repo-specific error names the Repo id (`SourceError::for_repo`; the code and help stay the failure's own). "refs.toml was not changed" is printed only for a `Rejected` edit, and "updated" when it was written.
 - **Groups follow their Repos.** `add --group x` for a missing Group appends a bare `[groups.x]` (no name or description; the heading falls back to the id) and reports it. `remove` of a Group's last Repo removes the Group again when it has no description, so add and remove round-trip.
 

@@ -1,7 +1,7 @@
 use crate::config::{Config, Group, Id, Repo, RepoRef};
 
 /// What `render` and `sync` act on: only active repos, grouped as the block shows them.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ActiveSet<'a> {
     pub sections: Vec<Section<'a>>,
 }
@@ -40,7 +40,7 @@ impl<'a> ActiveSet<'a> {
 
 /// A group heading with its active repos in config order. `group` is `None` for the
 /// trailing "Ungrouped" section.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Section<'a> {
     pub group: Option<(&'a str, &'a Group)>,
     pub repos: Vec<RepoRef<'a>>,

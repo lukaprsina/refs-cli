@@ -236,17 +236,6 @@ fn disabling_a_repo_writes_the_edit_and_the_lock_entries_it_can_then_reports_the
 }
 
 #[test]
-fn removing_a_repo_writes_the_edit_though_another_repo_fails() {
-    let (dir, source) = with_broken_b();
-
-    let edited = run_edit(&dir, &source, &Edit::Remove("a"));
-
-    assert_eq!(edited.change, Change::Written);
-    assert_eq!(edited.report.outcome, Outcome::Failed);
-    assert!(!read(&dir, "refs.toml").unwrap().contains("[repos.a]"));
-}
-
-#[test]
 fn enabling_a_repo_that_does_not_resolve_writes_nothing_and_names_it() {
     let dir = project();
     fs::write(

@@ -30,23 +30,6 @@ pub struct LockPlan<'a> {
     pub steps: Vec<Step<'a>>,
 }
 
-impl LockPlan<'_> {
-    /// The Lock made of the `entries` the steps produced (reused, or built by `locked`), and
-    /// whether it has to be written: only when it differs from the Lock on disk.
-    pub fn finish(entries: Vec<LockedRepo>, old: Option<&Lock>) -> NewLock {
-        let lock = Lock::new(entries);
-        let write = old != Some(&lock);
-        NewLock { lock, write }
-    }
-}
-
-/// The Lock stage 1 produced and whether to write it.
-#[derive(Debug)]
-pub struct NewLock {
-    pub lock: Lock,
-    pub write: bool,
-}
-
 /// The Lock entry for a Repo that `resolve` gave `pin`: the Pin goes in as it came.
 pub fn locked(repo: RepoRef, pin: crate::source::Pin) -> LockedRepo {
     LockedRepo {
