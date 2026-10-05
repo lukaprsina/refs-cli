@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use common::git;
-use refs_cli::config::{RepoRef, parse};
+use refs_cli::config::{Repo, RepoRef, parse};
 use refs_cli::source::fake::FakeSource;
 use refs_cli::source::git::GitSource;
 use refs_cli::source::{MaterialiseOpts, Observed, Pin, Source};
@@ -22,6 +22,8 @@ const STRAY: &str = "stray.txt";
 trait Harness {
     /// Two different commits a Checkout can be at.
     fn pins(&self) -> [Pin; 2];
+    /// The remote the pins point at.
+    fn url(&self) -> String;
     /// Put `ID` into `state`. An `At` must use one of `pins()`.
     fn seed(&self, state: Observed);
     fn source(&self) -> &dyn Source;
@@ -40,6 +42,9 @@ impl FakeHarness {
 }
 
 impl Harness for FakeHarness {
+    fn url(&self) -> String {
+        "https://example.com/r".into()
+    }
     fn pins(&self) -> [Pin; 2] {
         ["a", "b"].map(|c| Pin::git("https://example.com/r", "main", &c.repeat(40), None))
     }
@@ -82,20 +87,12 @@ impl GitHarness {
         }
     }
 
-    fn url(&self) -> String {
-        common::file_url(&self.remote)
-    }
-
     fn checkout(&self) -> PathBuf {
         self.dir.path().join("refs").join(ID)
     }
 
     fn materialise(&self, pin: &Pin) {
-        let text = format!(
-            "[repos.{ID}]\nurl = \"{}\"\nref = \"main\"\npaths = [\"docs\"]\n",
-            self.url()
-        );
-        let repo = parse(&text).unwrap().repos.into_values().next().unwrap();
+        let repo = repo(&self.url());
         self.source
             .materialise(
                 RepoRef {
@@ -110,6 +107,9 @@ impl GitHarness {
 }
 
 impl Harness for GitHarness {
+    fn url(&self) -> String {
+        common::file_url(&self.remote)
+    }
     fn pins(&self) -> [Pin; 2] {
         self.shas
             .clone()
@@ -141,6 +141,12 @@ impl Harness for GitHarness {
     }
 }
 
+/// The Repo `ID` on `url`, as a user would write it.
+fn repo(url: &str) -> Repo {
+    let text = format!("[repos.{ID}]\nurl = \"{url}\"\nref = \"main\"\npaths = [\"docs\"]\n");
+    parse(&text).unwrap().repos.into_values().next().unwrap()
+}
+
 fn at(pin: Pin, dirty: bool) -> Observed {
     Observed::At {
         pin,
@@ -166,6 +172,7 @@ fn states(h: &impl Harness) -> Vec<(&'static str, Observed)> {
 fn contract<H: Harness>(new: impl Fn() -> H) {
     inspect_rows(&new);
     remove_rows(&new);
+    materialise_rows(&new);
 }
 
 /// `inspect` reports what was seeded, and looking changes nothing.
@@ -198,6 +205,36 @@ fn remove_rows<H: Harness>(new: &impl Fn() -> H) {
             h.source().inspect(ID).unwrap(),
             left,
             "remove, after: {name}"
+        );
+    }
+}
+
+/// `materialise` makes the first commit's Checkout from Absent, and moves one of ours there
+/// from another commit or from a dirty one (a move is a fresh Checkout; whether edits matter is
+/// for `plan`). It refuses a Foreign directory and a Dangling Checkout, leaving them as they were.
+fn materialise_rows<H: Harness>(new: &impl Fn() -> H) {
+    for (name, state) in states(&new()) {
+        let h = new();
+        let [first, _] = h.pins();
+        h.seed(state.clone());
+        let repo = repo(&h.url());
+        let result = h.source().materialise(
+            RepoRef {
+                id: ID,
+                repo: &repo,
+            },
+            &first,
+            MaterialiseOpts::default(),
+        );
+        let (ok, left) = match state {
+            Observed::Foreign | Observed::Dangling => (false, state),
+            _ => (true, at(first, false)),
+        };
+        assert_eq!(result.is_ok(), ok, "materialise: {name}: {result:?}");
+        assert_eq!(
+            h.source().inspect(ID).unwrap(),
+            left,
+            "materialise, after: {name}"
         );
     }
 }
