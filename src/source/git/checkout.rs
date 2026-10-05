@@ -32,14 +32,32 @@ pub fn lexical_path(path: &Path) -> PathBuf {
     out
 }
 
+/// The components of `path` below `root`, or `None` if it is not below it. On Windows the
+/// match ignores case, as the file system does: git may write `c:/Users` for `C:\Users`.
+fn strip_root<'a>(path: &'a Path, root: &Path) -> Option<Vec<Component<'a>>> {
+    let same = |a: Component, b: Component| {
+        a == b
+            || (cfg!(windows)
+                && a.as_os_str()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(&b.as_os_str().to_string_lossy()))
+    };
+    let mut below = path.components();
+    for want in root.components() {
+        if !same(below.next()?, want) {
+            return None;
+        }
+    }
+    Some(below.collect())
+}
+
 /// The Cache repository a worktree's admin directory belongs to, if it is where git puts one:
 /// `<cache_git_root>/<hash>/worktrees/<name>`.
 pub fn worktree_entry(admin: &Path, cache_git_root: &Path) -> Option<String> {
-    let rest = lexical_path(admin)
-        .strip_prefix(lexical_path(cache_git_root))
-        .ok()?
-        .to_path_buf();
-    let mut parts = rest.components().map(|c| c.as_os_str().to_str());
+    let admin = lexical_path(admin);
+    let mut parts = strip_root(&admin, &lexical_path(cache_git_root))?
+        .into_iter()
+        .map(|c| c.as_os_str().to_str());
     let (entry, worktrees, name) = (parts.next()??, parts.next()??, parts.next()??);
     let is_entry = entry.len() == 16 && entry.bytes().all(|b| b.is_ascii_hexdigit());
     (is_entry && worktrees == "worktrees" && !name.is_empty() && parts.next().is_none())

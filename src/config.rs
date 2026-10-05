@@ -356,8 +356,13 @@ fn is_heading_safe(name: &str) -> bool {
         })
 }
 
+/// `/`-separated, so a config means the same on every platform: a `\` or a `:` (a Windows
+/// separator or drive) would make `..\x` or `C:\x` escape the project there.
 fn is_relative_path(path: &str) -> bool {
-    !path.is_empty() && !path.starts_with('/') && !path.split('/').any(|part| part == "..")
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.contains(['\\', ':'])
+        && !path.split('/').any(|part| part == "..")
 }
 
 /// A `settings` output path: relative, inside the project, not the project root itself, and

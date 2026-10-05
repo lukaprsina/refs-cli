@@ -13,12 +13,19 @@ use super::remote::{
 };
 use crate::diagnostic::SourceError;
 
-/// `$XDG_CACHE_HOME/refs`, or `~/.cache/refs`. A relative `XDG_CACHE_HOME` is ignored, as the
-/// XDG specification says.
-pub fn cache_root(xdg_cache_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
-    let base = match xdg_cache_home.map(Path::new) {
-        Some(dir) if dir.is_absolute() => dir.to_path_buf(),
-        _ => Path::new(home.filter(|h| !h.is_empty())?).join(".cache"),
+/// `$XDG_CACHE_HOME/refs`, else `%LOCALAPPDATA%\refs` where the caller passes one (Windows),
+/// else `~/.cache/refs`. A relative `XDG_CACHE_HOME` is ignored, as the XDG specification says.
+pub fn cache_root(
+    xdg_cache_home: Option<&str>,
+    local_app_data: Option<&str>,
+    home: Option<&str>,
+) -> Option<PathBuf> {
+    fn absolute(dir: Option<&str>) -> Option<&Path> {
+        dir.map(Path::new).filter(|dir| dir.is_absolute())
+    }
+    let base = match absolute(xdg_cache_home).or_else(|| absolute(local_app_data)) {
+        Some(dir) => dir.to_path_buf(),
+        None => Path::new(home.filter(|h| !h.is_empty())?).join(".cache"),
     };
     Some(base.join("refs"))
 }

@@ -146,7 +146,7 @@ Ranked:
 |---|---|---|---|
 | Project config | `<project>/refs.toml` | yes | user, `init`, `add`, `remove` |
 | Lock | `<project>/refs.lock` | yes | `lock`, `sync` |
-| Global cache | `$XDG_CACHE_HOME/refs` (default `~/.cache/refs`) | n/a | `lock`, `sync` |
+| Global cache | `$XDG_CACHE_HOME/refs` (default `%LOCALAPPDATA%\refs` on Windows, else `~/.cache/refs`) | n/a | `lock`, `sync` |
 | Checkouts | `<project>/<references_dir>/<repo>/`, default `.references/` | no (excluded) | `sync` |
 | Managed block | `<project>/AGENTS.md` (configurable) | yes | `init`, `sync` |
 
@@ -183,7 +183,7 @@ enabled = true                          # optional, default true; false = treate
 
 `<id>` for repos is the directory name under `.references/`; validate `[a-z0-9][a-z0-9._-]*`, not `.` or `..`, unique within the config.
 
-Validation: `paths` entries are relative, no `..`; when `paths` is present, every `start` is inside a `paths` entry or a direct child of the repo root (cone mode checks root files out too). With `paths = ["docs/guide"]`, `README.md` and `docs/guide/a.md` are valid `start` values; `docs/README.md`, `src/x.rs` and `docs/guide/../x.md` are not.
+Validation: `paths` entries are relative and `/`-separated (no `\` or `:`), no `..`; when `paths` is present, every `start` is inside a `paths` entry or a direct child of the repo root (cone mode checks root files out too). With `paths = ["docs/guide"]`, `README.md` and `docs/guide/a.md` are valid `start` values; `docs/README.md`, `src/x.rs` and `docs/guide/../x.md` are not.
 
 `settings.references_dir` and each `settings.agents_files` entry are project-relative output paths. Reject absolute paths, paths containing `..`, empty paths, and paths that resolve to the project root. These lexical checks run at config time. Resolving symlinks (the destination, or its nearest existing ancestor, must stay inside the canonical project root; broken symlinks are rejected) and checking that an existing `references_dir` is a directory and each `agents_files` target a regular file belong to `project` and run at `sync` time; they are not race-resistant against a symlink changed between validation and writing.
 
@@ -254,7 +254,7 @@ Shell out to the system `git` binary: it handles auth (credential helpers, SSH a
 
 ### 7.1 Global cache
 
-- One **bare, blobless** clone per normalised URL: `<cache_root>/git/<sha256(normalised_url)[..16]>/`, where `<cache_root>` is `$XDG_CACHE_HOME/refs` (default `~/.cache/refs`). Create it with `git clone --bare --filter=blob:none <url>`. Store the original URL in a small metadata file beside it.
+- One **bare, blobless** clone per normalised URL: `<cache_root>/git/<sha256(normalised_url)[..16]>/`, where `<cache_root>` is `$XDG_CACHE_HOME/refs` (default `%LOCALAPPDATA%\refs` on Windows, else `~/.cache/refs`). Create it with `git clone --bare --filter=blob:none <url>`. Store the original URL in a small metadata file beside it.
 - URL normalisation: strip trailing `/` and `.git`, lowercase the host. Do not rewrite protocols: `https://github.com/o/r` and `git@github.com:o/r` get separate cache clones. Unifying them would mean guessing each host's URL mapping.
 - Guard every mutation of a cache repo with an exclusive file lock (e.g. `fd-lock`).
 - **Blobless is not shallow.** The clone and each fetch still bring every commit and tree reachable from the requested object. That is small for the repos this tool targets and large for something like `torvalds/linux` (hundreds of MB). Accepted for the MVP; a shallow or `tree:0` mode is a later option.

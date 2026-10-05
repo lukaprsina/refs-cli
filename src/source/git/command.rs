@@ -51,6 +51,8 @@ const INHERITED_REPOSITORY_VARS: [&str; 7] = [
 impl Cmd {
     pub fn new() -> Cmd {
         let mut command = Command::new("git");
+        // Windows git refuses paths past MAX_PATH without this; deep Checkouts reach it.
+        command.args(["-c", "core.longpaths=true"]);
         // A caller's repository (set by git itself inside hooks) must not redirect ours.
         for var in INHERITED_REPOSITORY_VARS {
             command.env_remove(var);
