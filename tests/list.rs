@@ -1,5 +1,4 @@
 use refs_cli::config::parse;
-use std::collections::HashMap;
 
 use refs_cli::list::{list, list_status};
 use refs_cli::plan::{Cause, CheckoutState};
@@ -117,38 +116,29 @@ enabled = false
         cause,
         dirty_files: dirty.iter().map(|f| f.to_string()).collect(),
     };
-    let row = |c: char, state| Row {
+    let row = |id: &str, c: char, state| Row {
+        id: id.into(),
         sha: Some(c.to_string().repeat(7)),
         kind: Kind::Checkout(state),
     };
+    let bare = |id: &str, kind| Row {
+        id: id.into(),
+        sha: None,
+        kind,
+    };
     let status = Status {
-        rows: HashMap::from([
-            ("ok".to_string(), row('1', InSync)),
-            ("moved".to_string(), row('2', stale(Cause::Commit, &[]))),
-            ("paths".to_string(), row('3', stale(Cause::Paths, &[]))),
-            ("dirty".to_string(), row('4', stale(Cause::Commit, &["x"]))),
-            (
-                "dirtypaths".to_string(),
-                row('8', stale(Cause::Paths, &["x"])),
-            ),
-            ("gone".to_string(), row('5', Absent)),
-            (
-                "new".to_string(),
-                Row {
-                    sha: None,
-                    kind: Kind::NotLocked,
-                },
-            ),
-            ("alien".to_string(), row('6', Foreign)),
-            ("hollow".to_string(), row('7', Dangling)),
-            (
-                "off".to_string(),
-                Row {
-                    sha: None,
-                    kind: Kind::Disabled,
-                },
-            ),
-        ]),
+        rows: vec![
+            row("ok", '1', InSync),
+            row("moved", '2', stale(Cause::Commit, &[])),
+            row("paths", '3', stale(Cause::Paths, &[])),
+            row("dirty", '4', stale(Cause::Commit, &["x"])),
+            row("dirtypaths", '8', stale(Cause::Paths, &["x"])),
+            row("gone", '5', Absent),
+            bare("new", Kind::NotLocked),
+            row("hollow", '7', Dangling),
+            row("alien", '6', Foreign),
+            bare("off", Kind::Disabled),
+        ],
     };
 
     assert_eq!(
@@ -176,13 +166,11 @@ url = \"https://github.com/o/r\"
     )
     .unwrap();
     let status = Status {
-        rows: HashMap::from([(
-            "a".to_string(),
-            Row {
-                sha: None,
-                kind: Kind::NotLocked,
-            },
-        )]),
+        rows: vec![Row {
+            id: "a".into(),
+            sha: None,
+            kind: Kind::NotLocked,
+        }],
     };
     assert_eq!(
         list_status(&config, &status, false),

@@ -23,9 +23,24 @@ fn render(config: &Config, status: Option<&Status>, color: bool) -> String {
     let sections = layout(config);
     let has_groups = !config.groups.is_empty();
     // One row of cells per repo; the columns are aligned across the whole listing.
+    // The status rows come in the order `layout` walks the config; a row for another Repo
+    // means `status::build` was given a different config.
+    let mut status_rows = status.map(|s| s.rows.iter());
     let rows: Vec<Vec<Vec<String>>> = sections
         .iter()
-        .map(|s| s.repos.iter().map(|r| cells(r, status)).collect())
+        .map(|s| {
+            s.repos
+                .iter()
+                .map(|r| {
+                    let row = status_rows.as_mut().map(|rows| {
+                        rows.next()
+                            .filter(|row| row.id == r.repo.id)
+                            .expect("`status::build` made a row for every Repo, in config order")
+                    });
+                    cells(r, row)
+                })
+                .collect()
+        })
         .collect();
     let columns = rows.iter().flatten().map(Vec::len).max().unwrap_or(0);
     let widths: Vec<usize> = (0..columns)
@@ -83,7 +98,7 @@ fn marked(line: &str, enabled: bool, indent: &str) -> String {
 
 /// The cells of one repo's line: id, url, ref, paths, and with `--status` the short
 /// locked SHA and the checkout state.
-fn cells(r: &LaidRepo, status: Option<&Status>) -> Vec<String> {
+fn cells(r: &LaidRepo, row: Option<&Row>) -> Vec<String> {
     let repo = r.repo.repo;
     let paths = if repo.paths.is_empty() {
         "(whole repo)".to_string()
@@ -96,9 +111,8 @@ fn cells(r: &LaidRepo, status: Option<&Status>) -> Vec<String> {
         repo.effective_ref().to_string(),
         paths,
     ];
-    if let Some(status) = status {
-        let row = status.rows.get(r.repo.id);
-        cells.push(row.and_then(|row| row.sha.clone()).unwrap_or("-".into()));
+    if let Some(row) = row {
+        cells.push(row.sha.clone().unwrap_or("-".into()));
         cells.push(label(row).to_string());
     }
     cells
@@ -145,13 +159,12 @@ impl std::fmt::Display for StatusLabel {
     }
 }
 
-/// A Repo with no row has not been through `status::build`: nothing is known of it, so it
-/// reads as not locked.
-fn label(row: Option<&Row>) -> StatusLabel {
-    match row.map(|row| &row.kind) {
-        None | Some(Kind::NotLocked) => StatusLabel::NotLocked,
-        Some(Kind::Disabled) => StatusLabel::Disabled,
-        Some(Kind::Checkout(state)) => match state {
+/// How a row's Repo is labelled.
+fn label(row: &Row) -> StatusLabel {
+    match &row.kind {
+        Kind::NotLocked => StatusLabel::NotLocked,
+        Kind::Disabled => StatusLabel::Disabled,
+        Kind::Checkout(state) => match state {
             CheckoutState::InSync => StatusLabel::Ok,
             CheckoutState::Absent | CheckoutState::Dangling => StatusLabel::Missing,
             CheckoutState::Foreign => StatusLabel::Foreign,

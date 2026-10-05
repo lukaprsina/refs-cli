@@ -9,6 +9,7 @@ use crate::agent_file;
 use crate::config::{self, Config};
 use crate::diagnostic::{NotLocked, Note, SourceError};
 use crate::edit::Edit;
+use crate::exclude;
 use crate::lock::Lock;
 pub use crate::plan::{Checkout, Outcome};
 use crate::plan::{
@@ -539,7 +540,7 @@ fn apply(
     }
     match plan.exclude {
         Some(ExcludeAction::Ensure) => {
-            if let Err(e) = project::ensure_exclude(root, references_dir) {
+            if let Err(e) = exclude::ensure(root, references_dir) {
                 diagnostics.push(e.into());
                 outcome = Outcome::Failed;
             }

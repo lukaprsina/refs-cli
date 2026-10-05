@@ -1,7 +1,6 @@
 //! What `refs list --status` knows about each Repo: one row per Repo in the config, built
 //! from the Lock and the Checkout state `inspect` finds. `list` only renders the rows.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use crate::active::{active, layout};
@@ -19,18 +18,20 @@ pub enum Kind {
     Checkout(CheckoutState),
 }
 
-/// One Repo's row: the short locked SHA (when the Lock has a Pin for it, disabled or not)
-/// and its `Kind`.
+/// One Repo's row: its id, the short locked SHA (when the Lock has a Pin for it, disabled or
+/// not) and its `Kind`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
+    pub id: String,
     pub sha: Option<String>,
     pub kind: Kind,
 }
 
-/// The rows of every Repo in the config, by repo id.
+/// The rows of every Repo in the config, in the order `active::layout` walks it, so `list`
+/// pairs each Repo with its row by position and a Repo cannot lack one.
 #[derive(Debug, Clone, Default)]
 pub struct Status {
-    pub rows: HashMap<String, Row>,
+    pub rows: Vec<Row>,
 }
 
 /// One row per Repo. Only active Repos are inspected, as the plan does, so a broken disabled
@@ -42,7 +43,7 @@ pub fn build(
 ) -> Result<Status, Vec<miette::Report>> {
     let lock = Lock::read(&Lock::path(root)).map_err(|e| vec![miette::Report::new(e)])?;
     let set = active(config);
-    let checkouts = Checkouts::observe_active(&set, |name| {
+    let checkouts = Checkouts::observe(&set, &[], |name| {
         source.inspect(name).map_err(|e| e.for_repo(name))
     })?;
     let rows = layout(config)
@@ -59,7 +60,11 @@ pub fn build(
                 }
                 (true, _, _) => Kind::NotLocked,
             };
-            (id.to_string(), Row { sha, kind })
+            Row {
+                id: id.to_string(),
+                sha,
+                kind,
+            }
         })
         .collect();
     Ok(Status { rows })

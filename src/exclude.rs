@@ -1,6 +1,6 @@
 //! The Exclude rule: the line that keeps the references directory out of default search,
-//! kept in the repository's local git exclude file. The text functions are pure; `observe`
-//! and `ensure` find and read or write the file.
+//! kept in the repository's local git exclude file. `observe` and `ensure` find and read or
+//! write the file.
 
 use std::io::ErrorKind;
 use std::path::Path;
@@ -11,12 +11,12 @@ use crate::plan::Exclude;
 use crate::worktree::Worktree;
 
 /// Whether `rule` is a line of the exclude file `text`, ignoring surrounding whitespace.
-pub fn rule_present(text: &str, rule: &str) -> bool {
+fn rule_present(text: &str, rule: &str) -> bool {
     text.lines().any(|l| l.trim() == rule)
 }
 
 /// `text` with `rule` appended as a line; a missing final newline is supplied first.
-pub fn with_rule(text: &str, rule: &str) -> String {
+fn with_rule(text: &str, rule: &str) -> String {
     let mut out = text.to_string();
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
@@ -36,15 +36,22 @@ fn locate(root: &Path, references_dir: &str) -> Option<(PathBuf, String)> {
     ))
 }
 
+/// The text of the exclude file at `path`; empty when there is none yet.
+fn read(path: &Path) -> std::io::Result<String> {
+    match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(String::new()),
+        other => other,
+    }
+}
+
 /// Whether the Exclude rule for `references_dir` is in place.
 pub fn observe(root: &Path, references_dir: &str) -> Result<Exclude, ProjectError> {
     let Some((path, rule)) = locate(root, references_dir) else {
         return Ok(Exclude::NoGit);
     };
-    match std::fs::read_to_string(&path) {
+    match read(&path) {
         Ok(text) if rule_present(&text, &rule) => Ok(Exclude::Present),
         Ok(_) => Ok(Exclude::Missing),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(Exclude::Missing),
         Err(source) => Err(ProjectError::Read {
             path: path.display().to_string(),
             source,
@@ -62,11 +69,7 @@ pub fn ensure(root: &Path, references_dir: &str) -> Result<(), ProjectError> {
         path: path.display().to_string(),
         source,
     };
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
-        Err(source) => return Err(write(source)),
-    };
+    let text = read(&path).map_err(write)?;
     if rule_present(&text, &rule) {
         return Ok(());
     }

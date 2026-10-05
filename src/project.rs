@@ -170,9 +170,3 @@ pub fn observe(root: &Path, config: &Config) -> Result<ProjectObserved, miette::
         exclude,
     })
 }
-
-/// Add the exclude rule for `references_dir` to the Project's git exclude file, unless it is
-/// already there.
-pub fn ensure_exclude(root: &Path, references_dir: &str) -> Result<(), ProjectError> {
-    exclude::ensure(root, references_dir)
-}
