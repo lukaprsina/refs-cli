@@ -111,14 +111,14 @@ fn cells(r: &LaidRepo, status: Option<&Status>) -> Vec<String> {
             .and_then(|lock| lock.get(r.repo.id))
             .map_or("-", |l| l.pin.short_id());
         cells.push(sha.to_string());
-        cells.push(checkout_state(status, r).to_string());
+        cells.push(status_label(status, r).to_string());
     }
     cells
 }
 
 /// Where one repo stands against the Lock and the disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CheckoutState {
+pub enum StatusLabel {
     Ok,
     /// Locked, but nothing (or a dangling directory) is checked out.
     Missing,
@@ -132,33 +132,33 @@ pub enum CheckoutState {
     Disabled,
 }
 
-impl std::fmt::Display for CheckoutState {
+impl std::fmt::Display for StatusLabel {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.write_str(match self {
-            CheckoutState::Ok => "ok",
-            CheckoutState::Missing => "missing",
-            CheckoutState::WrongSha => "wrong SHA",
-            CheckoutState::WrongPaths => "wrong paths",
-            CheckoutState::Foreign => "foreign",
-            CheckoutState::NotLocked => "not locked",
-            CheckoutState::Disabled => "disabled",
+            StatusLabel::Ok => "ok",
+            StatusLabel::Missing => "missing",
+            StatusLabel::WrongSha => "wrong SHA",
+            StatusLabel::WrongPaths => "wrong paths",
+            StatusLabel::Foreign => "foreign",
+            StatusLabel::NotLocked => "not locked",
+            StatusLabel::Disabled => "disabled",
         })
     }
 }
 
-fn checkout_state(status: &Status, laid: &LaidRepo) -> CheckoutState {
+fn status_label(status: &Status, laid: &LaidRepo) -> StatusLabel {
     let r = laid.repo;
     if !laid.enabled {
-        return CheckoutState::Disabled;
+        return StatusLabel::Disabled;
     }
     let Some(locked) = status.lock.as_ref().and_then(|lock| lock.get(r.id)) else {
-        return CheckoutState::NotLocked;
+        return StatusLabel::NotLocked;
     };
     match status.observed.get(r.id) {
-        None | Some(Observed::Absent | Observed::Dangling) => CheckoutState::Missing,
-        Some(Observed::Foreign) => CheckoutState::Foreign,
-        Some(seen) if seen.matches(r.repo, &locked.pin) => CheckoutState::Ok,
-        Some(Observed::At { pin, .. }) if !pin.same_commit(&locked.pin) => CheckoutState::WrongSha,
-        Some(Observed::At { .. }) => CheckoutState::WrongPaths,
+        None | Some(Observed::Absent | Observed::Dangling) => StatusLabel::Missing,
+        Some(Observed::Foreign) => StatusLabel::Foreign,
+        Some(seen) if seen.matches(r.repo, &locked.pin) => StatusLabel::Ok,
+        Some(Observed::At { pin, .. }) if !pin.same_commit(&locked.pin) => StatusLabel::WrongSha,
+        Some(Observed::At { .. }) => StatusLabel::WrongPaths,
     }
 }
