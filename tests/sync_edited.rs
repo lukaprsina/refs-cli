@@ -7,7 +7,7 @@ use refs_cli::config::parse;
 use refs_cli::diagnostic::SourceError;
 use refs_cli::edit::{AddRepo, Edit, Target};
 use refs_cli::source::fake::{Call, FakeSource, Method};
-use refs_cli::sync::{Change, Edited, Outcome, SyncFlags, edit};
+use refs_cli::sync::{Change, Edited, Hint, Outcome, SyncFlags, edit};
 use tempfile::TempDir;
 
 const BEFORE: &str = "[repos.a]\nurl = \"https://github.com/o/a\"\n";
@@ -306,4 +306,65 @@ fn a_remove_with_a_broken_repo_drops_the_removed_checkout_too() {
     assert_eq!(edited.report.outcome, Outcome::Failed);
     assert!(!checked_out(&source, "a"));
     assert!(checked_out(&source, "b"));
+}
+
+fn no_sync_add(dir: &TempDir, source: &FakeSource, name: &str) -> Edited {
+    let req = AddRepo {
+        url: format!("https://github.com/o/{name}"),
+        ..AddRepo::default()
+    };
+    edit(
+        dir.path(),
+        &Edit::Add(&req),
+        true,
+        || Ok::<_, SourceError>(source),
+        &SyncFlags::default(),
+    )
+}
+
+#[test]
+fn an_edit_carries_the_hint_for_what_it_left_behind() {
+    // Written without a sync: the project is incomplete.
+    let (dir, source) = (project(), FakeSource::new());
+    let edited = no_sync_add(&dir, &source, "b");
+    assert_eq!(edited.change, Change::Written);
+    assert_eq!(edited.report.hint, Some(Hint::RunSync));
+
+    // Nothing to write and nothing to sync.
+    let edited = edit(
+        dir.path(),
+        &Edit::Enable(Target::Repo("a")),
+        true,
+        || Ok::<_, SourceError>(&source),
+        &SyncFlags::default(),
+    );
+    assert_eq!(edited.change, Change::Unchanged);
+    assert_eq!(edited.report.hint, None);
+
+    // Written and synced.
+    let (dir, source) = (project(), FakeSource::new());
+    let edited = add(&dir, &source, "b", &SyncFlags::default());
+    assert_eq!(edited.report.hint, None);
+
+    // Written, then the checkout failed.
+    let (dir, source) = (project(), FakeSource::new());
+    source.fail("b", Method::Materialise, "disk full");
+    let edited = add(&dir, &source, "b", &SyncFlags::default());
+    assert_eq!(edited.change, Change::Written);
+    assert_eq!(edited.report.outcome, Outcome::Failed);
+    assert_eq!(edited.report.hint, Some(Hint::FixOrRemoveThenSync));
+
+    // Rejected: `refs.toml` is as it was.
+    let (dir, source) = (project(), FakeSource::new());
+    source.fail("b", Method::Resolve, "no such ref");
+    let edited = add(&dir, &source, "b", &SyncFlags::default());
+    assert_eq!(edited.change, Change::Rejected);
+    assert_eq!(edited.report.hint, Some(Hint::ConfigUnchanged));
+
+    // Nothing to write, and the sync it fell back to failed.
+    let (dir, source) = (project(), FakeSource::new());
+    source.fail("a", Method::Resolve, "no such ref");
+    let edited = enable(&dir, &source, "a");
+    assert_eq!(edited.change, Change::Unchanged);
+    assert_eq!(edited.report.hint, Some(Hint::RunSyncOnceFixed));
 }

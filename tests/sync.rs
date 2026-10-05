@@ -5,7 +5,7 @@ use refs_cli::lock::Lock;
 use refs_cli::plan::{Drift, LockFlags};
 use refs_cli::source::fake::{Call, FakeSource, Method};
 use refs_cli::source::{Observed, Source};
-use refs_cli::sync::{Outcome, Report, SyncFlags, lock, sync};
+use refs_cli::sync::{Hint, Outcome, Report, SyncFlags, lock, sync};
 use tempfile::TempDir;
 
 const A: &str = r#"
@@ -532,4 +532,42 @@ fn a_file_left_empty_by_removing_the_block_is_kept() {
     p.config = parse(NO_REPOS).unwrap();
     assert_eq!(p.sync(&SyncFlags::default()).outcome, Outcome::InSync);
     assert_eq!(p.read("AGENTS.md").as_deref(), Some(""));
+}
+
+#[test]
+fn a_sync_that_failed_or_was_refused_carries_the_retry_hint_and_no_other_run_does() {
+    let failed = Project::new(A);
+    failed.source.fail("a", Method::Resolve, "remote gone");
+    let refused = Project::new(A);
+    refused.source.seed("a", Observed::Foreign);
+    let fine = Project::new(A);
+    let stale = Project::new(A);
+
+    assert_eq!(
+        failed.sync(&SyncFlags::default()).hint,
+        Some(Hint::RunSyncOnceFixed)
+    );
+    assert_eq!(
+        refused.sync(&SyncFlags::default()).hint,
+        Some(Hint::RunSyncOnceFixed)
+    );
+    assert_eq!(fine.sync(&SyncFlags::default()).hint, None);
+    let check = SyncFlags {
+        check: true,
+        ..SyncFlags::default()
+    };
+    let out_of_date = stale.sync(&check);
+    assert_eq!(out_of_date.outcome, Outcome::OutOfDate);
+    assert_eq!(out_of_date.hint, None);
+}
+
+#[test]
+fn lock_never_carries_a_hint() {
+    let p = Project::new(A);
+    p.source.fail("a", Method::Resolve, "remote gone");
+
+    let report = lock(&p.source, p.dir.path(), &p.config, &LockFlags::default());
+
+    assert_eq!(report.outcome, Outcome::Failed);
+    assert_eq!(report.hint, None);
 }

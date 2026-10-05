@@ -38,6 +38,44 @@ pub enum Changed {
     AgentFile(String),
 }
 
+/// The follow-up the CLI gives a user whose project a run left incomplete or failed, named
+/// for why it is given. Decided here (`hint`); `cli` only gives each its words (ADR 0005).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hint {
+    /// `refs.toml` was written without a sync (`--no-sync`): the project is incomplete.
+    RunSync,
+    /// A `sync` failed or was refused, or an edit that changed nothing did.
+    RunSyncOnceFixed,
+    /// `refs.toml` was written, then the sync failed or was refused.
+    FixOrRemoveThenSync,
+    /// The edit was rejected, so `refs.toml` is as it was.
+    ConfigUnchanged,
+}
+
+/// The command a Report is for, as far as its hint goes. `lock` has no hint.
+enum Origin {
+    Sync,
+    Edit { change: Change, no_sync: bool },
+}
+
+/// At most one hint per run: with `no_sync` an edit does not sync, so it cannot also fail.
+fn hint(origin: Origin, outcome: Outcome) -> Option<Hint> {
+    let incomplete = matches!(outcome, Outcome::Failed | Outcome::Refused);
+    match origin {
+        Origin::Sync => incomplete.then_some(Hint::RunSyncOnceFixed),
+        Origin::Edit { change, no_sync } => {
+            if no_sync && change == Change::Written {
+                return Some(Hint::RunSync);
+            }
+            incomplete.then_some(match change {
+                Change::Written => Hint::FixOrRemoveThenSync,
+                Change::Rejected => Hint::ConfigUnchanged,
+                Change::Unchanged => Hint::RunSyncOnceFixed,
+            })
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Report {
     pub outcome: Outcome,
@@ -47,6 +85,8 @@ pub struct Report {
     pub drift: Vec<Drift>,
     /// Refusals, failures and notes, in the order they happened.
     pub diagnostics: Vec<miette::Report>,
+    /// What to tell the user to do next, if anything.
+    pub hint: Option<Hint>,
 }
 
 impl Report {
@@ -56,7 +96,13 @@ impl Report {
             changes: Vec::new(),
             drift,
             diagnostics,
+            hint: None,
         }
+    }
+
+    fn with_hint(mut self, origin: Origin) -> Report {
+        self.hint = hint(origin, self.outcome);
+        self
     }
 
     fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
@@ -122,6 +168,7 @@ fn finish(stage_one: StageOne, drift: Vec<Drift>, stage_two: StageTwo) -> Report
         changes,
         drift,
         diagnostics: concluded.diagnostics,
+        hint: None,
     }
 }
 
@@ -160,6 +207,10 @@ pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags
 
 /// `refs sync`. With `check`, nothing is resolved, verified, fetched or written.
 pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
+    run_sync(source, root, config, flags).with_hint(Origin::Sync)
+}
+
+fn run_sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
     let Preflight { active, old, drift } = match preflight(root, config) {
         Ok(preflight) => preflight,
         Err(report) => return report,
@@ -259,10 +310,15 @@ pub struct Edited {
 }
 
 fn rejected(report: Report) -> Edited {
+    // A rejected edit never syncs, so `no_sync` does not change its hint.
+    let origin = Origin::Edit {
+        change: Change::Rejected,
+        no_sync: false,
+    };
     Edited {
         change: Change::Rejected,
         group_created: None,
-        report,
+        report: report.with_hint(origin),
     }
 }
 
@@ -296,10 +352,10 @@ pub fn edit<S: Source>(
         Ok(config) => config,
         Err(e) => return rejected(Report::failed(e)),
     };
-    let edited = |change, report| Edited {
+    let edited = |change, report: Report| Edited {
         change,
         group_created: applied.group_created.clone(),
-        report,
+        report: report.with_hint(Origin::Edit { change, no_sync }),
     };
     let unchanged = after == before;
     if no_sync {

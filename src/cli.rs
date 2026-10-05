@@ -20,7 +20,7 @@ use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::source::Source;
-use crate::sync::{self, Change, Changed, Checkout, Edited, Outcome, Report, SyncFlags};
+use crate::sync::{self, Change, Changed, Checkout, Edited, Hint, Outcome, Report, SyncFlags};
 
 const EXIT_ERROR: u8 = 1;
 const EXIT_OUT_OF_DATE: u8 = 3;
@@ -330,7 +330,7 @@ fn run_config<'a>(
         || make_source(root, config),
         &SyncFlags::default(),
     );
-    print_edited(&edited, flags.no_sync, console)
+    print_edited(&edited, console)
 }
 
 /// `refs list --status`: the config, the Lock and the Checkout state of each active repo.
@@ -369,13 +369,13 @@ fn run_source<'a>(
         Err(e) => return fail(e, console),
     };
     let source = &*source;
-    let (report, check, retry) = match command {
+    let (report, check) = match command {
         SourceCommand::Lock(args) => {
             let flags = LockFlags {
                 upgrade: args.upgrade(),
                 offline: false,
             };
-            (sync::lock(source, root, config, &flags), false, false)
+            (sync::lock(source, root, config, &flags), false)
         }
         SourceCommand::Sync(args) => {
             let flags = SyncFlags {
@@ -383,21 +383,31 @@ fn run_source<'a>(
                 force: args.force,
                 check: args.check,
             };
-            (sync::sync(source, root, config, &flags), args.check, true)
+            (sync::sync(source, root, config, &flags), args.check)
         }
     };
     print(&report, check, console);
-    if retry && matches!(report.outcome, Outcome::Failed | Outcome::Refused) {
-        console.problem(HINT_FIXED);
-    }
     exit_code(report.outcome)
 }
 
-const HINT_SYNC: &str = "run `refs sync` to bring the project up to date";
-const HINT_FIXED: &str = "run `refs sync` once the problem is fixed";
+/// The words of a hint (ADR 0005). Not a status line: the project is incomplete or failed,
+/// so `-q` does not hide it.
+fn say_hint(hint: Hint, console: &mut Console) {
+    match hint {
+        Hint::RunSync => console.problem("run `refs sync` to bring the project up to date"),
+        Hint::RunSyncOnceFixed => console.problem("run `refs sync` once the problem is fixed"),
+        Hint::FixOrRemoveThenSync => console.problem(format_args!(
+            "{} was updated; fix or remove the broken repo, then run `refs sync`",
+            project::CONFIG_FILE
+        )),
+        Hint::ConfigUnchanged => {
+            console.problem(format_args!("{} was not changed", project::CONFIG_FILE))
+        }
+    }
+}
 
 /// Say what `sync::edit` did, and give the exit code.
-fn print_edited(edited: &Edited, no_sync: bool, console: &mut Console) -> u8 {
+fn print_edited(edited: &Edited, console: &mut Console) -> u8 {
     if edited.change == Change::Written {
         console.status(format_args!("updated {}", project::CONFIG_FILE));
     }
@@ -405,24 +415,7 @@ fn print_edited(edited: &Edited, no_sync: bool, console: &mut Console) -> u8 {
         console.status(format_args!("created group `{group}`"));
     }
     print(&edited.report, false, console);
-    let outcome = edited.report.outcome;
-    if no_sync && edited.change == Change::Written {
-        // Not a status line: the project is incomplete, so `-q` does not hide it.
-        console.problem(HINT_SYNC);
-    }
-    if matches!(outcome, Outcome::Failed | Outcome::Refused) {
-        match edited.change {
-            Change::Written => console.problem(format_args!(
-                "{} was updated; fix or remove the broken repo, then run `refs sync`",
-                project::CONFIG_FILE
-            )),
-            Change::Rejected => {
-                console.problem(format_args!("{} was not changed", project::CONFIG_FILE))
-            }
-            Change::Unchanged => console.problem(HINT_FIXED),
-        }
-    }
-    exit_code(outcome)
+    exit_code(edited.report.outcome)
 }
 
 /// `refs init`: it needs no loaded project, as there may be none yet.
@@ -526,5 +519,8 @@ fn print(report: &Report, check: bool, console: &mut Console) {
         } else {
             "nothing changed"
         });
+    }
+    if let Some(hint) = report.hint {
+        say_hint(hint, console);
     }
 }
