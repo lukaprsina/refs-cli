@@ -2,7 +2,6 @@
 //! plans through `Source`, and collects what happened. Which names are observed, how Lock
 //! entries are built, and how a Plan becomes an outcome are decided in `plan`.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use crate::active::{ActiveSet, active};
@@ -15,7 +14,7 @@ use crate::lock::Lock;
 pub use crate::plan::{Checkout, Outcome};
 use crate::plan::{
     Checkouts, Coverage, Drift, ExcludeAction, Failure, Keep, LockFlags, Plan, RepoAction, Settled,
-    Step, check_outcome, conclude, lock_drift, locked, plan_checkouts, plan_lock, settle,
+    Step, check_outcome, classify, conclude, lock_drift, locked, plan_checkouts, plan_lock, settle,
 };
 use crate::project;
 use crate::source::{MaterialiseOpts, Source, VerifyOpts};
@@ -360,16 +359,31 @@ pub fn edit<S: Source>(
     edited(Change::Written, report)
 }
 
-/// The Lock and what `inspect` finds for every repo of the config, for `list --status`.
-pub fn status(source: &dyn Source, root: &Path, config: &Config) -> Result<Status, miette::Report> {
-    let lock = Lock::read(&Lock::path(root)).map_err(miette::Report::new)?;
-    let mut observed = HashMap::new();
-    for id in config.repos.keys() {
-        let id = id.as_ref().as_str();
-        let seen = source.inspect(id).map_err(miette::Report::new)?;
-        observed.insert(id.to_string(), seen);
-    }
-    Ok(Status { lock, observed })
+/// The Lock and the Checkout state of each active Repo it has a Pin for, for `list --status`.
+/// Only active Repos are inspected, as the plan does, so a broken disabled Repo does not fail
+/// it. Every inspect failure is collected.
+pub fn status(
+    source: &dyn Source,
+    root: &Path,
+    config: &Config,
+) -> Result<Status, Vec<miette::Report>> {
+    let lock = Lock::read(&Lock::path(root)).map_err(|e| vec![miette::Report::new(e)])?;
+    let set = active(config);
+    let checkouts = Checkouts::observe(&set, &[], |name| {
+        source.inspect(name).map_err(|e| e.for_repo(name))
+    })?;
+    let states = set
+        .repos()
+        .filter_map(|repo| {
+            let locked = lock.as_ref()?.get(repo.id)?;
+            let observed = checkouts.get(repo.id)?;
+            Some((
+                repo.id.to_string(),
+                classify(observed, repo.repo, &locked.pin),
+            ))
+        })
+        .collect();
+    Ok(Status { lock, states })
 }
 
 /// Stage 1 for `lock` and `sync`: all or nothing. A failure of any Repo fails the run with

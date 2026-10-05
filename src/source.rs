@@ -4,8 +4,6 @@
 pub mod fake;
 pub mod git;
 
-use std::collections::BTreeSet;
-
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Repo, RepoRef, is_full_sha};
@@ -96,19 +94,6 @@ impl Pin {
             } if git_ref == "HEAD" => branch.as_deref().unwrap_or(git_ref),
             PinKind::Git { git_ref, .. } => git_ref,
         }
-    }
-}
-
-impl Observed {
-    /// Whether this is a Checkout of `locked` with the Paths `repo` asks for (as a set, so
-    /// order and repeats do not matter). The one rule behind the checkout stage of the
-    /// Plan and `list --status`; a `Pin`'s `branch` does not count.
-    pub fn matches(&self, repo: &Repo, locked: &Pin) -> bool {
-        let Observed::At { pin, paths, .. } = self else {
-            return false;
-        };
-        let set = |v: &[String]| v.iter().cloned().collect::<BTreeSet<_>>();
-        pin.same_commit(locked) && set(paths) == set(&repo.path_strings())
     }
 }
 

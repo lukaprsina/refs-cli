@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Fail when a doc names a `Type::item` that no longer exists under src/.
+
+Checks the backticked `Type::item` references in GLOSSARY.md, docs/adr and docs/spec: a
+lowercase item must be a `fn` in an `impl` or `trait` of Type, an uppercase one a variant of
+the enum Type. Module paths (`plan::classify`) and types not defined in src/ are skipped.
+"""
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(__file__).resolve().parent.parent
+src = "\n".join(p.read_text(encoding="utf-8") for p in sorted((root / "src").rglob("*.rs")))
+docs = [
+    root / "GLOSSARY.md",
+    *sorted((root / "docs" / "adr").glob("*.md")),
+    *sorted((root / "docs" / "spec").glob("*.md")),
+]
+ref = re.compile(r"`([A-Z][A-Za-z0-9]*)::([A-Za-z_][A-Za-z0-9_]*)")
+vis = r"(?:pub(?:\([a-z]+\))? )?"
+
+
+def block(header: str, inner: str) -> bool:
+    """`inner` appears in a top-level block opened by `header` (it ends at a `}` in column 0)."""
+    pattern = "^" + header + r"[^\n]*\{\n(?:(?!\}).*\n)*?[^\n]*" + inner
+    return re.search(pattern, src, re.M) is not None
+
+
+def exists(ty: str, item: str) -> bool:
+    if re.search(rf"\b(struct|enum|trait|type)\s+{ty}\b", src) is None:
+        return True  # not one of ours (a std or dependency type)
+    if item[0].isupper():
+        return block(rf"{vis}enum\s+{ty}\b", rf"\b{item}\b")
+    impl = rf"impl(?:<[^>]*>)?\s+(?:[\w:]+(?:<[^>]*>)?\s+for\s+)?{ty}\b"
+    trait = rf"{vis}trait\s+{ty}\b"
+    fn = rf"\bfn\s+{item}\b"
+    return block(impl, fn) or block(trait, fn)
+
+
+missing = []
+for doc in docs:
+    for number, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
+        for ty, item in ref.findall(line):
+            if not exists(ty, item):
+                missing.append(f"{doc.relative_to(root)}:{number}: `{ty}::{item}` is not in src/")
+if missing:
+    print("\n".join(missing), file=sys.stderr)
+    sys.exit(1)

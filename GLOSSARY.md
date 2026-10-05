@@ -88,6 +88,10 @@ _Avoid_: Broken, orphaned
 A directory in the references directory that refs did not create. It is never deleted or overwritten.
 _Avoid_: Conflict, unmanaged
 
+**Checkout state**:
+Where an active, locked Repo's Checkout stands against the Lock: in sync, absent, dangling, foreign, or stale (a different commit, or different Paths, with its dirty files if any). One classification, made once, that the Plan maps to actions and refusals. A Checkout that matches the Lock but is dirty is in sync.
+_Avoid_: Status
+
 **Dirty checkout**:
 A Checkout with changes made by hand, including untracked files. It is not moved or removed unless forced.
 _Avoid_: Modified, tainted

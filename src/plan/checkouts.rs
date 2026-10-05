@@ -7,6 +7,7 @@ use crate::agent_file::{splice, strip};
 use crate::config::RepoRef;
 use crate::diagnostic::{NotLocked, Note, Refusal};
 use crate::lock::Lock;
+use crate::plan::classify::{CheckoutState, classify};
 use crate::plan::outcome::Outcome;
 use crate::plan::settle::Coverage;
 use crate::render::render;
@@ -62,6 +63,11 @@ impl Checkouts {
         } else {
             Err(errors)
         }
+    }
+
+    /// What `observe` found for `id`: `None` for a name it did not inspect.
+    pub fn get(&self, id: &str) -> Option<&Observed> {
+        self.0.get(id)
     }
 
     fn of(&self, id: &str) -> &Observed {
@@ -234,34 +240,34 @@ pub fn plan_checkouts<'a>(
     for repo in active.repos() {
         let locked = lock.get(repo.id).expect("render checked the Lock");
         let pin = || locked.pin.clone();
-        match checkouts.of(repo.id) {
-            Observed::Absent => current.push(RepoAction::Materialise {
+        match classify(checkouts.of(repo.id), repo.repo, &locked.pin) {
+            CheckoutState::InSync => {}
+            CheckoutState::Absent => current.push(RepoAction::Materialise {
                 repo,
                 pin: pin(),
                 moving: false,
             }),
-            Observed::Dangling => current.push(RepoAction::Replace {
+            CheckoutState::Dangling => current.push(RepoAction::Replace {
                 repo,
                 pin: pin(),
                 moving: false,
                 note: Some(Note::Recreated { id: repo.id.into() }),
             }),
-            Observed::Foreign => refusals.push(Refusal::ForeignDir { id: repo.id.into() }),
-            seen @ Observed::At { .. } if seen.matches(repo.repo, &locked.pin) => {}
-            Observed::At { dirty_files, .. } if dirty_files.is_empty() => {
+            CheckoutState::Foreign => refusals.push(Refusal::ForeignDir { id: repo.id.into() }),
+            CheckoutState::Stale { dirty_files, .. } if dirty_files.is_empty() => {
                 current.push(RepoAction::Materialise {
                     repo,
                     pin: pin(),
                     moving: true,
                 })
             }
-            Observed::At { .. } if force => current.push(RepoAction::Replace {
+            CheckoutState::Stale { .. } if force => current.push(RepoAction::Replace {
                 repo,
                 pin: pin(),
                 moving: true,
                 note: None,
             }),
-            Observed::At { dirty_files, .. } => refusals.push(dirty(repo.id, dirty_files)),
+            CheckoutState::Stale { dirty_files, .. } => refusals.push(dirty(repo.id, &dirty_files)),
         }
     }
     // Names refs no longer manages. Only a checkout refs made (`At`) is touched; anything

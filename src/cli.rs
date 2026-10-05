@@ -338,7 +338,7 @@ fn run_config<'a>(
     print_edited(&edited, flags.no_sync, console)
 }
 
-/// `refs list --status`: the config, the Lock and what `inspect` finds for every repo.
+/// `refs list --status`: the config, the Lock and the Checkout state of each active repo.
 fn list_status<'a>(
     root: &Path,
     config: &Config,
@@ -347,14 +347,19 @@ fn list_status<'a>(
     console: &mut Console,
 ) -> u8 {
     let result = make_source(root, config)
-        .map_err(miette::Report::new)
+        .map_err(|e| vec![miette::Report::new(e)])
         .and_then(|source| sync::status(&*source, root, config));
     match result {
         Ok(status) => {
             console.data(&crate::list::list_status(config, &status, color));
             0
         }
-        Err(report) => fail(report, console),
+        Err(reports) => {
+            for report in reports {
+                console.report(report);
+            }
+            EXIT_ERROR
+        }
     }
 }
 

@@ -1,19 +1,21 @@
 //! `refs list`: every repo in the config, grouped, with its ref, paths and whether it is
-//! enabled. Pure: `list` reads the config only; `list_status` also takes the Lock and what is
-//! on disk, which `sync::status` collects. Both walk `active::layout`.
+//! enabled. Pure: `list` reads the config only; `list_status` also takes the Lock and the
+//! Checkout state of each locked Repo, which `sync::status` collects. Both walk
+//! `active::layout`.
 
 use std::collections::HashMap;
 
 use crate::active::{LaidRepo, layout};
 use crate::config::Config;
 use crate::lock::Lock;
-use crate::source::Observed;
+use crate::plan::{Cause, CheckoutState};
 
-/// What `refs list --status` adds to the config: the Lock and what is on disk, by repo id
-/// (an id with no entry counts as absent).
+/// What `refs list --status` adds to the config: the Lock and the Checkout state of each
+/// active Repo the Lock has a Pin for, by repo id. A Repo that is disabled or not locked has
+/// no entry: `list` labels those itself.
 pub struct Status {
     pub lock: Option<Lock>,
-    pub observed: HashMap<String, Observed>,
+    pub states: HashMap<String, CheckoutState>,
 }
 
 /// `color` dims the disabled lines with ANSI escapes.
@@ -22,7 +24,8 @@ pub fn list(config: &Config, color: bool) -> String {
 }
 
 /// `list` with the locked SHA (short) and the state of each checkout: ok, missing, wrong
-/// SHA, foreign, not locked, or disabled.
+/// SHA, wrong paths (either also `dirty` when sync would refuse to move it), foreign, not
+/// locked, or disabled.
 pub fn list_status(config: &Config, status: &Status, color: bool) -> String {
     render(config, Some(status), color)
 }
@@ -111,54 +114,74 @@ fn cells(r: &LaidRepo, status: Option<&Status>) -> Vec<String> {
             .and_then(|lock| lock.get(r.repo.id))
             .map_or("-", |l| l.pin.short_id());
         cells.push(sha.to_string());
-        cells.push(checkout_state(status, r).to_string());
+        cells.push(status_label(status, r).to_string());
     }
     cells
 }
 
-/// Where one repo stands against the Lock and the disk.
+/// How one repo's Checkout is labelled: its Checkout state, plus the two states `list`
+/// decides before there is one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CheckoutState {
+pub enum StatusLabel {
     Ok,
     /// Locked, but nothing (or a dangling directory) is checked out.
     Missing,
-    WrongSha,
+    /// Another commit is checked out; `dirty` when sync would refuse to move it.
+    WrongSha {
+        dirty: bool,
+    },
     /// The right commit, checked out with other `paths` than the config asks for (a set, so
-    /// order does not count); `sync` checks it out again.
-    WrongPaths,
+    /// order does not count); `sync` checks it out again unless it is `dirty`.
+    WrongPaths {
+        dirty: bool,
+    },
     /// A directory that is not one of ours is in the way.
     Foreign,
     NotLocked,
     Disabled,
 }
 
-impl std::fmt::Display for CheckoutState {
+impl std::fmt::Display for StatusLabel {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.write_str(match self {
-            CheckoutState::Ok => "ok",
-            CheckoutState::Missing => "missing",
-            CheckoutState::WrongSha => "wrong SHA",
-            CheckoutState::WrongPaths => "wrong paths",
-            CheckoutState::Foreign => "foreign",
-            CheckoutState::NotLocked => "not locked",
-            CheckoutState::Disabled => "disabled",
-        })
+        let (text, dirty) = match self {
+            StatusLabel::Ok => ("ok", false),
+            StatusLabel::Missing => ("missing", false),
+            StatusLabel::WrongSha { dirty } => ("wrong SHA", *dirty),
+            StatusLabel::WrongPaths { dirty } => ("wrong paths", *dirty),
+            StatusLabel::Foreign => ("foreign", false),
+            StatusLabel::NotLocked => ("not locked", false),
+            StatusLabel::Disabled => ("disabled", false),
+        };
+        f.write_str(text)?;
+        if dirty {
+            f.write_str(", dirty")?;
+        }
+        Ok(())
     }
 }
 
-fn checkout_state(status: &Status, laid: &LaidRepo) -> CheckoutState {
-    let r = laid.repo;
+fn status_label(status: &Status, laid: &LaidRepo) -> StatusLabel {
+    let id = laid.repo.id;
     if !laid.enabled {
-        return CheckoutState::Disabled;
+        return StatusLabel::Disabled;
     }
-    let Some(locked) = status.lock.as_ref().and_then(|lock| lock.get(r.id)) else {
-        return CheckoutState::NotLocked;
-    };
-    match status.observed.get(r.id) {
-        None | Some(Observed::Absent | Observed::Dangling) => CheckoutState::Missing,
-        Some(Observed::Foreign) => CheckoutState::Foreign,
-        Some(seen) if seen.matches(r.repo, &locked.pin) => CheckoutState::Ok,
-        Some(Observed::At { pin, .. }) if !pin.same_commit(&locked.pin) => CheckoutState::WrongSha,
-        Some(Observed::At { .. }) => CheckoutState::WrongPaths,
+    if status.lock.as_ref().and_then(|lock| lock.get(id)).is_none() {
+        return StatusLabel::NotLocked;
+    }
+    match status
+        .states
+        .get(id)
+        .expect("every locked, active Repo has a state")
+    {
+        CheckoutState::InSync => StatusLabel::Ok,
+        CheckoutState::Absent | CheckoutState::Dangling => StatusLabel::Missing,
+        CheckoutState::Foreign => StatusLabel::Foreign,
+        CheckoutState::Stale { cause, dirty_files } => {
+            let dirty = !dirty_files.is_empty();
+            match cause {
+                Cause::Commit => StatusLabel::WrongSha { dirty },
+                Cause::Paths => StatusLabel::WrongPaths { dirty },
+            }
+        }
     }
 }

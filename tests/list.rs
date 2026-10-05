@@ -3,7 +3,8 @@ use std::collections::HashMap;
 
 use refs_cli::list::{Status, list, list_status};
 use refs_cli::lock::{Lock, LockedRepo};
-use refs_cli::source::{Observed, Pin};
+use refs_cli::plan::{Cause, CheckoutState};
+use refs_cli::source::Pin;
 
 #[test]
 fn lists_repos_under_their_groups_with_ref_paths_and_disabled_marks() {
@@ -89,12 +90,19 @@ fn pin(sha: &str) -> Pin {
 }
 
 #[test]
-fn status_adds_the_locked_sha_and_the_state_of_each_checkout() {
+fn status_adds_the_locked_sha_and_the_label_of_each_checkout() {
+    use CheckoutState::{Absent, Dangling, Foreign, InSync, Stale};
     let config = parse(
         r#"
 [repos.ok]
 url = "https://github.com/o/r"
 [repos.moved]
+url = "https://github.com/o/r"
+[repos.paths]
+url = "https://github.com/o/r"
+[repos.dirty]
+url = "https://github.com/o/r"
+[repos.dirtypaths]
 url = "https://github.com/o/r"
 [repos.gone]
 url = "https://github.com/o/r"
@@ -118,85 +126,63 @@ enabled = false
     let lock = Lock::new(vec![
         entry("ok", '1'),
         entry("moved", '2'),
-        entry("gone", '3'),
-        entry("alien", '4'),
-        entry("hollow", '5'),
+        entry("paths", '3'),
+        entry("dirty", '4'),
+        entry("dirtypaths", '8'),
+        entry("gone", '5'),
+        entry("alien", '6'),
+        entry("hollow", '7'),
     ]);
-    let at = |c| Observed::At {
-        pin: pin(&sha(c)),
-        paths: vec![],
-        dirty_files: vec![],
+    let stale = |cause, dirty: &[&str]| Stale {
+        cause,
+        dirty_files: dirty.iter().map(|f| f.to_string()).collect(),
     };
-    let observed = HashMap::from([
-        ("ok".to_string(), at('1')),
-        ("moved".to_string(), at('9')),
-        ("gone".to_string(), Observed::Absent),
-        ("alien".to_string(), Observed::Foreign),
-        ("hollow".to_string(), Observed::Dangling),
+    let states = HashMap::from([
+        ("ok".to_string(), InSync),
+        ("moved".to_string(), stale(Cause::Commit, &[])),
+        ("paths".to_string(), stale(Cause::Paths, &[])),
+        ("dirty".to_string(), stale(Cause::Commit, &["x"])),
+        ("dirtypaths".to_string(), stale(Cause::Paths, &["x"])),
+        ("gone".to_string(), Absent),
+        ("alien".to_string(), Foreign),
+        ("hollow".to_string(), Dangling),
     ]);
     let status = Status {
         lock: Some(lock),
-        observed,
+        states,
     };
 
     assert_eq!(
         list_status(&config, &status, false),
-        "  ok      https://github.com/o/r  HEAD  (whole repo)  1111111  ok
-  moved   https://github.com/o/r  HEAD  (whole repo)  2222222  wrong SHA
-  gone    https://github.com/o/r  HEAD  (whole repo)  3333333  missing
-  new     https://github.com/o/r  HEAD  (whole repo)  -        not locked
-  hollow  https://github.com/o/r  HEAD  (whole repo)  5555555  missing
-  alien   https://github.com/o/r  HEAD  (whole repo)  4444444  foreign
-- off     https://github.com/o/r  HEAD  (whole repo)  -        disabled
+        "  ok          https://github.com/o/r  HEAD  (whole repo)  1111111  ok
+  moved       https://github.com/o/r  HEAD  (whole repo)  2222222  wrong SHA
+  paths       https://github.com/o/r  HEAD  (whole repo)  3333333  wrong paths
+  dirty       https://github.com/o/r  HEAD  (whole repo)  4444444  wrong SHA, dirty
+  dirtypaths  https://github.com/o/r  HEAD  (whole repo)  8888888  wrong paths, dirty
+  gone        https://github.com/o/r  HEAD  (whole repo)  5555555  missing
+  new         https://github.com/o/r  HEAD  (whole repo)  -        not locked
+  hollow      https://github.com/o/r  HEAD  (whole repo)  7777777  missing
+  alien       https://github.com/o/r  HEAD  (whole repo)  6666666  foreign
+- off         https://github.com/o/r  HEAD  (whole repo)  -        disabled
 "
     );
 }
 
 #[test]
-fn status_compares_paths_as_a_set() {
+fn status_without_a_lock_says_not_locked() {
     let config = parse(
-        r#"
-[repos.same]
-url = "https://github.com/o/r"
-paths = ["b", "a", "b"]
-[repos.other]
-url = "https://github.com/o/r"
-paths = ["a"]
-"#,
+        "[repos.a]
+url = \"https://github.com/o/r\"
+",
     )
     .unwrap();
-    let sha = "1".repeat(40);
-    let entry = |id: &str| LockedRepo {
-        id: id.into(),
-        pin: pin(&sha),
-    };
-    let at = |paths: &[&str]| Observed::At {
-        pin: pin(&sha),
-        paths: paths.iter().map(|p| p.to_string()).collect(),
-        dirty_files: vec![],
-    };
-    let status = Status {
-        lock: Some(Lock::new(vec![entry("same"), entry("other")])),
-        observed: HashMap::from([
-            ("same".to_string(), at(&["a", "b"])),
-            ("other".to_string(), at(&["a", "b"])),
-        ]),
-    };
-
-    let out = list_status(&config, &status, false);
-    assert!(out.contains("1111111  ok\n"), "{out}");
-    assert!(out.contains("1111111  wrong paths\n"), "{out}");
-}
-
-#[test]
-fn status_without_a_lock_says_not_locked() {
-    let config = parse("[repos.a]\nurl = \"https://github.com/o/r\"\n").unwrap();
     let status = Status {
         lock: None,
-        observed: HashMap::new(),
+        states: HashMap::new(),
     };
     assert_eq!(
         list_status(&config, &status, false),
-        "  a  https://github.com/o/r  HEAD  (whole repo)  -  not locked\n"
+        "  a  https://github.com/o/r  HEAD  (whole repo)  -  not locked
+"
     );
 }
