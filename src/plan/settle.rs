@@ -30,6 +30,16 @@ pub struct Coverage<'a> {
     pub withheld: Vec<String>,
 }
 
+impl Failure {
+    /// `error` as it happened to the Repo `id`.
+    pub fn new(id: &str, error: crate::diagnostic::SourceError) -> Failure {
+        Failure {
+            id: id.into(),
+            error: error.for_repo(id),
+        }
+    }
+}
+
 impl<'a> Coverage<'a> {
     /// Every active Repo is covered and nothing is withheld.
     pub fn full(active: ActiveSet<'a>) -> Coverage<'a> {
@@ -67,8 +77,8 @@ pub fn settle<'a>(
     let accepted = failures.is_empty() || keep == Keep::Passing;
     let lock = Lock::new(passed);
     let write_lock = accepted && old != Some(&lock);
-    let (withheld, errors) = failures.into_iter().map(|f| (f.id, f.error)).unzip();
-    let withheld: Vec<String> = withheld;
+    let (withheld, errors): (Vec<String>, Vec<miette::Report>) =
+        failures.into_iter().map(|f| (f.id, f.error)).unzip();
     Settled {
         lock,
         write_lock,

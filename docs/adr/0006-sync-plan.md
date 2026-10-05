@@ -12,7 +12,7 @@ This is the one statement of how `sync` decides and acts. `plan` decides everyth
 
 `verify` stays separate from `resolve` because pin reuse skips `resolve` (a floating ref keeps its SHA when `paths` change) while edited `paths` and `start` must still be checked against that SHA.
 
-## Two stages
+## Two stages and a step between
 
 Which Repos re-resolve is a pure decision, but the pins it produces exist only after `resolve` has run, so one `plan` over (config, Lock, `Observed`) cannot also decide the checkouts. Planning is two pure functions with the executor between them, and for the failures of stage 1 a third pure step.
 
@@ -20,7 +20,7 @@ Which Repos re-resolve is a pure decision, but the pins it produces exist only a
 2. `settle(active, old Lock, passed entries, failures, keep)` is the pure step after the executor has resolved and verified, and before stage 2. The failure policy `keep` is an input: `AllOrNothing` (nothing is written unless every Repo passed) or `Passing` (the entries that passed are written); `plan` does not know which edit asked for which. It returns the Lock to write, whether to write it (the policy keeps it and it differs from the Lock on disk), the `Coverage`, the errors in the order the failures came, and whether the edit is accepted, that is may be written to `refs.toml`. It is a separate step because Coverage depends on results that only exist after stage 1's I/O.
 3. `plan_checkouts(coverage, lock, checkouts, project, force)` returns a `Plan`. `Coverage` is the active Repos the Lock covers (**Covered**) and the ids it could not lock (**Withheld**); a plain `sync` or `--check` passes full coverage.
 
-`refs lock` is stage 1 plus a write. `sync` always runs stage 1 (with `AllOrNothing`) (with a current Lock every step is a reuse, but every Repo is verified, and the Lock is written only if it changed), then stage 2. `sync --check` runs stage 2 only, against the existing Lock; a missing or stale Lock is out of date without resolving.
+`refs lock` is stage 1 plus a write. `sync` always runs stage 1 with `AllOrNothing` (with a current Lock every step is a reuse, but every Repo is verified, and the Lock is written only if it changed), then stage 2. `sync --check` runs stage 2 only, against the existing Lock; a missing or stale Lock is out of date without resolving.
 
 ## The Plan is grouped by Repo
 

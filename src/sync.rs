@@ -338,10 +338,7 @@ fn run_stage_one<'a>(
             Step::Reuse(entry) => entries.push(entry),
             Step::Resolve(repo) => match source.resolve(repo) {
                 Ok(pin) => entries.push(locked(repo, pin)),
-                Err(e) => failures.push(Failure {
-                    id: repo.id.into(),
-                    error: e.for_repo(repo.id),
-                }),
+                Err(e) => failures.push(Failure::new(repo.id, e)),
             },
         }
     }
@@ -355,10 +352,7 @@ fn run_stage_one<'a>(
             .expect("a step is made per active Repo");
         match source.verify(repo, &entry.pin, verify_opts) {
             Ok(()) => passed.push(entry),
-            Err(e) => failures.push(Failure {
-                id: repo.id.into(),
-                error: e.for_repo(repo.id),
-            }),
+            Err(e) => failures.push(Failure::new(repo.id, e)),
         }
     }
     let settled = settle(active, old.as_ref(), passed, failures, keep);
