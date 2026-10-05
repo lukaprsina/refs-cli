@@ -208,14 +208,6 @@ fn dirty(id: &str, files: &[String]) -> Refusal {
     }
 }
 
-/// What the plan does to the Managed block of every Agent file.
-#[derive(PartialEq)]
-enum Block {
-    Write(String),
-    Strip,
-    Leave,
-}
-
 /// Plan stage 2 against the Lock and what is on disk. The Repos in `coverage` are planned
 /// for; the Withheld ones, which stage 1 could not lock, are left out of the block and their
 /// Checkouts are left alone, neither made, moved nor removed.
@@ -227,15 +219,15 @@ pub fn plan_checkouts<'a>(
     force: bool,
 ) -> Result<Plan<'a>, NotLocked> {
     let Coverage { active, withheld } = coverage;
-    // With no active Repo there is nothing to list: the block goes, markers included. If
-    // every active Repo is withheld the block is left as it is: there is nothing true to say.
+    // With no active Repo there is nothing to list: the block goes, markers included, unless
+    // that is only because every Repo is withheld. Then there is nothing true to write and
+    // stripping would claim there are no Repos, so a block that is there is refused as stale.
     let block = if active.repos().next().is_some() {
-        Block::Write(render(active, lock, &project.references_dir)?)
-    } else if withheld.is_empty() {
-        Block::Strip
+        Some(render(active, lock, &project.references_dir)?)
     } else {
-        Block::Leave
+        None
     };
+    let all_withheld = block.is_none() && !withheld.is_empty();
     let mut stale = Vec::new();
     let mut current = Vec::new();
     let mut refusals = Vec::new();
@@ -287,13 +279,17 @@ pub fn plan_checkouts<'a>(
         }
     }
     let mut writes = Vec::new();
-    for file in project.agent_files.iter().filter(|_| block != Block::Leave) {
+    for file in &project.agent_files {
         let current = file.text.as_deref().unwrap_or("");
         let planned = match &block {
-            Block::Write(block) => splice(current, block),
-            Block::Strip | Block::Leave => strip(current),
+            Some(block) => splice(current, block),
+            None => strip(current),
         };
         match planned {
+            // the block cannot be rewritten or stripped: name it instead
+            Ok(text) if all_withheld && text != current => refusals.push(Refusal::StaleBlock {
+                path: file.path.clone(),
+            }),
             // an absent file with no block to add is not created
             Ok(text) if file.text.is_none() && text.is_empty() => {}
             Ok(text) if file.text.as_deref() != Some(text.as_str()) => {

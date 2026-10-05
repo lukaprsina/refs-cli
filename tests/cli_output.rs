@@ -11,7 +11,7 @@ use common::git;
 
 use refs_cli::cli::run_with;
 use refs_cli::source::Observed;
-use refs_cli::source::fake::FakeSource;
+use refs_cli::source::fake::{FakeSource, Method};
 use tempfile::TempDir;
 
 const AB: &str = r#"
@@ -98,6 +98,26 @@ fn list_is_data_on_stdout_and_nothing_on_stderr() {
         ran.stdout
     );
     assert_eq!(ran.stderr, "");
+}
+
+#[test]
+fn removing_when_every_remaining_repo_is_withheld_refuses_the_stale_block_and_exits_1() {
+    let p = Project::new(&format!(
+        "{AB}[repos.c]
+url = \"https://github.com/o/c\"
+"
+    ));
+    assert_eq!(p.run(&["sync"]).code, 0);
+    p.source.fail("a", Method::Verify, "remote gone");
+    p.source.fail("b", Method::Verify, "remote gone");
+
+    let ran = p.run(&["remove", "c"]);
+
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    assert!(ran.stderr.contains("AGENTS.md"), "{}", ran.stderr);
+    assert!(ran.stderr.contains("stale_block"), "{}", ran.stderr);
+    let block = fs::read_to_string(p.dir.path().join("AGENTS.md")).unwrap();
+    assert!(block.contains("[a @") && block.contains("[c @"), "{block}");
 }
 
 struct Binary {

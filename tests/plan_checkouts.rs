@@ -646,3 +646,64 @@ fn a_withheld_repo_is_left_alone_and_out_of_the_block() {
     };
     assert!(write.text.contains("[a @") && !write.text.contains("[b @"));
 }
+
+fn two_lock() -> Lock {
+    Lock {
+        version: 1,
+        repo: ["a", "b"]
+            .map(|id| LockedRepo {
+                id: id.into(),
+                pin: pin(SHA),
+            })
+            .into(),
+    }
+}
+
+/// After a `remove` where every remaining Repo (`a`, `b`) failed to lock: nothing is covered.
+/// `text` is the Agent file as the last sync left it.
+fn plan_all_withheld(text: Option<String>) -> Plan<'static> {
+    let config: &'static Config = Box::leak(Box::new(parse(TWO).unwrap()));
+    let coverage = Coverage {
+        active: active(config).without(&["a".to_string(), "b".to_string()]),
+        withheld: vec!["a".to_string(), "b".to_string()],
+    };
+    let source = FakeSource::new();
+    let observed = Checkouts::observe(&coverage.active, &[], |n| source.inspect(n)).unwrap();
+    let project = ProjectObserved {
+        references_dir: ".references".into(),
+        agent_files: vec![AgentFileText {
+            path: "AGENTS.md".into(),
+            text,
+        }],
+        exclude: Exclude::Present,
+    };
+    plan_checkouts(&coverage, &Lock::new(vec![]), &observed, &project, false).unwrap()
+}
+
+fn block_of_two() -> String {
+    let config = parse(TWO).unwrap();
+    format!(
+        "{}\n",
+        render(&active(&config), &two_lock(), ".references").unwrap()
+    )
+}
+
+#[test]
+fn all_withheld_refuses_to_leave_the_stale_block_and_writes_no_agent_file() {
+    let plan = plan_all_withheld(Some(block_of_two()));
+
+    assert!(
+        matches!(plan.refusals.as_slice(), [Refusal::StaleBlock { path }] if path == "AGENTS.md"),
+        "{plan:?}"
+    );
+    assert!(plan.writes.is_empty(), "{plan:?}");
+}
+
+#[test]
+fn all_withheld_has_nothing_to_refuse_in_an_agent_file_with_no_block() {
+    let plan = plan_all_withheld(Some("# Notes\n".into()));
+    assert!(empty(&plan), "{plan:?}");
+
+    let plan = plan_all_withheld(None);
+    assert!(empty(&plan), "{plan:?}");
+}

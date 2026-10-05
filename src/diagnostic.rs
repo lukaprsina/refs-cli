@@ -419,6 +419,15 @@ pub enum Refusal {
         #[diagnostic_source]
         error: BlockError,
     },
+
+    #[error("`{path}` has a Managed block that no longer matches the checkouts")]
+    #[diagnostic(
+        code(refs::sync::stale_block),
+        help(
+            "every remaining repo failed to lock, so the block can be neither rewritten nor stripped; fix them and run `refs sync`"
+        )
+    )]
+    StaleBlock { path: String },
 }
 
 /// An autofix `sync` announces; not drift.

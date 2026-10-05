@@ -105,5 +105,5 @@ The ordered changes a sync would make, decided from the Lock and what is on disk
 _Avoid_: Diff, dry run
 
 **Out of date**:
-A Project whose Plan is not empty apart from announcements: the Lock is stale or missing, a Checkout differs from the Lock, or an Agent file's block differs from the one that would be written. A refusal (a Foreign directory, a Dirty checkout, malformed markers) is not out of date: a sync would refuse it too.
+A Project whose Plan is not empty apart from announcements: the Lock is stale or missing, a Checkout differs from the Lock, or an Agent file's block differs from the one that would be written. A refusal (a Foreign directory, a Dirty checkout, malformed markers, a stale Managed block when every Repo is Withheld) is not out of date: a sync would refuse it too.
 _Avoid_: Drifted, unsynced

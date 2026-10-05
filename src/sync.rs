@@ -272,7 +272,7 @@ fn rejected(report: Report) -> Edited {
 ///
 /// Stage 1 runs against the edited config, and `refs.toml` is written only if it passes
 /// (stage 1 writes the Lock), then stage 2 runs on the Lock stage 1 produced, so each Repo
-/// is verified once. A stage 2 failure keeps the edit and the Lock; `refs sync` retries it. When `remove` or `disable` leaves a Repo that cannot be locked, stage 2 still runs for the Repos that did lock (the Checkouts and the block follow the partial Lock) and leaves the failed Repo's Checkout alone.
+/// is verified once. A stage 2 failure keeps the edit and the Lock; `refs sync` retries it. When `remove` or `disable` leaves a Repo that cannot be locked, stage 2 still runs for the Repos that did lock (the Checkouts and the block follow the partial Lock) and leaves the failed Repo's Checkout alone. If every remaining Repo cannot be locked, stage 2 refuses to leave the stale block (`Refusal::StaleBlock`).
 /// An edit that changes nothing writes nothing and just syncs. `flags.check` is not for
 /// this function: it writes. The Lock is written before `refs.toml`, so a failed write of
 /// `refs.toml` leaves a Lock with an entry the config does not have, which the next `sync`
