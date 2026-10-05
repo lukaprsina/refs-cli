@@ -9,12 +9,12 @@ use crate::agent_file;
 use crate::config::{self, Config};
 use crate::diagnostic::{NotLocked, Note, SourceError};
 use crate::edit::Edit;
-use crate::list::Status;
+use crate::exclude;
 use crate::lock::Lock;
 pub use crate::plan::{Checkout, Outcome};
 use crate::plan::{
     Checkouts, Coverage, Drift, ExcludeAction, Failure, Keep, LockFlags, Plan, RepoAction, Settled,
-    Step, check_outcome, classify, conclude, lock_drift, locked, plan_checkouts, plan_lock, settle,
+    Step, check_outcome, conclude, lock_drift, locked, plan_checkouts, plan_lock, settle,
 };
 use crate::project;
 use crate::source::{MaterialiseOpts, Source, VerifyOpts};
@@ -359,33 +359,6 @@ pub fn edit<S: Source>(
     edited(Change::Written, report)
 }
 
-/// The Lock and the Checkout state of each active Repo it has a Pin for, for `list --status`.
-/// Only active Repos are inspected, as the plan does, so a broken disabled Repo does not fail
-/// it. Every inspect failure is collected.
-pub fn status(
-    source: &dyn Source,
-    root: &Path,
-    config: &Config,
-) -> Result<Status, Vec<miette::Report>> {
-    let lock = Lock::read(&Lock::path(root)).map_err(|e| vec![miette::Report::new(e)])?;
-    let set = active(config);
-    let checkouts = Checkouts::observe(&set, &[], |name| {
-        source.inspect(name).map_err(|e| e.for_repo(name))
-    })?;
-    let states = set
-        .repos()
-        .filter_map(|repo| {
-            let locked = lock.as_ref()?.get(repo.id)?;
-            let observed = checkouts.get(repo.id)?;
-            Some((
-                repo.id.to_string(),
-                classify(observed, repo.repo, &locked.pin),
-            ))
-        })
-        .collect();
-    Ok(Status { lock, states })
-}
-
 /// Stage 1 for `lock` and `sync`: all or nothing. A failure of any Repo fails the run with
 /// every error and writes nothing.
 fn stage_one<'a>(
@@ -567,7 +540,7 @@ fn apply(
     }
     match plan.exclude {
         Some(ExcludeAction::Ensure) => {
-            if let Err(e) = project::ensure_exclude(root, references_dir) {
+            if let Err(e) = exclude::ensure(root, references_dir) {
                 diagnostics.push(e.into());
                 outcome = Outcome::Failed;
             }

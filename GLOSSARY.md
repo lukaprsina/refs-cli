@@ -70,6 +70,10 @@ _Avoid_: Target, instructions file, rules file
 The generated section of an Agent file listing the Entries of the active Repos. For now every Agent file receives the same block.
 _Avoid_: Index, snippet, section
 
+**Exclude rule**:
+The line that keeps the references directory out of default search, kept in the repository's local git exclude file and never in a tracked ignore file. `refs init` and `refs sync` add it; outside a git worktree there is nowhere to put it.
+_Avoid_: gitignore entry
+
 **Preamble**:
 The fixed instructions at the top of the Managed block. Owned by refs, not configurable, and versioned with the tool.
 _Avoid_: Prompt, boilerplate, header

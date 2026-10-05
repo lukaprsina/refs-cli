@@ -112,6 +112,14 @@ impl Source for FakeSource {
             offline: opts.offline,
         });
         self.check(repo.id, Method::Materialise)?;
+        if let Some(Observed::Foreign | Observed::Dangling) = self.disk.borrow().get(repo.id) {
+            return Err(SourceError::Failed {
+                message: format!(
+                    "{} is not a Checkout of this Repo; refs leaves it alone",
+                    repo.id
+                ),
+            });
+        }
         let paths = repo.repo.path_strings();
         self.seed(
             repo.id,
@@ -127,7 +135,13 @@ impl Source for FakeSource {
     fn remove(&self, id: &str) -> Result<(), SourceError> {
         self.record(Call::Remove(id.into()));
         self.check(id, Method::Remove)?;
-        self.disk.borrow_mut().remove(id);
+        let mut disk = self.disk.borrow_mut();
+        if disk.get(id) == Some(&Observed::Foreign) {
+            return Err(SourceError::Failed {
+                message: format!("{id} was not made by refs; leaving it alone"),
+            });
+        }
+        disk.remove(id);
         Ok(())
     }
 
