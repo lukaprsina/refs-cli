@@ -2,11 +2,13 @@
 
 mod checkouts;
 mod lock;
+mod outcome;
 mod settle;
 
 pub use checkouts::{
-    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Outcome, Plan, ProjectObserved,
-    RepoAction, WriteAgentFile, check_outcome, plan_checkouts,
+    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Plan, ProjectObserved, RepoAction,
+    WriteAgentFile, plan_checkouts,
 };
 pub use lock::{Drift, LockFlags, LockPlan, Step, Upgrade, lock_drift, locked, plan_lock};
+pub use outcome::{Concluded, Outcome, check_outcome, conclude};
 pub use settle::{Coverage, Failure, Keep, Settled, settle};

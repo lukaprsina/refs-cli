@@ -4,7 +4,7 @@ status: accepted
 
 # `sync` is planned in two pure stages with a third pure step between them, grouped by Repo; `Source` only reports and executes
 
-This is the one statement of how `sync` decides and acts. `plan` decides everything that is a decision: which names are observed, how Lock entries are built, whether the Lock is written, which actions run, what a failure holds back (`settle`), and how a Plan becomes an outcome (in sync, out of date, refused, failed). `sync` is a loop: it runs the typed actions through `Source`, collects the failures and reports. The Plan is grouped by Repo rather than a flat list of actions whose order carried implicit dependencies that only the executor knew, so the failure policy is data.
+This is the one statement of how `sync` decides and acts. `plan` decides everything that is a decision: which names are observed, how Lock entries are built, whether the Lock is written, which actions run, what a failure holds back (`settle`), and how stage 1's failures and stage 2's result become the run's outcome (in sync, out of date, refused, failed) and the order of its diagnostics (`conclude`: any stage 1 error fails the run; stage 1's errors come first). `sync` is a loop: it runs the typed actions through `Source`, collects the failures and builds the `Report` once, at the end. The Plan is grouped by Repo rather than a flat list of actions whose order carried implicit dependencies that only the executor knew, so the failure policy is data.
 
 ## Decisions in `plan`, mechanics in `Source`
 

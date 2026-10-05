@@ -15,7 +15,7 @@ use crate::lock::Lock;
 pub use crate::plan::{Checkout, Outcome};
 use crate::plan::{
     Checkouts, Coverage, Drift, ExcludeAction, Failure, Keep, LockFlags, Plan, RepoAction, Settled,
-    Step, check_outcome, lock_drift, locked, plan_checkouts, plan_lock, settle,
+    Step, check_outcome, conclude, lock_drift, locked, plan_checkouts, plan_lock, settle,
 };
 use crate::project;
 use crate::source::{MaterialiseOpts, Source, VerifyOpts};
@@ -60,25 +60,69 @@ impl Report {
         }
     }
 
-    fn with_changes(self, changes: Vec<Changed>) -> Report {
-        Report { changes, ..self }
-    }
-
-    /// Stage 1's Lock write came before everything in this report.
-    fn after_lock_write(mut self, wrote: bool) -> Report {
-        if wrote {
-            self.changes.insert(0, Changed::Lock);
-        }
-        self
-    }
-
-    /// Stage 1 builds its reports without knowing how the Lock differed; the caller does.
-    fn with_drift(self, drift: Vec<Drift>) -> Report {
-        Report { drift, ..self }
-    }
-
     fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
         Report::new(Outcome::Failed, vec![], vec![miette::Report::new(error)])
+    }
+}
+
+/// Stage 1 as it left things: the Lock stage 2 plans against (with `--check`, the one on
+/// disk), whether it was written, and the Repos' errors (empty unless an edit that only
+/// shrinks the active set went on past them).
+struct StageOne {
+    lock: Lock,
+    wrote_lock: bool,
+    errors: Vec<miette::Report>,
+}
+
+/// Stage 1 stopped the run: the outcome and every diagnostic.
+struct Halt {
+    outcome: Outcome,
+    diagnostics: Vec<miette::Report>,
+}
+
+impl Halt {
+    fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Halt {
+        Halt {
+            outcome: Outcome::Failed,
+            diagnostics: vec![miette::Report::new(error)],
+        }
+    }
+
+    fn into_report(self, drift: Vec<Drift>) -> Report {
+        Report::new(self.outcome, drift, self.diagnostics)
+    }
+}
+
+/// What stage 2 did or found, before it is combined with stage 1's.
+struct StageTwo {
+    outcome: Outcome,
+    diagnostics: Vec<miette::Report>,
+    changes: Vec<Changed>,
+}
+
+impl StageTwo {
+    fn only(outcome: Outcome) -> StageTwo {
+        StageTwo {
+            outcome,
+            diagnostics: Vec::new(),
+            changes: Vec::new(),
+        }
+    }
+}
+
+/// The Report of a run that got through stage 1: `plan::conclude` decides the outcome and the
+/// order of the diagnostics, and the Lock write came before everything stage 2 did.
+fn finish(stage_one: StageOne, drift: Vec<Drift>, stage_two: StageTwo) -> Report {
+    let concluded = conclude(stage_one.errors, stage_two.outcome, stage_two.diagnostics);
+    let mut changes = stage_two.changes;
+    if stage_one.wrote_lock {
+        changes.insert(0, Changed::Lock);
+    }
+    Report {
+        outcome: concluded.outcome,
+        changes,
+        drift,
+        diagnostics: concluded.diagnostics,
     }
 }
 
@@ -104,9 +148,14 @@ pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags
     };
     match stage_one(source, &active, old, flags, root) {
         Ok(settled) => {
-            Report::new(Outcome::InSync, drift, vec![]).after_lock_write(settled.write_lock)
+            let stage_one = StageOne {
+                lock: settled.lock,
+                wrote_lock: settled.write_lock,
+                errors: vec![],
+            };
+            finish(stage_one, drift, StageTwo::only(Outcome::InSync))
         }
-        Err(report) => report.with_drift(drift),
+        Err(halt) => halt.into_report(drift),
     }
 }
 
@@ -116,20 +165,33 @@ pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
         Ok(preflight) => preflight,
         Err(report) => return report,
     };
-    let (lock, wrote) = if flags.check {
+    let (lock, wrote_lock) = if flags.check {
         match old {
             Some(lock) => (lock, false),
             // Nothing to plan against: the Lock is what is out of date.
-            None => return Report::new(check_outcome(None, true), drift, vec![]),
+            None => {
+                let stage_two = StageTwo::only(check_outcome(None, true));
+                let stage_one = StageOne {
+                    lock: Lock::new(vec![]),
+                    wrote_lock: false,
+                    errors: vec![],
+                };
+                return finish(stage_one, drift, stage_two);
+            }
         }
     } else {
         match stage_one(source, &active, old, &lock_flags(flags), root) {
             Ok(settled) => (settled.lock, settled.write_lock),
-            Err(report) => return report.with_drift(drift),
+            Err(halt) => return halt.into_report(drift),
         }
     };
     let coverage = Coverage::full(active);
-    plan_and_apply(source, root, config, &coverage, &lock, drift, flags).after_lock_write(wrote)
+    let stage_one = StageOne {
+        lock,
+        wrote_lock,
+        errors: vec![],
+    };
+    plan_and_apply(source, root, config, &coverage, stage_one, drift, flags)
 }
 
 /// Stage 1 as `sync` runs it: only `offline` carries over.
@@ -147,25 +209,33 @@ fn plan_and_apply(
     root: &Path,
     config: &Config,
     coverage: &Coverage,
-    lock: &Lock,
+    stage_one: StageOne,
     drift: Vec<Drift>,
     flags: &SyncFlags,
 ) -> Report {
-    let plan = match plan_stage_two(source, root, config, coverage, lock, flags.force) {
+    let plan = match plan_stage_two(source, root, config, coverage, &stage_one.lock, flags.force) {
         Ok(plan) => plan,
         // Only `--check` can meet a Lock that does not cover the active set, and it does not
         // repair it: the Lock is what is out of date.
         Err(StageTwoError::NotLocked(_)) if flags.check => {
-            return Report::new(check_outcome(None, true), drift, vec![]);
+            let stage_two = StageTwo::only(check_outcome(None, true));
+            return finish(stage_one, drift, stage_two);
         }
-        Err(e) => return Report::new(Outcome::Failed, drift, e.into_reports()),
+        Err(e) => {
+            let stage_two = StageTwo {
+                diagnostics: e.into_reports(),
+                ..StageTwo::only(Outcome::Failed)
+            };
+            return finish(stage_one, drift, stage_two);
+        }
     };
-    if flags.check {
-        check(plan, drift)
+    let stage_two = if flags.check {
+        check(plan, !drift.is_empty())
     } else {
         let dir = config.settings.references_dir();
-        apply(source, root, dir, plan, flags, drift)
-    }
+        apply(source, root, dir, plan, flags)
+    };
+    finish(stage_one, drift, stage_two)
 }
 
 /// What happened to `refs.toml` in `edit`.
@@ -262,7 +332,7 @@ pub fn edit<S: Source>(
     };
     let settled = match run_stage_one(&source, &active, old, &lock_flags(flags), root, keep) {
         Ok(settled) => settled,
-        Err(report) => return rejected(report.with_drift(drift)),
+        Err(halt) => return rejected(halt.into_report(drift)),
     };
     if !settled.accepted {
         return rejected(Report::new(Outcome::Failed, drift, settled.errors));
@@ -273,20 +343,20 @@ pub fn edit<S: Source>(
     // The Lock covers the Repos that passed. Stage 2 runs for those, so the Checkouts and
     // the block drop what the edit removed; a Repo that failed keeps its Checkout and is
     // reported, and `refs sync` finishes it once it is fixed.
-    let mut report = plan_and_apply(
+    let stage_one = StageOne {
+        lock: settled.lock,
+        wrote_lock: settled.write_lock,
+        errors: settled.errors,
+    };
+    let report = plan_and_apply(
         &source,
         root,
         &config,
         &settled.coverage,
-        &settled.lock,
+        stage_one,
         drift,
         flags,
-    )
-    .after_lock_write(settled.write_lock);
-    if !settled.errors.is_empty() {
-        report.outcome = Outcome::Failed;
-        report.diagnostics.splice(0..0, settled.errors);
-    }
+    );
     edited(Change::Written, report)
 }
 
@@ -310,12 +380,15 @@ fn stage_one<'a>(
     old: Option<Lock>,
     flags: &LockFlags,
     root: &Path,
-) -> Result<Settled<'a>, Report> {
+) -> Result<Settled<'a>, Halt> {
     let settled = run_stage_one(source, active, old, flags, root, Keep::AllOrNothing)?;
     if settled.accepted {
         Ok(settled)
     } else {
-        Err(Report::new(Outcome::Failed, vec![], settled.errors))
+        Err(Halt {
+            outcome: Outcome::Failed,
+            diagnostics: settled.errors,
+        })
     }
 }
 
@@ -328,9 +401,11 @@ fn run_stage_one<'a>(
     flags: &LockFlags,
     root: &Path,
     keep: Keep,
-) -> Result<Settled<'a>, Report> {
-    let plan = plan_lock(active, old.as_ref(), flags)
-        .map_err(|r| Report::new(Outcome::Refused, vec![], vec![miette::Report::new(r)]))?;
+) -> Result<Settled<'a>, Halt> {
+    let plan = plan_lock(active, old.as_ref(), flags).map_err(|r| Halt {
+        outcome: Outcome::Refused,
+        diagnostics: vec![miette::Report::new(r)],
+    })?;
     let mut failures: Vec<Failure> = Vec::new();
     let mut entries = Vec::new();
     for step in plan.steps {
@@ -359,7 +434,7 @@ fn run_stage_one<'a>(
     if settled.write_lock
         && let Err(e) = settled.lock.write(&Lock::path(root))
     {
-        return Err(Report::failed(e));
+        return Err(Halt::failed(e));
     }
     Ok(settled)
 }
@@ -423,10 +498,12 @@ fn plan_stage_two<'a>(
 }
 
 /// `--check`: report what applying the plan would do.
-fn check(plan: Plan, drift: Vec<Drift>) -> Report {
-    let outcome = check_outcome(Some(&plan), !drift.is_empty());
-    let diagnostics = plan.refusals.into_iter().map(miette::Report::new).collect();
-    Report::new(outcome, drift, diagnostics)
+fn check(plan: Plan, lock_drifted: bool) -> StageTwo {
+    StageTwo {
+        outcome: check_outcome(Some(&plan), lock_drifted),
+        diagnostics: plan.refusals.into_iter().map(miette::Report::new).collect(),
+        changes: Vec::new(),
+    }
 }
 
 /// Apply the plan (ADR 0006). A failure does not stop the other Repos. The Agent files are
@@ -437,13 +514,12 @@ fn apply(
     references_dir: &str,
     plan: Plan,
     flags: &SyncFlags,
-    drift: Vec<Drift>,
-) -> Report {
+) -> StageTwo {
     let opts = MaterialiseOpts {
         offline: flags.offline,
     };
     let mut diagnostics: Vec<miette::Report> = Vec::new();
-    let mut failed = false;
+    let mut outcome = plan.applied_outcome();
     let mut failed_actions = Vec::new();
     let mut changes = Vec::new();
     for (i, action) in plan.repos.iter().enumerate() {
@@ -457,13 +533,12 @@ fn apply(
             }
             Err(e) => {
                 diagnostics.push(e);
-                failed = true;
+                outcome = Outcome::Failed;
                 failed_actions.push(i);
             }
         }
     }
     let held_back = plan.holds_back_writes(&failed_actions);
-    let refused = plan.is_refused();
     diagnostics.extend(plan.refusals.into_iter().map(miette::Report::new));
     if !held_back {
         for write in plan.writes {
@@ -471,7 +546,7 @@ fn apply(
                 Ok(()) => changes.push(Changed::AgentFile(write.path)),
                 Err(e) => {
                     diagnostics.push(e.into());
-                    failed = true;
+                    outcome = Outcome::Failed;
                 }
             }
         }
@@ -480,13 +555,17 @@ fn apply(
         Some(ExcludeAction::Ensure) => {
             if let Err(e) = project::ensure_exclude(root, references_dir) {
                 diagnostics.push(e.into());
-                failed = true;
+                outcome = Outcome::Failed;
             }
         }
         Some(ExcludeAction::NoGit) => diagnostics.push(Note::NoGitRepo.into()),
         None => {}
     }
-    Report::new(Plan::applied_outcome(refused, failed), drift, diagnostics).with_changes(changes)
+    StageTwo {
+        outcome,
+        diagnostics,
+        changes,
+    }
 }
 
 /// Do one `RepoAction`; on success the note it carries, if any.

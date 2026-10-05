@@ -7,6 +7,7 @@ use crate::agent_file::{splice, strip};
 use crate::config::RepoRef;
 use crate::diagnostic::{NotLocked, Note, Refusal};
 use crate::lock::Lock;
+use crate::plan::outcome::Outcome;
 use crate::plan::settle::Coverage;
 use crate::render::render;
 use crate::source::{Observed, Pin};
@@ -174,42 +175,14 @@ pub struct Plan<'a> {
     pub refusals: Vec<Refusal>,
 }
 
-/// How a run ended; the CLI maps it to an exit code (0, 3, 1, 1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Outcome {
-    InSync,
-    OutOfDate,
-    Refused,
-    Failed,
-}
-
-/// The outcome of `sync --check`. `plan` is `None` when the Lock does not cover the active
-/// Repos, so no Plan could be made: the Lock is what is out of date. `lock_drifted` is
-/// whether the Lock differed from the config. A refusal outranks drift, since "run `refs
-/// sync`" is the wrong advice when `sync` will also refuse.
-pub fn check_outcome(plan: Option<&Plan>, lock_drifted: bool) -> Outcome {
-    match plan {
-        None => Outcome::OutOfDate,
-        Some(plan) if !plan.refusals.is_empty() => Outcome::Refused,
-        Some(plan) if plan.is_drift() || lock_drifted => Outcome::OutOfDate,
-        Some(_) => Outcome::InSync,
-    }
-}
-
 impl Plan<'_> {
-    /// Whether the Plan has refusals, for `applied_outcome` once they have been taken to be
-    /// reported.
-    pub fn is_refused(&self) -> bool {
-        !self.refusals.is_empty()
-    }
-
-    /// The outcome of applying a Plan that `refused` or not; `failed` is whether anything
-    /// the executor did failed.
-    pub fn applied_outcome(refused: bool, failed: bool) -> Outcome {
-        match () {
-            _ if failed => Outcome::Failed,
-            _ if refused => Outcome::Refused,
-            _ => Outcome::InSync,
+    /// What applying the Plan comes to if nothing the executor does fails: it refused or it
+    /// did not.
+    pub fn applied_outcome(&self) -> Outcome {
+        if self.refusals.is_empty() {
+            Outcome::InSync
+        } else {
+            Outcome::Refused
         }
     }
 
