@@ -35,7 +35,7 @@ impl Remote {
     }
 
     fn url(&self) -> String {
-        format!("file://{}", self.dir.path().display())
+        common::file_url(self.dir.path())
     }
 }
 

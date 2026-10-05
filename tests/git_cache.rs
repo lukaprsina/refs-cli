@@ -64,7 +64,7 @@ impl Remote {
     }
 
     fn url(&self) -> String {
-        format!("file://{}", self.dir.path().display())
+        common::file_url(self.dir.path())
     }
 
     /// A second commit: `docs/guide/a.md` and `src/lib.rs` change, `docs/guide/new.md` appears.
@@ -170,7 +170,8 @@ impl Env {
                     stack.push(path);
                 } else {
                     let rel = path.strip_prefix(&root).unwrap();
-                    found.insert(rel.to_str().unwrap().to_string());
+                    let parts: Vec<_> = rel.iter().map(|c| c.to_str().unwrap()).collect();
+                    found.insert(parts.join("/"));
                 }
             }
         }
@@ -826,7 +827,7 @@ mod checkout {
             &["worktree", "list", "--porcelain"],
         );
         assert!(
-            worktrees.contains(moved.join("r").to_str().unwrap()),
+            worktrees.contains(&moved.join("r").to_str().unwrap().replace('\\', "/")),
             "{worktrees}"
         );
         git(&env.cache_repo(&remote), &["worktree", "prune"]);

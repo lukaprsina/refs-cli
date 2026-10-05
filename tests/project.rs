@@ -14,7 +14,7 @@ fn the_root_is_the_nearest_directory_up_that_holds_a_refs_toml() {
 
     let root = find_root(&deep).unwrap();
 
-    assert_eq!(root, dir.path().canonicalize().unwrap());
+    assert_eq!(root, dunce::canonicalize(dir.path()).unwrap());
 }
 
 #[test]
@@ -264,6 +264,7 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
         assert_eq!(rule_count(dir.path(), "/refs/"), 0);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_path_with_a_newline_gets_no_rule_rather_than_a_rule_in_the_wrong_place() {
         let parent = TempDir::new().unwrap();
@@ -309,7 +310,7 @@ mod init_root_rule {
     use super::*;
 
     fn canonical(dir: &TempDir) -> std::path::PathBuf {
-        dir.path().canonicalize().unwrap()
+        dunce::canonicalize(dir.path()).unwrap()
     }
 
     #[test]
@@ -319,7 +320,7 @@ mod init_root_rule {
         fs::create_dir_all(&deep).unwrap();
         assert_eq!(
             init_root(&deep, false).unwrap(),
-            deep.canonicalize().unwrap()
+            dunce::canonicalize(&deep).unwrap()
         );
 
         crate::common::git(dir.path(), &["init", "-q"]);
@@ -349,7 +350,7 @@ mod init_root_rule {
         fs::create_dir_all(&deep).unwrap();
         assert_eq!(
             init_root(&deep, true).unwrap(),
-            deep.canonicalize().unwrap()
+            dunce::canonicalize(&deep).unwrap()
         );
     }
 }

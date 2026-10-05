@@ -208,7 +208,7 @@ impl Source for GitSource {
 fn observe(cache: &Repo, dest: &Path, admin: &Path) -> Result<Observed, SourceError> {
     let recorded = std::fs::read_to_string(admin.join("gitdir")).unwrap_or_default();
     let here = dest.join(".git");
-    let here = here.canonicalize().unwrap_or(here);
+    let here = dunce::canonicalize(&here).unwrap_or(here);
     if Path::new(recorded.trim()) != here {
         // If it cannot be repaired the Checkout is read as it is; a pruned one is dangling.
         let _ = cache.git().args(["worktree", "repair"]).arg(dest).run();

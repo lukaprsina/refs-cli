@@ -14,7 +14,7 @@ pub const CONFIG_FILE: &str = "refs.toml";
 
 /// The nearest directory at or above `start` that holds a `refs.toml`, canonicalised.
 pub fn find_root(start: &Path) -> Result<PathBuf, ProjectError> {
-    let start = start.canonicalize().map_err(|source| ProjectError::Read {
+    let start = dunce::canonicalize(start).map_err(|source| ProjectError::Read {
         path: start.display().to_string(),
         source,
     })?;
@@ -32,7 +32,7 @@ pub fn find_root(start: &Path) -> Result<PathBuf, ProjectError> {
 /// further up (a nested project needs `--here`); with none, the git worktree root, or
 /// `start` outside git.
 pub fn init_root(start: &Path, here: bool) -> Result<PathBuf, ProjectError> {
-    let canonical = start.canonicalize().map_err(|source| ProjectError::Read {
+    let canonical = dunce::canonicalize(start).map_err(|source| ProjectError::Read {
         path: start.display().to_string(),
         source,
     })?;
@@ -97,7 +97,7 @@ pub fn load(start: &Path) -> Result<(PathBuf, Config), Vec<miette::Report>> {
 /// race-resistant, as the spec says. Reports every problem.
 pub fn check_outputs(root: &Path, config: &Config) -> Vec<ProjectError> {
     let mut errors = Vec::new();
-    let Ok(canonical_root) = root.canonicalize() else {
+    let Ok(canonical_root) = dunce::canonicalize(root) else {
         return errors;
     };
     let dir = config.settings.references_dir().to_string();
@@ -142,7 +142,7 @@ fn check_inside(
             }
         };
         if meta.file_type().is_symlink() {
-            match current.canonicalize() {
+            match dunce::canonicalize(&current) {
                 Ok(target) if target.starts_with(canonical_root) => {}
                 Ok(_) => {
                     errors.push(ProjectError::EscapesRoot {

@@ -83,7 +83,7 @@ pub fn read(path: &Path) -> Result<Option<String>, BlockError> {
 /// partial file. A symlinked Agent file (`CLAUDE.md` pointing at `AGENTS.md`) is written
 /// through, so the link survives.
 pub fn write(path: &Path, text: &str) -> Result<(), BlockError> {
-    let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let target = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     crate::atomic::write(&target, text).map_err(|source| BlockError::Write {
         path: path.display().to_string(),
         source,

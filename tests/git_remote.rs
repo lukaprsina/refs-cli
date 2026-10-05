@@ -309,9 +309,11 @@ mod cache_root {
 
     #[test]
     fn xdg_cache_home_wins() {
+        // `/x/cache` has no drive letter, so it is not absolute on Windows.
+        let xdg = std::env::temp_dir().join("cache");
         assert_eq!(
-            cache_root(Some("/x/cache"), Some("/home/u")),
-            Some(PathBuf::from("/x/cache/refs"))
+            cache_root(xdg.to_str(), Some("/home/u")),
+            Some(xdg.join("refs"))
         );
     }
 

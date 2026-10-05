@@ -300,7 +300,7 @@ fn the_binary_locks_with_git_and_reports_an_unknown_ref() {
     }
     let project = TempDir::new().unwrap();
     let config = |git_ref: &str| {
-        let url = format!("file://{}", remote.path().display());
+        let url = common::file_url(remote.path());
         fs::write(
             project.path().join("refs.toml"),
             format!("[repos.r]\nurl = \"{url}\"\nref = \"{git_ref}\"\n"),
@@ -334,8 +334,8 @@ fn the_binary_syncs_recreates_a_wiped_cache_and_guards_edits() {
     fs::write(
         project.path().join("refs.toml"),
         format!(
-            "[repos.r]\nurl = \"file://{}\"\nref = \"main\"\npaths = [\"docs\"]\n",
-            remote.path().display()
+            "[repos.r]\nurl = \"{}\"\nref = \"main\"\npaths = [\"docs\"]\n",
+            common::file_url(remote.path())
         ),
     )
     .unwrap();
@@ -359,8 +359,8 @@ fn the_binary_syncs_recreates_a_wiped_cache_and_guards_edits() {
     fs::write(
         project.path().join("refs.toml"),
         format!(
-            "[repos.r]\nurl = \"file://{}\"\nref = \"main\"\npaths = []\n",
-            remote.path().display()
+            "[repos.r]\nurl = \"{}\"\nref = \"main\"\npaths = []\n",
+            common::file_url(remote.path())
         ),
     )
     .unwrap();

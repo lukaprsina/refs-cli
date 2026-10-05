@@ -23,3 +23,9 @@ pub fn git(dir: &Path, args: &[&str]) -> String {
     );
     String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
+
+/// `path` as a `file://` URL git accepts on every platform (`file:///C:/...` on Windows).
+#[allow(dead_code)] // not every test binary that shares this module makes remotes
+pub fn file_url(path: &Path) -> String {
+    url::Url::from_file_path(path).unwrap().to_string()
+}

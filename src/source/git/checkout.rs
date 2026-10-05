@@ -95,7 +95,7 @@ pub fn layout(dest: &Path, cache_root: &Path) -> Result<Layout, SourceError> {
     // A relative path is relative to the Checkout (git can be told to write them).
     let admin = lexical_path(&dest.join(path));
     let cache_name = worktree_entry(&admin, cache_root).or_else(|| {
-        let canonical = cache_root.canonicalize().ok()?;
+        let canonical = dunce::canonicalize(cache_root).ok()?;
         worktree_entry(&admin, &canonical)
     });
     Ok(match cache_name {
