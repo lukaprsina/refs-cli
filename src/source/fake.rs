@@ -112,6 +112,14 @@ impl Source for FakeSource {
             offline: opts.offline,
         });
         self.check(repo.id, Method::Materialise)?;
+        if let Some(Observed::Foreign | Observed::Dangling) = self.disk.borrow().get(repo.id) {
+            return Err(SourceError::Failed {
+                message: format!(
+                    "{} is not a Checkout of this Repo; refs leaves it alone",
+                    repo.id
+                ),
+            });
+        }
         let paths = repo.repo.path_strings();
         self.seed(
             repo.id,
