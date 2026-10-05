@@ -14,6 +14,7 @@ pub enum Method {
     Verify,
     Materialise,
     Remove,
+    Inspect,
 }
 
 /// One call the fake received, in order.
@@ -131,6 +132,7 @@ impl Source for FakeSource {
     }
 
     fn inspect(&self, id: &str) -> Result<Observed, SourceError> {
+        self.check(id, Method::Inspect)?;
         Ok(self
             .disk
             .borrow()

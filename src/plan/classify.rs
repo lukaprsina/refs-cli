@@ -1,5 +1,7 @@
 //! What is on disk for one Repo, against what the Lock says it should be.
 
+use std::collections::BTreeSet;
+
 use crate::config::Repo;
 use crate::source::{Observed, Pin};
 
@@ -36,9 +38,11 @@ pub fn classify(observed: &Observed, repo: &Repo, locked: &Pin) -> CheckoutState
         Observed::Dangling => CheckoutState::Dangling,
         Observed::Foreign => CheckoutState::Foreign,
         Observed::At {
-            pin, dirty_files, ..
+            pin,
+            paths,
+            dirty_files,
         } => {
-            if observed.matches(repo, locked) {
+            if matches(pin, paths, repo, locked) {
                 return CheckoutState::InSync;
             }
             let cause = if pin.same_commit(locked) {
@@ -52,4 +56,11 @@ pub fn classify(observed: &Observed, repo: &Repo, locked: &Pin) -> CheckoutState
             }
         }
     }
+}
+
+/// Whether a Checkout at `pin` with `paths` is of `locked` with the Paths `repo` asks for (as
+/// a set, so order and repeats do not matter).
+fn matches(pin: &Pin, paths: &[String], repo: &Repo, locked: &Pin) -> bool {
+    let set = |v: &[String]| v.iter().cloned().collect::<BTreeSet<_>>();
+    pin.same_commit(locked) && set(paths) == set(&repo.path_strings())
 }

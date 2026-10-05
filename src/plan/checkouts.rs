@@ -65,6 +65,11 @@ impl Checkouts {
         }
     }
 
+    /// What `observe` found for `id`: `None` for a name it did not inspect.
+    pub fn get(&self, id: &str) -> Option<&Observed> {
+        self.0.get(id)
+    }
+
     fn of(&self, id: &str) -> &Observed {
         self.0
             .get(id)
