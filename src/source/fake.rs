@@ -127,7 +127,13 @@ impl Source for FakeSource {
     fn remove(&self, id: &str) -> Result<(), SourceError> {
         self.record(Call::Remove(id.into()));
         self.check(id, Method::Remove)?;
-        self.disk.borrow_mut().remove(id);
+        let mut disk = self.disk.borrow_mut();
+        if disk.get(id) == Some(&Observed::Foreign) {
+            return Err(SourceError::Failed {
+                message: format!("{id} was not made by refs; leaving it alone"),
+            });
+        }
+        disk.remove(id);
         Ok(())
     }
 
