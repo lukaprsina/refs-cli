@@ -65,6 +65,14 @@ impl Checkouts {
         }
     }
 
+    /// Inspect the active Repos only: `observe` with nothing else to look at.
+    pub fn observe_active<E>(
+        active: &ActiveSet,
+        inspect: impl FnMut(&str) -> Result<Observed, E>,
+    ) -> Result<Checkouts, Vec<E>> {
+        Checkouts::observe(active, &[], inspect)
+    }
+
     /// What `observe` found for `id`: `None` for a name it did not inspect.
     pub fn get(&self, id: &str) -> Option<&Observed> {
         self.0.get(id)

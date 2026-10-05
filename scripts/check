@@ -3,6 +3,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# A script committed as 100644 (easy on Windows) fails on Linux CI, so read the index modes.
+not_executable=$(git ls-files -s -- 'scripts/*' | awk '$1 != "100755" { print $4 }')
+if [ -n "$not_executable" ]; then
+    echo "scripts not tracked as mode 100755 (use git update-index --chmod=+x):" >&2
+    echo "$not_executable" >&2
+    exit 1
+fi
+
 scripts/check-docs
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings

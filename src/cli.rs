@@ -299,12 +299,7 @@ pub fn run_on<'a>(
 /// The project at or above `start`; on failure the problems are printed and the exit code
 /// returned.
 fn load(start: &Path, console: &mut Console) -> Result<(PathBuf, Config), u8> {
-    project::load(start).map_err(|reports| {
-        for report in reports {
-            console.report(report);
-        }
-        EXIT_ERROR
-    })
+    project::load(start).map_err(|reports| fail_all(reports, console))
 }
 
 fn run_config<'a>(
@@ -348,18 +343,13 @@ fn list_status<'a>(
 ) -> u8 {
     let result = make_source(root, config)
         .map_err(|e| vec![miette::Report::new(e)])
-        .and_then(|source| sync::status(&*source, root, config));
+        .and_then(|source| crate::status::build(&*source, root, config));
     match result {
         Ok(status) => {
             console.data(&crate::list::list_status(config, &status, color));
             0
         }
-        Err(reports) => {
-            for report in reports {
-                console.report(report);
-            }
-            EXIT_ERROR
-        }
+        Err(reports) => fail_all(reports, console),
     }
 }
 
@@ -458,7 +448,14 @@ Claude Code reads AGENTS.md only when there is no CLAUDE.md; to use CLAUDE.md, l
 
 /// Print `error` as a report and give the exit code for a failure.
 fn fail(error: impl Into<miette::Report>, console: &mut Console) -> u8 {
-    console.report(error.into());
+    fail_all([error.into()], console)
+}
+
+/// Print every report and give the exit code for a failure.
+fn fail_all(reports: impl IntoIterator<Item = miette::Report>, console: &mut Console) -> u8 {
+    for report in reports {
+        console.report(report);
+    }
     EXIT_ERROR
 }
 
