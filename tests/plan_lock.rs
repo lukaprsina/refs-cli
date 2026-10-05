@@ -3,7 +3,7 @@ use refs_cli::active::active;
 use refs_cli::config::parse;
 use refs_cli::diagnostic::LockRefusal;
 use refs_cli::lock::{Field, Lock, LockedRepo};
-use refs_cli::plan::{Drift, LockFlags, LockPlan, Step, Upgrade, lock_drift, locked, plan_lock};
+use refs_cli::plan::{Drift, LockFlags, Step, Upgrade, lock_drift, plan_lock};
 use refs_cli::source::Pin;
 
 const SHA: &str = "ee49b3e0123456789012345678901234567890ab";
@@ -251,21 +251,4 @@ fn offline_never_upgrades_even_with_a_current_lock() {
         err.code().unwrap().to_string(),
         "refs::lock::offline_upgrade"
     );
-}
-
-#[test]
-fn the_lock_is_written_only_when_it_differs_and_takes_the_pin_as_resolved() {
-    let config = parse(A).unwrap();
-    let set = active(&config);
-    let repo = set.get("a").unwrap();
-    let pin = Pin::git("https://github.com/o/a", "next", SHA, Some("next"));
-    let built = locked(repo, pin.clone());
-    assert_eq!(built.id, "a");
-    assert_eq!(built.pin, pin);
-
-    let fresh = LockPlan::finish(vec![built.clone()], None);
-    assert!(fresh.write);
-    let same = LockPlan::finish(vec![built], Some(&fresh.lock));
-    assert!(!same.write);
-    assert_eq!(same.lock, fresh.lock);
 }

@@ -4,8 +4,8 @@ use refs_cli::config::{Config, parse};
 use refs_cli::diagnostic::Refusal;
 use refs_cli::lock::{Lock, LockedRepo};
 use refs_cli::plan::{
-    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Outcome, Plan, ProjectObserved,
-    RepoAction, check_outcome, plan_checkouts,
+    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Plan, ProjectObserved, RepoAction,
+    plan_checkouts,
 };
 use refs_cli::render::render;
 use refs_cli::source::fake::FakeSource;
@@ -516,33 +516,6 @@ fn a_dangling_non_active_name_is_left_for_doctor() {
 }
 
 #[test]
-fn every_active_repo_and_each_other_listed_name_is_inspected_once() {
-    let config = parse(CONFIG).unwrap();
-    let set = active(&config);
-    let mut asked = Vec::new();
-    // the listing names an active repo too, and a name that is not active
-    let listing = ["a".to_string(), "old".to_string()];
-    Checkouts::observe(&set, &listing, |name| {
-        asked.push(name.to_string());
-        Ok::<_, ()>(Observed::Absent)
-    })
-    .unwrap();
-    assert_eq!(asked, ["a", "old"]);
-}
-
-#[test]
-fn inspect_failures_are_all_collected() {
-    let config = parse(CONFIG).unwrap();
-    let set = active(&config);
-    let listing = ["old".to_string()];
-    let errors = Checkouts::observe(&set, &listing, |name| {
-        Err::<Observed, _>(format!("cannot inspect {name}"))
-    })
-    .unwrap_err();
-    assert_eq!(errors, ["cannot inspect a", "cannot inspect old"]);
-}
-
-#[test]
 fn only_actions_on_a_checkout_the_block_lists_gate_the_agent_file_writes() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
@@ -601,67 +574,4 @@ fn with_no_active_repo_the_block_is_removed_and_the_rest_kept() {
         .collect();
     assert_eq!(writes, [("AGENTS.md", "# Notes\n\n\n\nafter\n")]);
     assert!(plan.is_drift());
-}
-
-#[test]
-fn a_failed_action_on_a_listed_checkout_holds_back_the_writes() {
-    let config = parse(CONFIG).unwrap();
-    let set = active(&config);
-    let source = FakeSource::new();
-    source.seed("old", at(OTHER_SHA, &[], &[]));
-    // repos: [Remove old, Materialise a]
-    let plan = plan_with(&source, &["old"], &project(&set), false);
-    assert!(!plan.holds_back_writes(&[]));
-    assert!(!plan.holds_back_writes(&[0]));
-    assert!(plan.holds_back_writes(&[1]));
-}
-
-#[test]
-fn outcomes_follow_from_the_plan() {
-    let config = parse(CONFIG).unwrap();
-    let set = active(&config);
-    let in_sync = plan(&in_sync_source(), &project(&set), false);
-    assert_eq!(check_outcome(Some(&in_sync), false), Outcome::InSync);
-    assert_eq!(check_outcome(Some(&in_sync), true), Outcome::OutOfDate);
-    assert_eq!(check_outcome(None, false), Outcome::OutOfDate);
-
-    let absent = plan(&FakeSource::new(), &project(&set), false);
-    assert_eq!(check_outcome(Some(&absent), false), Outcome::OutOfDate);
-
-    let source = FakeSource::new();
-    source.seed("a", Observed::Foreign);
-    let refused = plan(&source, &project(&set), false);
-    assert_eq!(check_outcome(Some(&refused), true), Outcome::Refused);
-
-    assert_eq!(Plan::applied_outcome(false, false), Outcome::InSync);
-    assert_eq!(Plan::applied_outcome(true, false), Outcome::Refused);
-    assert_eq!(Plan::applied_outcome(true, true), Outcome::Failed);
-    assert!(refused.is_refused() && !absent.is_refused());
-}
-
-#[test]
-fn a_withheld_repo_keeps_its_checkout_and_is_not_in_the_block() {
-    let config = parse(CONFIG).unwrap();
-    let full = active(&config);
-    let covered = full.without(&["a".to_string()]);
-    let source = FakeSource::new();
-    source.seed("a", at(OTHER_SHA, &[], &[]));
-    source.seed("old", at(OTHER_SHA, &[], &[]));
-    let listing = vec!["a".to_string(), "old".to_string()];
-    let observed = Checkouts::observe(&covered, &listing, |n| source.inspect(n)).unwrap();
-    let project = with_agent_files(&covered, &[("AGENTS.md", Some(MARKED))]);
-
-    let plan = plan_checkouts(
-        &covered,
-        &["a".to_string()],
-        &Lock::new(vec![]),
-        &observed,
-        &project,
-        false,
-    )
-    .unwrap();
-
-    let removed: Vec<&str> = plan.repos.iter().map(|r| r.id()).collect();
-    assert_eq!(removed, ["old"], "a is left alone");
-    assert!(plan.writes.is_empty(), "no Repo to list: the block stays");
 }

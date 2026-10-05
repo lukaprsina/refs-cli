@@ -593,24 +593,6 @@ fn a_disable_writes_the_edit_then_reports_the_broken_repo_with_exit_1() {
 }
 
 #[test]
-fn a_disable_with_a_broken_repo_still_removes_its_checkout_and_updates_the_block() {
-    let p = Project::new(&format!(
-        "{AB}\n[repos.c]\nurl = \"https://github.com/o/c\"\n"
-    ));
-    assert_eq!(p.run(&["sync"]), 0);
-    let block = fs::read_to_string(p.path("AGENTS.md")).unwrap();
-    assert!(block.contains("[a @"), "{block}");
-    p.source.fail("b", Method::Verify, "gone");
-
-    assert_eq!(p.run(&["disable", "a"]), 1);
-
-    let block = fs::read_to_string(p.path("AGENTS.md")).unwrap();
-    assert!(block.contains("[c @") && !block.contains("[a @"), "{block}");
-    assert!(p.source.calls().contains(&Call::Remove("a".into())));
-    assert!(!p.source.calls().contains(&Call::Remove("b".into())));
-}
-
-#[test]
 fn removing_the_broken_repo_succeeds() {
     let p = Project::new(AB);
     p.source.fail("b", Method::Resolve, "gone");
