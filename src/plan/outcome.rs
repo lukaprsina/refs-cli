@@ -32,7 +32,7 @@ pub struct Concluded {
     pub diagnostics: Vec<miette::Report>,
 }
 
-/// Combine stage 1's `errors` with what stage 2 came to. Any stage 1 error fails the run,
+/// Combine stage 1's errors with what stage 2 came to. Any stage 1 error fails the run,
 /// whatever stage 2 found; otherwise the outcome is stage 2's. The diagnostics are stage 1's
 /// errors first, then stage 2's.
 pub fn conclude(
