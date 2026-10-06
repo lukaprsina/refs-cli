@@ -19,10 +19,12 @@ use crate::edit::{AddRepo, Edit, Target};
 use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
+use crate::prompt::{self, Prompter};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
 
 const EXIT_ERROR: u8 = 1;
+const EXIT_USAGE: u8 = 2;
 const EXIT_OUT_OF_DATE: u8 = 3;
 
 #[derive(Debug, Parser)]
@@ -37,6 +39,9 @@ pub struct Cli {
     /// Plain output, no colors or box drawing
     #[arg(long, global = true)]
     no_color: bool,
+    /// Never prompt, even in a terminal
+    #[arg(long, global = true)]
+    no_input: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -209,6 +214,9 @@ pub fn run<'a>(
         out: styled && std::io::stdout().is_terminal(),
         err: styled && std::io::stderr().is_terminal(),
     };
+    // Prompts need someone to answer and somewhere to be drawn: stdin and stderr.
+    let mut prompter = prompt::Terminal;
+    let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     run_on(
         args,
         cwd,
@@ -216,6 +224,7 @@ pub fn run<'a>(
         &mut std::io::stdout(),
         &mut std::io::stderr(),
         terminal,
+        interactive.then_some(&mut prompter as &mut dyn Prompter),
     )
 }
 
@@ -237,10 +246,11 @@ pub fn run_with<'a>(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> u8 {
-    run_on(args, cwd, make_source, out, err, Terminal::default())
+    run_on(args, cwd, make_source, out, err, Terminal::default(), None)
 }
 
-/// `run_with`, told which streams are styled.
+/// `run_with`, told which streams are styled and given the prompter to ask with, if any.
+/// `None` means there is nobody to ask; `--no-input` ignores a given prompter.
 pub fn run_on<'a>(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
@@ -248,6 +258,7 @@ pub fn run_on<'a>(
     out: &mut dyn Write,
     err: &mut dyn Write,
     terminal: Terminal,
+    prompter: Option<&mut dyn Prompter>,
 ) -> u8 {
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
@@ -283,7 +294,16 @@ pub fn run_on<'a>(
         Command::Init(args) => init(start, args.here, &mut console),
         Command::Config(command) => match load(start, &mut console) {
             Ok((root, config)) => {
-                run_config(&command, &root, &config, color, make_source, &mut console)
+                let prompter = prompter.filter(|_| !cli.no_input);
+                run_config(
+                    &command,
+                    &root,
+                    &config,
+                    color,
+                    make_source,
+                    prompter,
+                    &mut console,
+                )
             }
             Err(code) => code,
         },
@@ -306,8 +326,10 @@ fn run_config<'a>(
     config: &Config,
     color: bool,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    prompter: Option<&mut dyn Prompter>,
     console: &mut Console,
 ) -> u8 {
+    let mut asked_repo = None;
     let (flags, edit) = match command {
         ConfigCommand::List(args) if args.status => {
             return with_source(make_source, root, config, console, |source, console| {
@@ -318,7 +340,13 @@ fn run_config<'a>(
             console.data(&list(config, color));
             return 0;
         }
-        ConfigCommand::Add { repo, flags } => (flags, Edit::Add(repo)),
+        ConfigCommand::Add { repo, flags } => {
+            let repo = match complete_add(repo, config, prompter, console) {
+                Ok(repo) => asked_repo.insert(repo),
+                Err(code) => return code,
+            };
+            (flags, Edit::Add(repo))
+        }
         ConfigCommand::Remove(args) => (&args.flags, Edit::Remove(&args.id)),
         ConfigCommand::Disable(args) => (&args.flags, Edit::Disable(args.target())),
         ConfigCommand::Enable(args) => (&args.flags, Edit::Enable(args.target())),
@@ -330,6 +358,43 @@ fn run_config<'a>(
             let report = sync::edit(source, root, &edit, &SyncFlags::default());
             print_report(&report, false, console)
         })
+    }
+}
+
+/// `repo` with what the command line left out: asked for when there is a prompter, otherwise
+/// only a missing URL is a problem (usage, exit 2). On a cancel nothing has been edited.
+fn complete_add(
+    repo: &AddRepo,
+    config: &Config,
+    prompter: Option<&mut dyn Prompter>,
+    console: &mut Console,
+) -> Result<AddRepo, u8> {
+    let mut repo = repo.clone();
+    let Some(prompter) = prompter else {
+        if repo.url.is_empty() {
+            console.problem("error: a URL is required when not run in a terminal");
+            return Err(EXIT_USAGE);
+        }
+        return Ok(repo);
+    };
+    match prompt::fill_add(&mut repo, config, prompter) {
+        Ok(filled) => {
+            if filled.asked {
+                console.status(format_args!(
+                    "equivalent: {}",
+                    prompt::equivalent_command(&repo)
+                ));
+            }
+            Ok(repo)
+        }
+        Err(prompt::Abort::Cancelled) => {
+            console.problem("cancelled");
+            Err(EXIT_ERROR)
+        }
+        Err(prompt::Abort::Failed(why)) => {
+            console.problem(format_args!("cannot prompt: {why}"));
+            Err(EXIT_ERROR)
+        }
     }
 }
 

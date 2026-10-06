@@ -12,6 +12,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 dunce = "1.0.5"
 fd-lock = "4.0.4"
 indexmap = { version = "2.14.2", features = ["serde"] }
+inquire = "0.9.4"
 miette = { version = "7.6.0", features = ["fancy"] }
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.0"

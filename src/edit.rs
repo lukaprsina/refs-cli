@@ -10,11 +10,13 @@ use crate::config;
 use crate::diagnostic::EditError;
 use crate::line_ending;
 
-/// What `refs add` was asked for. Only `url` is required; the rest follow spec §6.1. It is
+/// What `refs add` was asked for. Only `url` is required, though on the command line an empty
+/// one means absent: `cli` asks for it, or refuses (ADR 0008). The rest follow spec §6.1. It is
 /// also the shape of the command line, so the CLI parses straight into it.
-#[derive(Debug, Default, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 pub struct AddRepo {
-    /// The repository to add
+    /// The repository to add; asked for on a terminal when absent
+    #[arg(default_value = "", hide_default_value = true)]
     pub url: String,
     /// The repo's id, instead of the last segment of the URL
     #[arg(long)]
@@ -337,7 +339,7 @@ fn cut_table(text: &str, target: Target) -> Result<String, EditError> {
 }
 
 /// The last path segment of the URL, without a trailing `.git`.
-fn id_from_url(url: &str) -> String {
+pub(crate) fn id_from_url(url: &str) -> String {
     let last = url
         .trim_end_matches('/')
         .rsplit(['/', ':'])

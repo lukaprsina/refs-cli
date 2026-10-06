@@ -12,6 +12,7 @@ pub mod list;
 pub mod lock;
 pub mod plan;
 pub mod project;
+pub mod prompt;
 pub mod render;
 pub mod source;
 pub mod status;

@@ -345,7 +345,7 @@ fn is_single_line_text(text: &str) -> bool {
 
 /// A group name becomes a `###` heading: letters, digits, spaces and `. , : ( ) / + & -`,
 /// not starting or ending with a space, and no marker text (`:` is allowed, so `BEGIN:refs` would pass).
-fn is_heading_safe(name: &str) -> bool {
+pub(crate) fn is_heading_safe(name: &str) -> bool {
     is_single_line_text(name)
         && !name.is_empty()
         && !name.starts_with(' ')
@@ -386,7 +386,7 @@ fn start_is_checked_out(start: &str, paths: &[Spanned<String>]) -> bool {
 }
 
 /// `[a-z0-9][a-z0-9._-]*`
-fn is_repo_id(id: &str) -> bool {
+pub(crate) fn is_repo_id(id: &str) -> bool {
     let mut chars = id.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit())
         && chars

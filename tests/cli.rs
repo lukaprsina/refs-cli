@@ -165,7 +165,8 @@ fn a_usage_error_is_styled_only_for_a_terminal() {
             source,
             &mut out,
             &mut styled,
-            terminal
+            terminal,
+            None
         ),
         2
     );
@@ -203,6 +204,7 @@ enabled = false
         &mut out,
         &mut err,
         terminal,
+        None,
     );
     assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
     String::from_utf8(out).unwrap()

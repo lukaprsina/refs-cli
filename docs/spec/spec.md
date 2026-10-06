@@ -102,6 +102,8 @@ Ranked:
 - `add` input shorthand: an explicit `gh:owner/repo` (alias `github:`) prefix, never a bare `owner/repo`. Input sugar only: `refs.toml` stores the expanded URL. Further hosts later (`gl:`).
 - `refs cache clean`/`prune` for the global cache (formerly `gc`/`clean`, rank 6). Required before any release.
 
+**Interactive `add` (ADR 0008), an exception to "no features before it".** It goes before the batch and before rank 1. On a terminal, `add` asks for what it was not given (a bare `refs add` asks for the URL too); `--no-input` (global) turns it off, and without a terminal nothing is asked. When rank 1 lands, its inferred `packages` and `start` become the prompt defaults.
+
 ### 3.3 Considered and discarded (with reasons)
 
 | Idea | Why discarded |
