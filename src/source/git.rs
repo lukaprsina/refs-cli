@@ -110,12 +110,24 @@ impl Source for GitSource {
             }
             for path in &repo.repo.start {
                 let path = path.get_ref();
-                if cache.entry_kind(sha, path)? == EntryKind::Missing {
-                    return Err(SourceError::StartMissing {
-                        repo: repo.id.into(),
-                        path: path.into(),
-                        sha: sha.to_string(),
-                    });
+                let (id, path, sha) = (repo.id.to_string(), path.to_string(), sha.to_string());
+                match cache.entry_kind(&sha, &path)? {
+                    EntryKind::Missing => {
+                        return Err(SourceError::StartMissing {
+                            repo: id,
+                            path,
+                            sha,
+                        });
+                    }
+                    // cone mode checks out the root's files, not its directories
+                    EntryKind::Tree if !repo.repo.paths.is_empty() && !path.contains('/') => {
+                        return Err(SourceError::StartNotFile {
+                            repo: id,
+                            path,
+                            sha,
+                        });
+                    }
+                    _ => {}
                 }
             }
             Ok(())

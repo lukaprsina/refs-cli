@@ -297,6 +297,19 @@ mod verify {
     }
 
     #[test]
+    fn a_root_directory_as_start_is_an_error_only_when_paths_leave_it_out() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let with_paths = remote.repo(&["docs"], &["src"]);
+        assert_eq!(
+            verify(&env.source(), &remote, &with_paths, ONLINE),
+            Err("refs::git::start_not_file".into())
+        );
+        // no `paths`: the whole repo is checked out, directories included
+        let whole = remote.repo(&[], &["src"]);
+        assert_eq!(verify(&env.source(), &remote, &whole, ONLINE), Ok(()));
+    }
+
+    #[test]
     fn a_tag_object_is_not_a_commit() {
         let (remote, env) = (Remote::new(), Env::new());
         let tag_object = git(remote.dir.path(), &["rev-parse", "v1"]);

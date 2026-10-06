@@ -218,6 +218,19 @@ pub enum SourceError {
         sha: String,
     },
 
+    #[error("`start` file `{path}` in `{repo}` at {sha} is a directory that is not checked out")]
+    #[diagnostic(
+        code(refs::git::start_not_file),
+        help(
+            "with `paths` set, only files directly in the repo root are checked out besides them"
+        )
+    )]
+    StartNotFile {
+        repo: String,
+        path: String,
+        sha: String,
+    },
+
     #[error("`start` file `{path}` does not exist in `{repo}` at {sha}")]
     #[diagnostic(code(refs::git::start_missing))]
     StartMissing {
@@ -267,6 +280,7 @@ impl SourceError {
             SourceError::PathMissing { .. }
             | SourceError::PathNotDir { .. }
             | SourceError::StartMissing { .. }
+            | SourceError::StartNotFile { .. }
             | SourceError::ObjectMissing { .. } => miette::Report::new(self),
             cause => miette::Report::new(RepoFailed {
                 id: id.into(),
