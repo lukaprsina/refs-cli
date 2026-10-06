@@ -2,7 +2,7 @@
 
 `refs` copies `uv`'s model (config is intent, the lock is resolution, `sync` makes the disk match) and, where a command or flag has a uv counterpart, its name and meaning: `lock`/`sync`, `--no-sync`, `--check`, `--locked`, `--upgrade`, `--upgrade-package`, `--project`, `--offline`, `-q`/`-v`. We invent our own only where the domain has no uv equivalent. Users who know uv should guess `refs` right, and an agent that has seen uv's help text gets ours for free.
 
-Known divergences, kept on purpose: `enable`/`disable` and Groups (uv has neither; Repos and Groups are not colocated in the TOML, so a switch earns its place), and `add` metadata flags (`--paths`, `--packages`, `--start`, `--description`), which override what `add` infers (spec §3.2, rank 1), and `add` prompting for what it was not given on a terminal (ADR 0008; uv never prompts).
+Known divergences, kept on purpose: `enable`/`disable` and Groups (uv has neither; Repos and Groups are not colocated in the TOML, so a switch earns its place), and `add` metadata flags (`--paths`, `--packages`, `--start`, `--description`), which override what `add` infers (spec §3.2, rank 1), `add` prompting for what it was not given on a terminal (ADR 0008; uv never prompts), and `update`, which uv spells `uv self update`: `refs` has no other `self` commands to group it with, so `refs update` is the short form, and `--check` exits `3` as `sync --check` does.
 
 Where the CLI still differs from uv by accident, not by design, it is a bug to fix, not a precedent: see the alignment batch in spec §3.2.
 

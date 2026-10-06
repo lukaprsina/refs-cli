@@ -5,10 +5,11 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::Path;
 
-use refs_cli::cli::{Terminal, run_on};
+use refs_cli::cli::{Outside, Terminal, run_on};
 use refs_cli::diagnostic::SourceError;
 use refs_cli::prompt::{Abort, Prompter};
 use refs_cli::source::Source;
+use refs_cli::update::Unmanaged;
 use tempfile::TempDir;
 
 const CONFIG: &str = r#"[groups.core]
@@ -119,7 +120,10 @@ fn refs(dir: &Path, args: &[&str], prompter: Option<&mut dyn Prompter>) -> Run {
         &mut out,
         &mut err,
         Terminal::default(),
-        prompter,
+        Outside {
+            prompter,
+            updater: &Unmanaged,
+        },
     );
     Run {
         code,

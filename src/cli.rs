@@ -22,6 +22,7 @@ use crate::project;
 use crate::prompt::{self, Prompter};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
+use crate::update::{self, Updater};
 
 const EXIT_ERROR: u8 = 1;
 const EXIT_USAGE: u8 = 2;
@@ -46,14 +47,16 @@ pub struct Cli {
     command: Command,
 }
 
-/// The commands, by what they need: `init` runs where there may be no project yet, the
-/// config commands read and edit `refs.toml` and ask for a `Source` only to sync after an
-/// edit (unless `--no-sync`) or to show `list --status`, and the rest act on the project
-/// through one.
+/// The commands, by what they need: `init` and `update` run where there may be no project
+/// (`update` is about the program, not a project), the config commands read and edit
+/// `refs.toml` and ask for a `Source` only to sync after an edit (unless `--no-sync`) or to
+/// show `list --status`, and the rest act on the project through one.
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Set up a project: refs.toml, the managed block and the git exclude rule
     Init(InitArgs),
+    /// Replace this program with the latest release
+    Update(UpdateArgs),
     #[command(flatten)]
     Config(ConfigCommand),
     #[command(flatten)]
@@ -128,6 +131,13 @@ struct InitArgs {
     /// Create a project here even below a directory that already has a refs.toml
     #[arg(long)]
     here: bool,
+}
+
+#[derive(Debug, Args)]
+struct UpdateArgs {
+    /// Install nothing; exit 3 if a newer release exists
+    #[arg(long)]
+    check: bool,
 }
 
 #[derive(Debug, Args)]
@@ -224,7 +234,10 @@ pub fn run<'a>(
         &mut std::io::stdout(),
         &mut std::io::stderr(),
         terminal,
-        interactive.then_some(&mut prompter as &mut dyn Prompter),
+        Outside {
+            prompter: interactive.then_some(&mut prompter as &mut dyn Prompter),
+            updater: &update::Axo,
+        },
     )
 }
 
@@ -246,11 +259,29 @@ pub fn run_with<'a>(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> u8 {
-    run_on(args, cwd, make_source, out, err, Terminal::default(), None)
+    run_on(
+        args,
+        cwd,
+        make_source,
+        out,
+        err,
+        Terminal::default(),
+        Outside {
+            prompter: None,
+            updater: &update::Unmanaged,
+        },
+    )
 }
 
-/// `run_with`, told which streams are styled and given the prompter to ask with, if any.
-/// `None` means there is nobody to ask; `--no-input` ignores a given prompter.
+/// What a run reaches beyond its files and its `Source`, given so a test can script it.
+pub struct Outside<'a> {
+    /// Who to ask. `None` means there is nobody; `--no-input` ignores a given prompter.
+    pub prompter: Option<&'a mut dyn Prompter>,
+    /// What `update` installs through.
+    pub updater: &'a dyn Updater,
+}
+
+/// `run_with`, told which streams are styled and given what the run reaches outside.
 pub fn run_on<'a>(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
@@ -258,7 +289,7 @@ pub fn run_on<'a>(
     out: &mut dyn Write,
     err: &mut dyn Write,
     terminal: Terminal,
-    prompter: Option<&mut dyn Prompter>,
+    outside: Outside,
 ) -> u8 {
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
@@ -292,9 +323,10 @@ pub fn run_on<'a>(
     };
     match cli.command {
         Command::Init(args) => init(start, args.here, &mut console),
+        Command::Update(args) => update(outside.updater, args.check, &mut console),
         Command::Config(command) => match load(start, &mut console) {
             Ok((root, config)) => {
-                let prompter = prompter.filter(|_| !cli.no_input);
+                let prompter = outside.prompter.filter(|_| !cli.no_input);
                 run_config(
                     &command,
                     &root,
@@ -499,6 +531,38 @@ fn init(start: &Path, here: bool, console: &mut Console) -> u8 {
             0
         }
         Err(report) => fail(report, console),
+    }
+}
+
+/// `refs update`: install the latest release over this one, or with `--check` only say
+/// whether there is one (exit 3, as `sync --check` does for a project that is out of date).
+fn update(updater: &dyn Updater, check: bool, console: &mut Console) -> u8 {
+    if check {
+        return match updater.is_update_available() {
+            Ok(true) => {
+                console.problem("out of date: a newer release is available; run `refs update`");
+                EXIT_OUT_OF_DATE
+            }
+            Ok(false) => {
+                console.status("up to date");
+                0
+            }
+            Err(e) => fail(e, console),
+        };
+    }
+    match updater.install() {
+        Ok(Some(installed)) => {
+            let from = installed
+                .from
+                .map_or(String::new(), |v| format!(" from {v}"));
+            console.status(format_args!("updated refs{from} to {}", installed.to));
+            0
+        }
+        Ok(None) => {
+            console.status("up to date");
+            0
+        }
+        Err(e) => fail(e, console),
     }
 }
 

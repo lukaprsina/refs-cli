@@ -17,4 +17,5 @@ pub mod render;
 pub mod source;
 pub mod status;
 pub mod sync;
+pub mod update;
 pub mod worktree;
