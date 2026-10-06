@@ -20,7 +20,7 @@ use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::source::Source;
-use crate::sync::{self, Change, Changed, Checkout, Edited, Hint, Outcome, Report, SyncFlags};
+use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
 
 const EXIT_ERROR: u8 = 1;
 const EXIT_OUT_OF_DATE: u8 = 3;
@@ -169,9 +169,6 @@ struct Console<'w> {
     out: &'w mut dyn Write,
     err: &'w mut dyn Write,
     quiet: bool,
-    /// How many status lines were asked for, shown or not: "nothing changed" is for a run
-    /// that had none.
-    said: usize,
 }
 
 impl Console<'_> {
@@ -183,7 +180,6 @@ impl Console<'_> {
 
     /// A status line: what changed, or that nothing did.
     fn status(&mut self, line: impl Display) {
-        self.said += 1;
         if !self.quiet {
             let _ = writeln!(self.err, "{line}");
         }
@@ -279,7 +275,6 @@ pub fn run_on<'a>(
         out,
         err,
         quiet: cli.quiet,
-        said: 0,
     };
     match cli.command {
         Command::Init(args) => init(start, args.here, &mut console),
@@ -326,11 +321,11 @@ fn run_config<'a>(
         ConfigCommand::Enable(args) => (&args.flags, Edit::Enable(args.target())),
     };
     if flags.no_sync {
-        print_edited(&sync::edit_only(root, &edit), console)
+        print_report(&sync::edit_only(root, &edit), false, console)
     } else {
         with_source(make_source, root, config, console, |source, console| {
-            let edited = sync::edit(source, root, &edit, &SyncFlags::default());
-            print_edited(&edited, console)
+            let report = sync::edit(source, root, &edit, &SyncFlags::default());
+            print_report(&report, false, console)
         })
     }
 }
@@ -396,8 +391,7 @@ fn run_source<'a>(
                 (sync::sync(source, root, config, &flags), args.check)
             }
         };
-        print(&report, check, console);
-        exit_code(report.outcome)
+        print_report(&report, check, console)
     })
 }
 
@@ -421,18 +415,6 @@ fn say_hint(hint: Hint, console: &mut Console) {
     }
 }
 
-/// Say what `sync::edit` did, and give the exit code.
-fn print_edited(edited: &Edited, console: &mut Console) -> u8 {
-    if edited.change == Change::Written {
-        console.status(format_args!("updated {}", project::CONFIG_FILE));
-    }
-    if let Some(group) = &edited.group_created {
-        console.status(format_args!("created group `{group}`"));
-    }
-    print(&edited.report, false, console);
-    exit_code(edited.report.outcome)
-}
-
 /// `refs init`: it needs no loaded project, as there may be none yet.
 fn init(start: &Path, here: bool, console: &mut Console) -> u8 {
     let result = project::init_root(start, here)
@@ -442,11 +424,9 @@ fn init(start: &Path, here: bool, console: &mut Console) -> u8 {
         Ok(done) => {
             if done.config_created {
                 console.status(format_args!("created {}", project::CONFIG_FILE));
-            }
-            if console.said == 0 {
-                console.status("nothing changed");
-            } else {
                 console.status(REMINDERS);
+            } else {
+                console.status("nothing changed");
             }
             0
         }
@@ -502,9 +482,12 @@ fn install_report_handler(no_color: bool) {
 
 /// One status line per change, the problems, and "nothing changed" for a run that did no
 /// change and had no problem (`--check` changes nothing by design: it says "up to date").
-fn print(report: &Report, check: bool, console: &mut Console) {
+/// Gives the exit code.
+fn print_report(report: &Report, check: bool, console: &mut Console) -> u8 {
     for change in &report.changes {
         match change {
+            Changed::Config => console.status(format_args!("updated {}", project::CONFIG_FILE)),
+            Changed::Group(group) => console.status(format_args!("created group `{group}`")),
             Changed::Lock => console.status(format_args!("updated {}", crate::lock::FILE)),
             Changed::Checkout { id, how } => {
                 let how = match how {
@@ -528,7 +511,7 @@ fn print(report: &Report, check: bool, console: &mut Console) {
             console.problem(format_args!("out of date: {drift}"));
         }
     }
-    if report.outcome == Outcome::InSync && console.said == 0 {
+    if report.outcome == Outcome::InSync && report.changes.is_empty() {
         console.status(if check {
             "up to date"
         } else {
@@ -538,4 +521,5 @@ fn print(report: &Report, check: bool, console: &mut Console) {
     if let Some(hint) = report.hint {
         say_hint(hint, console);
     }
+    exit_code(report.outcome)
 }

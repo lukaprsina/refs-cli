@@ -13,4 +13,4 @@ pub use classify::{Cause, CheckoutState, classify};
 pub use lock::{
     Drift, LockFlags, LockPlan, Step, Upgrade, lock_drift, locked, plan_lock, shrunk_lock,
 };
-pub use outcome::{Change, Command, Hint, Outcome, check_outcome, hint};
+pub use outcome::{Hint, Outcome, check_outcome};
