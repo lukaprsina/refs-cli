@@ -14,4 +14,4 @@ Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/ag
 
 ### Checks
 
-Run `scripts/check` before committing; CI and `.githooks/pre-commit` run it too. Enable the hook with `git config core.hooksPath .githooks`.
+Run `scripts/check` before committing; CI (on pushes to `prod`) and `.githooks/pre-commit` run it too. Enable the hook with `git config core.hooksPath .githooks`.
