@@ -25,11 +25,11 @@ struct Script {
     answers: VecDeque<Answer>,
     asked: Vec<String>,
     rejected: Vec<String>,
+    suggested: Vec<Vec<String>>,
 }
 
 enum Answer {
     Text(&'static str),
-    Pick(usize),
     Yes(bool),
     Cancel,
 }
@@ -40,6 +40,7 @@ impl Script {
             answers: answers.into_iter().collect(),
             asked: Vec::new(),
             rejected: Vec::new(),
+            suggested: Vec::new(),
         }
     }
 
@@ -72,12 +73,14 @@ impl Prompter for Script {
         }
     }
 
-    fn select(&mut self, message: &str, _options: &[String]) -> Result<usize, Abort> {
-        match self.next(message) {
-            Answer::Pick(index) => Ok(index),
-            Answer::Cancel => Err(Abort::Cancelled),
-            _ => panic!("{message:?} is a select question"),
-        }
+    fn suggest(
+        &mut self,
+        message: &str,
+        suggestions: &[String],
+        validate: &dyn Fn(&str) -> Result<(), String>,
+    ) -> Result<String, Abort> {
+        self.suggested.push(suggestions.to_vec());
+        self.text(message, None, validate)
     }
 
     fn confirm(&mut self, message: &str) -> Result<bool, Abort> {
@@ -130,7 +133,8 @@ fn a_bare_add_asks_for_everything_and_writes_the_answers() {
     let mut script = Script::new([
         Answer::Text("https://github.com/solidjs/solid-router"),
         Answer::Text(""),
-        Answer::Pick(1),
+        Answer::Yes(true),
+        Answer::Text("core"),
         Answer::Text("next"),
         Answer::Text("The router"),
         Answer::Yes(true),
@@ -169,7 +173,7 @@ packages = ["@solidjs/router"]
 #[test]
 fn a_value_given_as_a_flag_is_not_asked_again() {
     let dir = project();
-    let mut script = Script::new([Answer::Text(""), Answer::Pick(0), Answer::Yes(false)]);
+    let mut script = Script::new([Answer::Text(""), Answer::Yes(false), Answer::Yes(false)]);
 
     let run = refs(
         dir.path(),
@@ -188,7 +192,11 @@ fn a_value_given_as_a_flag_is_not_asked_again() {
     assert_eq!(run.code, 0, "{}", run.err);
     assert_eq!(
         script.asked,
-        ["Id", "Group", "Customize paths, packages and start?"]
+        [
+            "Id",
+            "Link to a group?",
+            "Customize paths, packages and start?"
+        ]
     );
     assert!(config_text(dir.path()).contains("ref = \"v2\""));
 }
@@ -200,7 +208,7 @@ fn a_bad_answer_is_asked_again() {
         Answer::Text("solid"), // taken
         Answer::Text("Not Valid"),
         Answer::Text("router"),
-        Answer::Pick(0),
+        Answer::Yes(false),
         Answer::Text(""),
         Answer::Text(""),
         Answer::Yes(false),
@@ -266,4 +274,109 @@ fn without_a_terminal_nothing_is_asked_and_a_missing_url_is_a_usage_error() {
         None,
     );
     assert_eq!(run.code, 0, "{}", run.err);
+}
+
+/// Answers for `refs add <url> --no-sync` up to the group question.
+fn id_then_group_yes() -> [Answer; 2] {
+    [Answer::Text(""), Answer::Yes(true)]
+}
+
+#[test]
+fn the_first_group_can_be_created_by_typing_its_name() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("refs.toml"),
+        "[repos.solid]
+url = \"https://github.com/solidjs/solid\"
+",
+    )
+    .unwrap();
+    let [id, link] = id_then_group_yes();
+    let mut script = Script::new([
+        id,
+        link,
+        Answer::Text("Solid core"),
+        Answer::Text(""),
+        Answer::Text(""),
+        Answer::Yes(false),
+    ]);
+
+    let run = refs(
+        dir.path(),
+        &["add", "https://github.com/o/lib", "--no-sync"],
+        Some(&mut script),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(script.suggested, [Vec::<String>::new()]);
+    let config = config_text(dir.path());
+    assert!(config.contains("[groups.\"Solid core\"]"), "{config}");
+    assert!(config.contains("group = \"Solid core\""), "{config}");
+}
+
+#[test]
+fn existing_groups_are_suggested_and_picking_one_creates_nothing() {
+    let dir = project();
+    let [id, link] = id_then_group_yes();
+    let mut script = Script::new([
+        id,
+        link,
+        Answer::Text("core"),
+        Answer::Text(""),
+        Answer::Text(""),
+        Answer::Yes(false),
+    ]);
+
+    let run = refs(
+        dir.path(),
+        &["add", "https://github.com/o/lib", "--no-sync"],
+        Some(&mut script),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(script.suggested, [vec!["core".to_owned()]]);
+    assert_eq!(config_text(dir.path()).matches("[groups.").count(), 1);
+}
+
+#[test]
+fn an_empty_or_case_only_different_group_name_is_asked_again() {
+    let dir = project();
+    let [id, link] = id_then_group_yes();
+    let mut script = Script::new([
+        id,
+        link,
+        Answer::Text("Core"),
+        Answer::Text("core"),
+        Answer::Text(""),
+        Answer::Text(""),
+        Answer::Yes(false),
+    ]);
+
+    let run = refs(
+        dir.path(),
+        &["add", "https://github.com/o/lib", "--no-sync"],
+        Some(&mut script),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(script.rejected.len(), 1, "{:?}", script.rejected);
+    assert!(script.rejected[0].contains("did you mean `core`"));
+
+    let mut script = Script::new([
+        Answer::Text(""),
+        Answer::Yes(true),
+        Answer::Text(""),
+        Answer::Cancel,
+    ]);
+    let run = refs(
+        dir.path(),
+        &["add", "https://github.com/o/other", "--no-sync"],
+        Some(&mut script),
+    );
+    assert_eq!(run.code, 1);
+    assert!(
+        script.rejected[0].contains("enter a name"),
+        "{:?}",
+        script.rejected
+    );
 }

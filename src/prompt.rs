@@ -25,8 +25,14 @@ pub trait Prompter {
         validate: &dyn Fn(&str) -> Result<(), String>,
     ) -> Result<String, Abort>;
 
-    /// One of `options`, by index.
-    fn select(&mut self, message: &str, options: &[String]) -> Result<usize, Abort>;
+    /// A line of text that may be one of `suggestions` (narrowed as the person types) or
+    /// something new. The answer is not an empty string unless `validate` allows it.
+    fn suggest(
+        &mut self,
+        message: &str,
+        suggestions: &[String],
+        validate: &dyn Fn(&str) -> Result<(), String>,
+    ) -> Result<String, Abort>;
 
     /// Yes or no, defaulting to no.
     fn confirm(&mut self, message: &str) -> Result<bool, Abort>;
@@ -37,9 +43,6 @@ pub trait Prompter {
 pub struct Filled {
     pub asked: bool,
 }
-
-const NO_GROUP: &str = "no group";
-const NEW_GROUP: &str = "a new group...";
 
 /// Complete `repo` by asking for each value it does not have. A value given on the command
 /// line is never asked for again; an empty answer leaves a value absent, as omitting its flag
@@ -61,7 +64,7 @@ pub fn fill_add(
         let id = prompter.text("Id", Some(&default), &taken)?;
         repo.id = Some(id).filter(|id| *id != default);
     }
-    if repo.group.is_none() && !config.groups.is_empty() {
+    if repo.group.is_none() {
         asked = true;
         repo.group = ask_group(config, prompter)?;
     }
@@ -95,21 +98,19 @@ pub fn fill_add(
     Ok(Filled { asked })
 }
 
+/// Whether to file the repo under a group, and which: one that exists or a new one, by name.
 fn ask_group(config: &Config, prompter: &mut dyn Prompter) -> Result<Option<String>, Abort> {
-    let existing: Vec<String> = config.groups.keys().map(|id| id.as_ref().clone()).collect();
-    let options: Vec<String> = std::iter::once(NO_GROUP.to_owned())
-        .chain(existing.iter().cloned())
-        .chain(std::iter::once(NEW_GROUP.to_owned()))
-        .collect();
-    let chosen = prompter.select("Group", &options)?;
-    if chosen == 0 {
-        Ok(None)
-    } else if chosen == options.len() - 1 {
-        let name = prompter.text("Name of the new group", None, &valid_group)?;
-        Ok(non_empty(name))
-    } else {
-        Ok(Some(existing[chosen - 1].clone()))
+    if !prompter.confirm("Link to a group?")? {
+        return Ok(None);
     }
+    let existing: Vec<String> = config.groups.keys().map(|id| id.as_ref().clone()).collect();
+    let message = if existing.is_empty() {
+        "Group (none yet; a new one will be created)"
+    } else {
+        "Group (type to filter, or a new name to create one)"
+    };
+    let name = prompter.suggest(message, &existing, &|name| valid_group(name, &existing))?;
+    Ok(Some(name))
 }
 
 /// A free-text question that `config::parse` checks later; empty means absent.
@@ -144,11 +145,19 @@ fn valid_id(id: &str, config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-fn valid_group(name: &str) -> Result<(), String> {
-    if name.is_empty() || config::is_heading_safe(name) {
-        Ok(())
-    } else {
-        Err("a group name may not contain markup or control characters".into())
+fn valid_group(name: &str, existing: &[String]) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("enter a name, or press Esc to cancel".into());
+    }
+    if !config::is_heading_safe(name) {
+        return Err("a group name may not contain markup or control characters".into());
+    }
+    match existing
+        .iter()
+        .find(|group| group.to_lowercase() == name.to_lowercase())
+    {
+        Some(group) if group != name => Err(format!("did you mean `{group}`?")),
+        _ => Ok(()),
     }
 }
 
@@ -202,23 +211,23 @@ impl Prompter for Terminal {
         default: Option<&str>,
         validate: &dyn Fn(&str) -> Result<(), String>,
     ) -> Result<String, Abort> {
-        let validator = |input: &str| {
-            Ok(match validate(input) {
-                Ok(()) => inquire::validator::Validation::Valid,
-                Err(message) => inquire::validator::Validation::Invalid(message.into()),
-            })
-        };
-        let mut question = inquire::Text::new(message).with_validator(validator);
+        let mut question = inquire::Text::new(message).with_validator(validator(validate));
         if let Some(default) = default {
             question = question.with_default(default);
         }
         question.prompt().map_err(abort)
     }
 
-    fn select(&mut self, message: &str, options: &[String]) -> Result<usize, Abort> {
-        inquire::Select::new(message, options.to_vec())
-            .raw_prompt()
-            .map(|chosen| chosen.index)
+    fn suggest(
+        &mut self,
+        message: &str,
+        suggestions: &[String],
+        validate: &dyn Fn(&str) -> Result<(), String>,
+    ) -> Result<String, Abort> {
+        inquire::Text::new(message)
+            .with_autocomplete(Suggestions(suggestions.to_vec()))
+            .with_validator(validator(validate))
+            .prompt()
             .map_err(abort)
     }
 
@@ -235,5 +244,41 @@ fn abort(error: inquire::InquireError) -> Abort {
     match error {
         OperationCanceled | OperationInterrupted => Abort::Cancelled,
         other => Abort::Failed(other.to_string()),
+    }
+}
+
+/// `validate` as an `inquire` validator.
+fn validator<'v>(
+    validate: &'v dyn Fn(&str) -> Result<(), String>,
+) -> impl inquire::validator::StringValidator + 'v {
+    move |input: &str| {
+        Ok(match validate(input) {
+            Ok(()) => inquire::validator::Validation::Valid,
+            Err(message) => inquire::validator::Validation::Invalid(message.into()),
+        })
+    }
+}
+
+/// The existing names, filtered by what has been typed; tab takes the highlighted one.
+#[derive(Clone)]
+struct Suggestions(Vec<String>);
+
+impl inquire::Autocomplete for Suggestions {
+    fn get_suggestions(&mut self, input: &str) -> Result<Vec<String>, inquire::CustomUserError> {
+        let input = input.to_lowercase();
+        Ok(self
+            .0
+            .iter()
+            .filter(|name| name.to_lowercase().contains(&input))
+            .cloned()
+            .collect())
+    }
+
+    fn get_completion(
+        &mut self,
+        _input: &str,
+        highlighted: Option<String>,
+    ) -> Result<inquire::autocompletion::Replacement, inquire::CustomUserError> {
+        Ok(highlighted)
     }
 }

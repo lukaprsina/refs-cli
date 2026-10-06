@@ -21,7 +21,7 @@ pub struct AddRepo {
     /// The repo's id, instead of the last segment of the URL
     #[arg(long)]
     pub id: Option<String>,
-    /// The group to put it in; it must exist
+    /// The group to put it in; created when the config has no such group
     #[arg(long)]
     pub group: Option<String>,
     /// A branch, tag or full commit id; the remote's default branch when absent
