@@ -92,21 +92,35 @@ pub struct ProjectObserved {
     pub exclude: Exclude,
 }
 
-/// What to do for one Repo's Checkout. One unit per Repo: a Repo's remove and materialise
-/// are a single `Materialise` with `replace`, so nothing in the Plan depends on the order of
-/// two actions.
+/// How a Checkout comes to be at a Pin. The two that remove first are one action with the
+/// materialise, so nothing in the Plan depends on the order of two actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    /// Nothing is there.
+    Create,
+    /// Move a clean Checkout to the Pin.
+    Move,
+    /// Remove a Dangling Checkout and create it again; the run says so.
+    Recreate,
+    /// Remove a dirty Checkout (only under `--force`) and create it at the Pin.
+    Overwrite,
+}
+
+impl Placement {
+    /// Whether the existing Checkout is removed before the materialise.
+    pub fn removes_first(self) -> bool {
+        matches!(self, Placement::Recreate | Placement::Overwrite)
+    }
+}
+
+/// What to do for one Repo's Checkout. One unit per Repo.
 #[derive(Debug)]
 pub enum RepoAction<'a> {
-    /// Create the Checkout (`moving` false) or move it to `pin` (`moving` true). With
-    /// `replace` the Checkout is removed first: a Dangling one (`moving` false, nothing was
-    /// there to move), or a dirty one under `--force` (`moving` true). `note` is reported
-    /// once the whole action has succeeded.
+    /// Put the Repo's Checkout at `pin`.
     Materialise {
         repo: RepoRef<'a>,
         pin: Pin,
-        moving: bool,
-        replace: bool,
-        note: Option<Note>,
+        placement: Placement,
     },
     /// Remove the Checkout of a name that is not Active, for example a disabled or deleted
     /// Repo. It takes an id because a Checkout can outlive its config entry.
@@ -132,14 +146,23 @@ impl RepoAction<'_> {
 
     pub fn how(&self) -> Checkout {
         match self {
-            RepoAction::Materialise { moving, .. } => {
-                if *moving {
-                    Checkout::Moved
-                } else {
-                    Checkout::Created
-                }
-            }
+            RepoAction::Materialise { placement, .. } => match placement {
+                Placement::Create | Placement::Recreate => Checkout::Created,
+                Placement::Move | Placement::Overwrite => Checkout::Moved,
+            },
             RepoAction::Remove { .. } => Checkout::Removed,
+        }
+    }
+
+    /// What the run says once the whole action has succeeded.
+    pub fn note(&self) -> Option<Note> {
+        match self {
+            RepoAction::Materialise {
+                repo,
+                placement: Placement::Recreate,
+                ..
+            } => Some(Note::Recreated { id: repo.id.into() }),
+            _ => None,
         }
     }
 
@@ -203,6 +226,14 @@ impl Plan<'_> {
     }
 }
 
+fn place(repo: RepoRef, pin: Pin, placement: Placement) -> RepoAction {
+    RepoAction::Materialise {
+        repo,
+        pin,
+        placement,
+    }
+}
+
 fn dirty(id: &str, files: &[String]) -> Refusal {
     Refusal::DirtyCheckout {
         id: id.into(),
@@ -232,37 +263,15 @@ pub fn plan_checkouts<'a>(
         let pin = || locked.pin.clone();
         match classify(checkouts.of(repo.id), repo.repo, &locked.pin) {
             CheckoutState::InSync => {}
-            CheckoutState::Absent => current.push(RepoAction::Materialise {
-                repo,
-                pin: pin(),
-                moving: false,
-                replace: false,
-                note: None,
-            }),
-            CheckoutState::Dangling => current.push(RepoAction::Materialise {
-                repo,
-                pin: pin(),
-                moving: false,
-                replace: true,
-                note: Some(Note::Recreated { id: repo.id.into() }),
-            }),
+            CheckoutState::Absent => current.push(place(repo, pin(), Placement::Create)),
+            CheckoutState::Dangling => current.push(place(repo, pin(), Placement::Recreate)),
             CheckoutState::Foreign => refusals.push(Refusal::ForeignDir { id: repo.id.into() }),
             CheckoutState::Stale { dirty_files, .. } if dirty_files.is_empty() => {
-                current.push(RepoAction::Materialise {
-                    repo,
-                    pin: pin(),
-                    moving: true,
-                    replace: false,
-                    note: None,
-                })
+                current.push(place(repo, pin(), Placement::Move))
             }
-            CheckoutState::Stale { .. } if force => current.push(RepoAction::Materialise {
-                repo,
-                pin: pin(),
-                moving: true,
-                replace: true,
-                note: None,
-            }),
+            CheckoutState::Stale { .. } if force => {
+                current.push(place(repo, pin(), Placement::Overwrite))
+            }
             CheckoutState::Stale { dirty_files, .. } => refusals.push(dirty(repo.id, &dirty_files)),
         }
     }

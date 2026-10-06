@@ -6,8 +6,8 @@ mod lock;
 mod outcome;
 
 pub use checkouts::{
-    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Plan, ProjectObserved, RepoAction,
-    WriteAgentFile, plan_checkouts,
+    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Placement, Plan, ProjectObserved,
+    RepoAction, WriteAgentFile, plan_checkouts,
 };
 pub use classify::{Cause, CheckoutState, classify};
 pub use lock::{

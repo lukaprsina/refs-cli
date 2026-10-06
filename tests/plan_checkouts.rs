@@ -4,8 +4,8 @@ use refs_cli::config::{Config, parse};
 use refs_cli::diagnostic::Refusal;
 use refs_cli::lock::{Lock, LockedRepo};
 use refs_cli::plan::{
-    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Plan, ProjectObserved, RepoAction,
-    plan_checkouts,
+    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Placement, Plan, ProjectObserved,
+    RepoAction, plan_checkouts,
 };
 use refs_cli::render::render;
 use refs_cli::source::fake::FakeSource;
@@ -122,7 +122,7 @@ fn an_absent_checkout_is_materialised_at_the_locked_pin() {
     let plan = plan(&FakeSource::new(), &project(&set), false);
     assert!(matches!(
         plan.repos.as_slice(),
-        [RepoAction::Materialise { repo, pin: p, replace: false, .. }] if repo.id == "a" && *p == pin(SHA)
+        [RepoAction::Materialise { repo, pin: p, placement: Placement::Create, .. }] if repo.id == "a" && *p == pin(SHA)
     ));
     assert!(plan.is_drift());
 }
@@ -205,10 +205,14 @@ fn a_dangling_checkout_is_replaced_with_a_note_and_force_changes_nothing() {
         assert!(
             matches!(
                 plan.repos.as_slice(),
-                [RepoAction::Materialise { repo, replace: true, note: Some(note), .. }]
-                    if repo.id == "a" && code(note) == "refs::sync::recreated"
+                [RepoAction::Materialise { repo, placement: Placement::Recreate, .. }]
+                    if repo.id == "a"
             ) && plan.refusals.is_empty(),
             "{plan:?}"
+        );
+        assert_eq!(
+            code(&plan.repos[0].note().unwrap()),
+            "refs::sync::recreated"
         );
         assert!(plan.is_drift());
         assert_eq!(plan.repos[0].how(), Checkout::Created);
@@ -254,7 +258,7 @@ fn a_dirty_checkout_that_must_move_is_refused_naming_the_files() {
 }
 
 #[test]
-fn force_replaces_a_dirty_refusal_by_a_replacing_materialise_without_a_note() {
+fn force_overwrites_a_dirty_checkout_instead_of_refusing_and_says_nothing() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
     let source = FakeSource::new();
@@ -263,11 +267,12 @@ fn force_replaces_a_dirty_refusal_by_a_replacing_materialise_without_a_note() {
     assert!(
         matches!(
             plan.repos.as_slice(),
-            [RepoAction::Materialise { repo, replace: true, note: None, .. }] if repo.id == "a"
+            [RepoAction::Materialise { repo, placement: Placement::Overwrite, .. }] if repo.id == "a"
         ) && plan.refusals.is_empty(),
         "{plan:?}"
     );
     assert_eq!(plan.repos[0].how(), Checkout::Moved);
+    assert!(plan.repos[0].note().is_none());
 }
 
 #[test]
@@ -439,9 +444,12 @@ fn applying_a_plan_to_the_fake_and_replanning_gives_an_empty_plan() {
         match action {
             RepoAction::Remove { id } => source.remove(id).unwrap(),
             RepoAction::Materialise {
-                repo, pin, replace, ..
+                repo,
+                pin,
+                placement,
+                ..
             } => {
-                assert!(!replace, "unexpected {action:?}");
+                assert_eq!(*placement, Placement::Create, "unexpected {action:?}");
                 source.materialise(*repo, pin, Default::default()).unwrap()
             }
         }
@@ -525,7 +533,10 @@ fn a_replacing_materialise_is_one_action_so_a_dangling_checkout_has_no_loose_rem
     let plan = plan(&source, &project(&set), false);
     assert!(matches!(
         plan.repos.as_slice(),
-        [RepoAction::Materialise { replace: true, .. }]
+        [RepoAction::Materialise {
+            placement: Placement::Recreate,
+            ..
+        }]
     ));
     assert!(plan.repos[0].gates_writes());
 }

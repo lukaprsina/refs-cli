@@ -549,17 +549,15 @@ fn run(
         RepoAction::Materialise {
             repo,
             pin,
-            replace,
-            note,
-            ..
+            placement,
         } => {
-            if *replace {
+            if placement.removes_first() {
                 source.remove(repo.id).map_err(|e| e.for_repo(repo.id))?;
             }
             source
                 .materialise(*repo, pin, opts)
                 .map_err(|e| e.for_repo(repo.id))?;
-            Ok(note.clone())
+            Ok(action.note())
         }
         RepoAction::Remove { id } => {
             source.remove(id).map_err(|e| e.for_repo(id))?;
