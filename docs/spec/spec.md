@@ -231,7 +231,7 @@ packages = ["@solidjs/router"]
 
 ### 6.3 Editing
 
-`add`/`remove`/`enable`/`disable` must preserve comments, ordering and formatting. Use `toml_edit` for writes; `serde` + `toml` for reads.
+`add`/`remove`/`enable`/`disable` must preserve comments, ordering and formatting. Use `toml_edit` for writes, except where ADR 0007 says otherwise (`remove`, `enable` and `disable` cut by text); `serde` + `toml` for reads.
 
 ### 6.4 Disabled repos and groups
 
