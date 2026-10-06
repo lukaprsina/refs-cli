@@ -9,7 +9,7 @@ use std::fmt::Write;
 
 use crate::active::{ActiveSet, Section};
 use crate::agent_file::{BEGIN, END};
-use crate::config::{RepoRef, is_full_sha as is_commit_id};
+use crate::config::{RepoRef, is_full_sha};
 use crate::lock::{Lock, LockedRepo};
 
 /// The block, markers included, without a trailing newline (what `agent_file::splice`
@@ -85,7 +85,7 @@ fn section_text<'a>(section: &Section, locked: impl Fn(RepoRef) -> &'a LockedRep
 fn header_line(repo: RepoRef, locked: &LockedRepo) -> String {
     let (git_ref, sha7) = (locked.pin.display_ref(), locked.pin.short_id());
     // a SHA ref would only repeat the commit id
-    let at = if is_full_sha(git_ref, sha7) {
+    let at = if ref_is_the_commit(git_ref, sha7) {
         sha7.to_string()
     } else {
         format!("{git_ref} {sha7}")
@@ -111,6 +111,6 @@ fn header_line(repo: RepoRef, locked: &LockedRepo) -> String {
 
 /// Whether `git_ref` is a full commit id (a ref that is 40 hex characters) of the commit
 /// that starts with `sha7`.
-fn is_full_sha(git_ref: &str, sha7: &str) -> bool {
-    is_commit_id(git_ref) && git_ref.starts_with(sha7)
+fn ref_is_the_commit(git_ref: &str, sha7: &str) -> bool {
+    is_full_sha(git_ref) && git_ref.starts_with(sha7)
 }

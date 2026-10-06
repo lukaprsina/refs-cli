@@ -876,8 +876,10 @@ mod checkout {
             &env.cache_repo(&remote),
             &["worktree", "list", "--porcelain"],
         );
+        // git lists the real spelling of the path, not necessarily the one the test built
+        let here = dunce::canonicalize(moved.join("r")).unwrap();
         assert!(
-            worktrees.contains(&moved.join("r").to_str().unwrap().replace('\\', "/")),
+            worktrees.contains(&here.to_str().unwrap().replace('\\', "/")),
             "{worktrees}"
         );
         git(&env.cache_repo(&remote), &["worktree", "prune"]);
