@@ -101,7 +101,7 @@ fn list_is_data_on_stdout_and_nothing_on_stderr() {
 }
 
 #[test]
-fn removing_when_every_remaining_repo_is_withheld_refuses_the_stale_block_and_exits_1() {
+fn removing_is_not_blocked_by_another_repo_that_no_longer_verifies() {
     let p = Project::new(&format!(
         "{AB}[repos.c]
 url = \"https://github.com/o/c\"
@@ -113,18 +113,17 @@ url = \"https://github.com/o/c\"
 
     let ran = p.run(&["remove", "c"]);
 
-    assert_eq!(ran.code, 1, "{}", ran.stderr);
-    assert!(ran.stderr.contains("AGENTS.md"), "{}", ran.stderr);
-    assert!(ran.stderr.contains("stale_block"), "{}", ran.stderr);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
     let block = fs::read_to_string(p.dir.path().join("AGENTS.md")).unwrap();
-    assert!(block.contains("[a @") && block.contains("[c @"), "{block}");
+    assert!(block.contains("[a @") && !block.contains("[c @"), "{block}");
 }
 
 const RUN_SYNC: &str = "run `refs sync` to bring the project up to date";
 const ONCE_FIXED: &str = "run `refs sync` once the problem is fixed";
 const FIX_OR_REMOVE: &str =
     "refs.toml was updated; fix or remove the broken repo, then run `refs sync`";
-const NOT_CHANGED: &str = "refs.toml was not changed";
+const NOT_CHANGED: &str =
+    "refs.toml was not changed; fix the broken repo, or pass `--no-sync` to edit without syncing";
 
 /// The hint is the last line stderr ends with, and it is printed under `-q` too; stdout stays
 /// data only.

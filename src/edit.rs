@@ -38,8 +38,7 @@ pub struct AddRepo {
     pub start: Vec<String>,
 }
 
-/// One edit of `refs.toml`, by what it does to the active set: it can grow it (a Repo
-/// becomes active) or only shrink it. The failure policy follows (ADR 0006).
+/// One edit of `refs.toml`.
 #[derive(Debug)]
 pub enum Edit<'a> {
     Add(&'a AddRepo),
@@ -73,12 +72,6 @@ impl Edit<'_> {
             Edit::Disable(target) => disable(text, *target).map(Applied::of),
             Edit::Enable(target) => enable(text, *target).map(Applied::of),
         }
-    }
-
-    /// Whether the edit can make a Repo active (`add`, `enable`). Those are atomic; `remove`
-    /// and `disable` only shrink the set.
-    pub fn grows(&self) -> bool {
-        matches!(self, Edit::Add(_) | Edit::Enable(_))
     }
 }
 

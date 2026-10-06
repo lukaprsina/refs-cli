@@ -4,8 +4,8 @@ use refs_cli::config::{Config, parse};
 use refs_cli::diagnostic::Refusal;
 use refs_cli::lock::{Lock, LockedRepo};
 use refs_cli::plan::{
-    AgentFileText, Checkout, Checkouts, Coverage, Exclude, ExcludeAction, Plan, ProjectObserved,
-    RepoAction, plan_checkouts,
+    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Plan, ProjectObserved, RepoAction,
+    plan_checkouts,
 };
 use refs_cli::render::render;
 use refs_cli::source::fake::FakeSource;
@@ -81,14 +81,7 @@ fn plan_with(
     let config: &'static Config = Box::leak(Box::new(parse(CONFIG).unwrap()));
     let set = active(config);
     let observed = observe(source, &set, extra);
-    plan_checkouts(
-        &Coverage::full(set.clone()),
-        &lock(),
-        &observed,
-        project,
-        force,
-    )
-    .unwrap()
+    plan_checkouts(&set, &lock(), &observed, project, force).unwrap()
 }
 
 /// Only `exclude` is set, and to `exclude`.
@@ -177,14 +170,7 @@ fn no_paths_in_the_config_equals_no_sparse_patterns_on_disk() {
     let mut project = project(&set);
     project.agent_files[0].text = Some(text);
     let observed = observe(&source, &set, &[]);
-    let plan = plan_checkouts(
-        &Coverage::full(set.clone()),
-        &locked,
-        &observed,
-        &project,
-        false,
-    )
-    .unwrap();
+    let plan = plan_checkouts(&set, &locked, &observed, &project, false).unwrap();
     assert!(empty(&plan), "{plan:?}");
 }
 
@@ -478,7 +464,7 @@ fn a_repo_missing_from_the_lock_is_an_error() {
         repo: vec![],
     };
     let err = plan_checkouts(
-        &Coverage::full(set.clone()),
+        &set,
         &empty,
         &observe(&FakeSource::new(), &set, &[]),
         &project(&set),
@@ -579,14 +565,7 @@ fn with_no_active_repo_the_block_is_removed_and_the_rest_kept() {
     );
     let empty_lock = Lock::new(vec![]);
     let observed = Checkouts::observe(&set, &[], |_| Ok::<_, ()>(Observed::Absent)).unwrap();
-    let plan = plan_checkouts(
-        &Coverage::full(set.clone()),
-        &empty_lock,
-        &observed,
-        &project,
-        false,
-    )
-    .unwrap();
+    let plan = plan_checkouts(&set, &empty_lock, &observed, &project, false).unwrap();
     let writes: Vec<(&str, &str)> = plan
         .writes
         .iter()
@@ -594,116 +573,4 @@ fn with_no_active_repo_the_block_is_removed_and_the_rest_kept() {
         .collect();
     assert_eq!(writes, [("AGENTS.md", "# Notes\n\n\n\nafter\n")]);
     assert!(plan.is_drift());
-}
-
-const TWO: &str = r#"
-[repos.a]
-url = "https://github.com/o/a"
-ref = "next"
-
-[repos.b]
-url = "https://github.com/o/b"
-ref = "next"
-"#;
-
-#[test]
-fn a_withheld_repo_is_left_alone_and_out_of_the_block() {
-    let config = parse(TWO).unwrap();
-    let full = active(&config);
-    let locked = Lock {
-        version: 1,
-        repo: vec![LockedRepo {
-            id: "a".into(),
-            pin: pin(SHA),
-        }],
-    };
-    let coverage = Coverage {
-        active: full.without(&["b".to_string()]),
-        withheld: vec!["b".to_string()],
-    };
-    // `b` has a Checkout at some other commit, and `a` has none: only `a` is made.
-    let source = FakeSource::new();
-    source.seed("b", at(OTHER_SHA, &[], &[]));
-    let listing = vec!["b".to_string()];
-    let observed = Checkouts::observe(&coverage.active, &listing, |n| source.inspect(n)).unwrap();
-    let project = ProjectObserved {
-        references_dir: ".references".into(),
-        agent_files: vec![AgentFileText {
-            path: "AGENTS.md".into(),
-            text: None,
-        }],
-        exclude: Exclude::Present,
-    };
-
-    let plan = plan_checkouts(&coverage, &locked, &observed, &project, false).unwrap();
-
-    assert!(
-        matches!(plan.repos.as_slice(), [RepoAction::Materialise { repo, .. }] if repo.id == "a"),
-        "{plan:?}"
-    );
-    let [write] = plan.writes.as_slice() else {
-        panic!("{plan:?}")
-    };
-    assert!(write.text.contains("[a @") && !write.text.contains("[b @"));
-}
-
-fn two_lock() -> Lock {
-    Lock {
-        version: 1,
-        repo: ["a", "b"]
-            .map(|id| LockedRepo {
-                id: id.into(),
-                pin: pin(SHA),
-            })
-            .into(),
-    }
-}
-
-/// After a `remove` where every remaining Repo (`a`, `b`) failed to lock: nothing is covered.
-/// `text` is the Agent file as the last sync left it.
-fn plan_all_withheld(text: Option<String>) -> Plan<'static> {
-    let config: &'static Config = Box::leak(Box::new(parse(TWO).unwrap()));
-    let coverage = Coverage {
-        active: active(config).without(&["a".to_string(), "b".to_string()]),
-        withheld: vec!["a".to_string(), "b".to_string()],
-    };
-    let source = FakeSource::new();
-    let observed = Checkouts::observe(&coverage.active, &[], |n| source.inspect(n)).unwrap();
-    let project = ProjectObserved {
-        references_dir: ".references".into(),
-        agent_files: vec![AgentFileText {
-            path: "AGENTS.md".into(),
-            text,
-        }],
-        exclude: Exclude::Present,
-    };
-    plan_checkouts(&coverage, &Lock::new(vec![]), &observed, &project, false).unwrap()
-}
-
-fn block_of_two() -> String {
-    let config = parse(TWO).unwrap();
-    format!(
-        "{}\n",
-        render(&active(&config), &two_lock(), ".references").unwrap()
-    )
-}
-
-#[test]
-fn all_withheld_refuses_to_leave_the_stale_block_and_writes_no_agent_file() {
-    let plan = plan_all_withheld(Some(block_of_two()));
-
-    assert!(
-        matches!(plan.refusals.as_slice(), [Refusal::StaleBlock { path }] if path == "AGENTS.md"),
-        "{plan:?}"
-    );
-    assert!(plan.writes.is_empty(), "{plan:?}");
-}
-
-#[test]
-fn all_withheld_has_nothing_to_refuse_in_an_agent_file_with_no_block() {
-    let plan = plan_all_withheld(Some("# Notes\n".into()));
-    assert!(empty(&plan), "{plan:?}");
-
-    let plan = plan_all_withheld(None);
-    assert!(empty(&plan), "{plan:?}");
 }

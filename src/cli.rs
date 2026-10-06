@@ -403,6 +403,10 @@ fn say_hint(hint: Hint, console: &mut Console) {
         Hint::ConfigUnchanged => {
             console.problem(format_args!("{} was not changed", project::CONFIG_FILE))
         }
+        Hint::ConfigUnchangedTryNoSync => console.problem(format_args!(
+            "{} was not changed; fix the broken repo, or pass `--no-sync` to edit without syncing",
+            project::CONFIG_FILE
+        )),
     }
 }
 

@@ -13,9 +13,8 @@ use crate::exclude;
 use crate::lock::Lock;
 pub use crate::plan::{Change, Checkout, Hint, Outcome};
 use crate::plan::{
-    Checkouts, Command, Coverage, Drift, ExcludeAction, Failure, Keep, LockFlags, Plan, RepoAction,
-    Settled, Step, check_outcome, conclude, hint, lock_drift, locked, plan_checkouts, plan_lock,
-    settle,
+    Checkouts, Command, Drift, ExcludeAction, LockFlags, Plan, RepoAction, Step, check_outcome,
+    hint, lock_drift, locked, plan_checkouts, plan_lock, shrunk_lock,
 };
 use crate::project;
 use crate::source::{MaterialiseOpts, Source, VerifyOpts};
@@ -74,12 +73,10 @@ impl Report {
 }
 
 /// Stage 1 as it left things: the Lock stage 2 plans against (with `--check`, the one on
-/// disk), whether it was written, and the Repos' errors (empty unless an edit that only
-/// shrinks the active set went on past them).
+/// disk) and whether it was written.
 struct StageOne {
     lock: Lock,
     wrote_lock: bool,
-    errors: Vec<miette::Report>,
 }
 
 /// Stage 1 stopped the run: the outcome and every diagnostic.
@@ -118,19 +115,18 @@ impl StageTwo {
     }
 }
 
-/// The Report of a run that got through stage 1: `plan::conclude` decides the outcome and the
-/// order of the diagnostics, and the Lock write came before everything stage 2 did.
+/// The Report of a run that got through stage 1: the outcome is stage 2's, and the Lock write
+/// came before everything stage 2 did.
 fn finish(stage_one: StageOne, drift: Vec<Drift>, stage_two: StageTwo) -> Report {
-    let concluded = conclude(stage_one.errors, stage_two.outcome, stage_two.diagnostics);
     let mut changes = stage_two.changes;
     if stage_one.wrote_lock {
         changes.insert(0, Changed::Lock);
     }
     Report {
-        outcome: concluded.outcome,
+        outcome: stage_two.outcome,
         changes,
         drift,
-        diagnostics: concluded.diagnostics,
+        diagnostics: stage_two.diagnostics,
         hint: None,
     }
 }
@@ -156,14 +152,7 @@ pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags
         Err(report) => return report,
     };
     match stage_one(source, &active, old, flags, root) {
-        Ok(settled) => {
-            let stage_one = StageOne {
-                lock: settled.lock,
-                wrote_lock: settled.write_lock,
-                errors: vec![],
-            };
-            finish(stage_one, drift, StageTwo::only(Outcome::InSync))
-        }
+        Ok(stage_one) => finish(stage_one, drift, StageTwo::only(Outcome::InSync)),
         Err(halt) => halt.into_report(drift),
     }
 }
@@ -178,33 +167,29 @@ fn run_sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
         Ok(preflight) => preflight,
         Err(report) => return report,
     };
-    let (lock, wrote_lock) = if flags.check {
+    let stage_one = if flags.check {
         match old {
-            Some(lock) => (lock, false),
+            Some(lock) => StageOne {
+                lock,
+                wrote_lock: false,
+            },
             // Nothing to plan against: the Lock is what is out of date.
             None => {
                 let stage_two = StageTwo::only(check_outcome(None, true));
                 let stage_one = StageOne {
                     lock: Lock::new(vec![]),
                     wrote_lock: false,
-                    errors: vec![],
                 };
                 return finish(stage_one, drift, stage_two);
             }
         }
     } else {
         match stage_one(source, &active, old, &lock_flags(flags), root) {
-            Ok(settled) => (settled.lock, settled.write_lock),
+            Ok(stage_one) => stage_one,
             Err(halt) => return halt.into_report(drift),
         }
     };
-    let coverage = Coverage::full(active);
-    let stage_one = StageOne {
-        lock,
-        wrote_lock,
-        errors: vec![],
-    };
-    plan_and_apply(source, root, config, &coverage, stage_one, drift, flags)
+    plan_and_apply(source, root, config, &active, stage_one, drift, flags)
 }
 
 /// Stage 1 as `sync` runs it: only `offline` carries over.
@@ -221,12 +206,12 @@ fn plan_and_apply(
     source: &dyn Source,
     root: &Path,
     config: &Config,
-    coverage: &Coverage,
+    active: &ActiveSet,
     stage_one: StageOne,
     drift: Vec<Drift>,
     flags: &SyncFlags,
 ) -> Report {
-    let plan = match plan_stage_two(source, root, config, coverage, &stage_one.lock, flags.force) {
+    let plan = match plan_stage_two(source, root, config, active, &stage_one.lock, flags.force) {
         Ok(plan) => plan,
         // Only `--check` can meet a Lock that does not cover the active set, and it does not
         // repair it: the Lock is what is out of date.
@@ -262,13 +247,22 @@ pub struct Edited {
 }
 
 fn rejected(report: Report) -> Edited {
-    // A rejected edit never syncs, so `no_sync` does not change its hint.
+    unwritten(Change::Rejected, report)
+}
+
+/// The edit was valid but stage 1 failed against it.
+fn blocked(report: Report) -> Edited {
+    unwritten(Change::Blocked, report)
+}
+
+fn unwritten(change: Change, report: Report) -> Edited {
+    // An edit that was not written never syncs, so `no_sync` does not change its hint.
     let command = Command::Edit {
-        change: Change::Rejected,
+        change,
         no_sync: false,
     };
     Edited {
-        change: Change::Rejected,
+        change,
         group_created: None,
         report: report.with_hint(command),
     }
@@ -279,7 +273,11 @@ fn rejected(report: Report) -> Edited {
 ///
 /// Stage 1 runs against the edited config, and `refs.toml` is written only if it passes
 /// (stage 1 writes the Lock), then stage 2 runs on the Lock stage 1 produced, so each Repo
-/// is verified once. A stage 2 failure keeps the edit and the Lock; `refs sync` retries it. When `remove` or `disable` leaves a Repo that cannot be locked, stage 2 still runs for the Repos that did lock (the Checkouts and the block follow the partial Lock) and leaves the failed Repo's Checkout alone. If every remaining Repo cannot be locked, stage 2 refuses to leave the stale block (`Refusal::StaleBlock`).
+/// is verified once. A Repo that cannot be locked blocks the edit: nothing is written and the
+/// error names it. The one exception is an edit that only shrinks the active set (`remove`,
+/// `disable`) while the Lock covers every remaining Repo: the Lock is pruned, with nothing
+/// resolved or verified, so a Repo the edit did not touch cannot block it. A stage 2 failure
+/// keeps the edit and the Lock; `refs sync` retries it.
 /// An edit that changes nothing writes nothing and just syncs. `flags.check` is not for
 /// this function: it writes. The Lock is written before `refs.toml`, so a failed write of
 /// `refs.toml` leaves a Lock with an entry the config does not have, which the next `sync`
@@ -332,83 +330,47 @@ pub fn edit<S: Source>(
         Ok(preflight) => preflight,
         Err(report) => return rejected(report),
     };
-    let keep = if edit.grows() {
-        Keep::AllOrNothing
-    } else {
-        Keep::Passing
+    let stage_one = match shrunk_lock(&active, old.as_ref()) {
+        Some(lock) => match lock.write(&Lock::path(root)) {
+            Ok(()) => StageOne {
+                lock,
+                wrote_lock: true,
+            },
+            Err(e) => return blocked(Report::failed(e)),
+        },
+        None => match stage_one(&source, &active, old, &lock_flags(flags), root) {
+            Ok(stage_one) => stage_one,
+            Err(halt) => return blocked(halt.into_report(drift)),
+        },
     };
-    let settled = match run_stage_one(&source, &active, old, &lock_flags(flags), root, keep) {
-        Ok(settled) => settled,
-        Err(halt) => return rejected(halt.into_report(drift)),
-    };
-    if !settled.accepted {
-        return rejected(Report::new(Outcome::Failed, drift, settled.errors));
-    }
     if let Err(e) = project::write_config(root, &after) {
         return rejected(Report::failed(e));
     }
-    // The Lock covers the Repos that passed. Stage 2 runs for those, so the Checkouts and
-    // the block drop what the edit removed; a Repo that failed keeps its Checkout and is
-    // reported, and `refs sync` finishes it once it is fixed.
-    let stage_one = StageOne {
-        lock: settled.lock,
-        wrote_lock: settled.write_lock,
-        errors: settled.errors,
-    };
-    let report = plan_and_apply(
-        &source,
-        root,
-        &config,
-        &settled.coverage,
-        stage_one,
-        drift,
-        flags,
-    );
+    let report = plan_and_apply(&source, root, &config, &active, stage_one, drift, flags);
     edited(Change::Written, report)
 }
 
-/// Stage 1 for `lock` and `sync`: all or nothing. A failure of any Repo fails the run with
-/// every error and writes nothing.
-fn stage_one<'a>(
+/// Stage 1: resolve or reuse every Repo and verify them all, collecting every error. All or
+/// nothing: a failure of any Repo fails the run with every error and writes nothing.
+fn stage_one(
     source: &dyn Source,
-    active: &ActiveSet<'a>,
+    active: &ActiveSet,
     old: Option<Lock>,
     flags: &LockFlags,
     root: &Path,
-) -> Result<Settled<'a>, Halt> {
-    let settled = run_stage_one(source, active, old, flags, root, Keep::AllOrNothing)?;
-    if settled.accepted {
-        Ok(settled)
-    } else {
-        Err(Halt {
-            outcome: Outcome::Failed,
-            diagnostics: settled.errors,
-        })
-    }
-}
-
-/// Resolve or reuse every Repo and verify them all, collecting every error; `settle` decides
-/// what the failures hold back, and the Lock is written if it says so.
-fn run_stage_one<'a>(
-    source: &dyn Source,
-    active: &ActiveSet<'a>,
-    old: Option<Lock>,
-    flags: &LockFlags,
-    root: &Path,
-    keep: Keep,
-) -> Result<Settled<'a>, Halt> {
+) -> Result<StageOne, Halt> {
     let plan = plan_lock(active, old.as_ref(), flags).map_err(|r| Halt {
         outcome: Outcome::Refused,
         diagnostics: vec![miette::Report::new(r)],
     })?;
-    let mut failures: Vec<Failure> = Vec::new();
+    let mut errors: Vec<miette::Report> = Vec::new();
     let mut entries = Vec::new();
     for step in plan.steps {
         match step {
             Step::Reuse(entry) => entries.push(entry),
             Step::Resolve(repo) => match source.resolve(repo) {
                 Ok(pin) => entries.push(locked(repo, pin)),
-                Err(e) => failures.push(Failure::new(repo.id, e)),
+                Err(e) => errors.push(e.for_repo(repo.id)),
             },
         }
     }
@@ -422,16 +384,21 @@ fn run_stage_one<'a>(
             .expect("a step is made per active Repo");
         match source.verify(repo, &entry.pin, verify_opts) {
             Ok(()) => passed.push(entry),
-            Err(e) => failures.push(Failure::new(repo.id, e)),
+            Err(e) => errors.push(e.for_repo(repo.id)),
         }
     }
-    let settled = settle(active, old.as_ref(), passed, failures, keep);
-    if settled.write_lock
-        && let Err(e) = settled.lock.write(&Lock::path(root))
-    {
+    if !errors.is_empty() {
+        return Err(Halt {
+            outcome: Outcome::Failed,
+            diagnostics: errors,
+        });
+    }
+    let lock = Lock::new(passed);
+    let wrote_lock = old.as_ref() != Some(&lock);
+    if wrote_lock && let Err(e) = lock.write(&Lock::path(root)) {
         return Err(Halt::failed(e));
     }
-    Ok(settled)
+    Ok(StageOne { lock, wrote_lock })
 }
 
 /// Why stage 2 produced no Plan.
@@ -458,7 +425,7 @@ fn plan_stage_two<'a>(
     source: &dyn Source,
     root: &Path,
     config: &Config,
-    coverage: &Coverage<'a>,
+    active: &ActiveSet<'a>,
     lock: &Lock,
     force: bool,
 ) -> Result<Plan<'a>, StageTwoError> {
@@ -467,7 +434,7 @@ fn plan_stage_two<'a>(
         errors.push(e.into());
         vec![]
     });
-    let checkouts = match Checkouts::observe(&coverage.active, &listing, |name| {
+    let checkouts = match Checkouts::observe(active, &listing, |name| {
         source.inspect(name).map_err(|e| e.for_repo(name))
     }) {
         Ok(checkouts) => Some(checkouts),
@@ -489,7 +456,7 @@ fn plan_stage_two<'a>(
     if !errors.is_empty() {
         return Err(StageTwoError::Read(errors));
     }
-    plan_checkouts(coverage, lock, &checkouts, &project, force).map_err(StageTwoError::NotLocked)
+    plan_checkouts(active, lock, &checkouts, &project, force).map_err(StageTwoError::NotLocked)
 }
 
 /// `--check`: report what applying the plan would do.

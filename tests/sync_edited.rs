@@ -1,5 +1,5 @@
-//! `sync::edit`: an edit of `refs.toml` that grows the active set is written only once stage 1
-//! (the lock) has passed against it, and then the project is synced to it.
+//! `sync::edit`: an edit of `refs.toml` is written only once stage 1 (the lock) has passed
+//! against it, or the Lock could be pruned, and then the project is synced to it.
 
 use std::fs;
 
@@ -76,7 +76,7 @@ fn a_stage_one_failure_writes_neither_refs_toml_nor_the_lock() {
     let edited = add(&dir, &source, "b", &SyncFlags::default());
     let report = &edited.report;
 
-    assert_eq!(edited.change, Change::Rejected);
+    assert_eq!(edited.change, Change::Blocked);
     assert_eq!(report.outcome, Outcome::Failed);
     assert_eq!(read(&dir, "refs.toml").unwrap(), BEFORE);
     assert_eq!(read(&dir, "refs.lock"), None);
@@ -160,7 +160,7 @@ fn an_edit_that_cannot_resolve_offline_is_rejected_and_writes_nothing() {
 
     let edited = add(&dir, &source, "b", &flags);
 
-    assert_eq!(edited.change, Change::Rejected);
+    assert_eq!(edited.change, Change::Blocked);
     assert_eq!(read(&dir, "refs.toml").unwrap(), BEFORE);
     assert_eq!(read(&dir, "refs.lock"), None);
     assert!(source.calls().is_empty(), "{:?}", source.calls());
@@ -219,23 +219,6 @@ fn removing_the_broken_repo_succeeds() {
 }
 
 #[test]
-fn disabling_a_repo_writes_the_edit_and_the_lock_entries_it_can_then_reports_the_broken_one() {
-    let (dir, source) = with_broken_b();
-
-    let edited = run_edit(&dir, &source, &Edit::Disable(Target::Repo("a")));
-
-    assert_eq!(edited.change, Change::Written);
-    assert_eq!(edited.report.outcome, Outcome::Failed);
-    assert!(read(&dir, "refs.toml").unwrap().contains("enabled = false"));
-    let lock = read(&dir, "refs.lock").unwrap();
-    assert!(
-        lock.contains("id = \"c\"") && !lock.contains("id = \"a\""),
-        "{lock}"
-    );
-    assert!(messages(&edited).contains("`b`"), "{}", messages(&edited));
-}
-
-#[test]
 fn enabling_a_repo_that_does_not_resolve_writes_nothing_and_names_it() {
     let dir = project();
     fs::write(
@@ -249,7 +232,7 @@ fn enabling_a_repo_that_does_not_resolve_writes_nothing_and_names_it() {
 
     let edited = run_edit(&dir, &source, &Edit::Enable(Target::Repo("b")));
 
-    assert_eq!(edited.change, Change::Rejected);
+    assert_eq!(edited.change, Change::Blocked);
     assert_eq!(read(&dir, "refs.toml"), config);
     assert_eq!(read(&dir, "refs.lock"), None);
     assert!(messages(&edited).contains("`b`"), "{}", messages(&edited));
@@ -273,39 +256,56 @@ fn checked_out(source: &FakeSource, id: &str) -> bool {
     )
 }
 
-#[test]
-fn a_disable_with_a_broken_repo_still_syncs_the_checkouts_and_the_block_of_the_others() {
-    let (dir, source) = synced_then_b_breaks();
-    let block = read(&dir, "AGENTS.md").unwrap();
-    assert!(block.contains("[a @"), "{block}");
-
-    let edited = run_edit(&dir, &source, &Edit::Disable(Target::Repo("a")));
-
-    assert_eq!(edited.change, Change::Written);
-    assert_eq!(edited.report.outcome, Outcome::Failed);
-    assert!(messages(&edited).contains("`b`"), "{}", messages(&edited));
-    assert!(!checked_out(&source, "a"), "the disabled Checkout goes");
-    assert!(
-        checked_out(&source, "b"),
-        "the broken Repo's Checkout is left alone"
-    );
-    assert!(checked_out(&source, "c"));
-    let after = read(&dir, "AGENTS.md").unwrap();
-    assert!(
-        after.contains("[c @") && !after.contains("[a @") && !after.contains("[b @"),
-        "{after}"
-    );
+fn verifies(source: &FakeSource) -> usize {
+    source
+        .calls()
+        .iter()
+        .filter(|c| matches!(c, Call::Verify { .. }))
+        .count()
 }
 
 #[test]
-fn a_remove_with_a_broken_repo_drops_the_removed_checkout_too() {
-    let (dir, source) = synced_then_b_breaks();
+fn a_shrinking_edit_prunes_the_lock_and_is_not_blocked_by_a_broken_repo() {
+    for the_edit in [Edit::Remove("a"), Edit::Disable(Target::Repo("a"))] {
+        let (dir, source) = synced_then_b_breaks();
+        let verified = verifies(&source);
 
-    let edited = run_edit(&dir, &source, &Edit::Remove("a"));
+        let edited = run_edit(&dir, &source, &the_edit);
 
+        assert_eq!(edited.change, Change::Written, "{the_edit:?}");
+        assert_eq!(edited.report.outcome, Outcome::InSync, "{the_edit:?}");
+        let lock = read(&dir, "refs.lock").unwrap();
+        assert!(
+            lock.contains("id = \"b\"")
+                && lock.contains("id = \"c\"")
+                && !lock.contains("id = \"a\""),
+            "{lock}"
+        );
+        assert!(!checked_out(&source, "a"), "the removed Checkout goes");
+        assert!(checked_out(&source, "b") && checked_out(&source, "c"));
+        let block = read(&dir, "AGENTS.md").unwrap();
+        assert!(
+            block.contains("[b @") && block.contains("[c @") && !block.contains("[a @"),
+            "{block}"
+        );
+        assert_eq!(verifies(&source), verified, "nothing is verified");
+    }
+}
+
+#[test]
+fn an_edit_that_cannot_prune_is_blocked_by_a_broken_repo_and_hints_at_no_sync() {
+    // Nothing is locked yet, so there is no Lock to prune.
+    let (dir, source) = with_broken_b();
+    let config = read(&dir, "refs.toml");
+
+    let edited = run_edit(&dir, &source, &Edit::Disable(Target::Repo("a")));
+
+    assert_eq!(edited.change, Change::Blocked);
     assert_eq!(edited.report.outcome, Outcome::Failed);
-    assert!(!checked_out(&source, "a"));
-    assert!(checked_out(&source, "b"));
+    assert_eq!(edited.report.hint, Some(Hint::ConfigUnchangedTryNoSync));
+    assert_eq!(read(&dir, "refs.toml"), config);
+    assert_eq!(read(&dir, "refs.lock"), None);
+    assert!(messages(&edited).contains("`b`"), "{}", messages(&edited));
 }
 
 fn no_sync_add(dir: &TempDir, source: &FakeSource, name: &str) -> Edited {
@@ -354,10 +354,16 @@ fn an_edit_carries_the_hint_for_what_it_left_behind() {
     assert_eq!(edited.report.outcome, Outcome::Failed);
     assert_eq!(edited.report.hint, Some(Hint::FixOrRemoveThenSync));
 
-    // Rejected: `refs.toml` is as it was.
+    // Blocked by stage 1: `refs.toml` is as it was, and `--no-sync` would write it.
     let (dir, source) = (project(), FakeSource::new());
     source.fail("b", Method::Resolve, "no such ref");
     let edited = add(&dir, &source, "b", &SyncFlags::default());
+    assert_eq!(edited.change, Change::Blocked);
+    assert_eq!(edited.report.hint, Some(Hint::ConfigUnchangedTryNoSync));
+
+    // Rejected as an edit: `--no-sync` would not help.
+    let (dir, source) = (project(), FakeSource::new());
+    let edited = run_edit(&dir, &source, &Edit::Remove("nope"));
     assert_eq!(edited.change, Change::Rejected);
     assert_eq!(edited.report.hint, Some(Hint::ConfigUnchanged));
 

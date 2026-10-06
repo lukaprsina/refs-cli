@@ -575,21 +575,20 @@ fn list_status_works_with_no_lock_yet() {
 }
 
 #[test]
-fn a_disable_writes_the_edit_then_reports_the_broken_repo_with_exit_1() {
+fn a_disable_with_nothing_locked_is_blocked_by_a_broken_repo_and_writes_nothing() {
     let p = Project::new(&format!(
-        "{AB}\n[repos.c]\nurl = \"https://github.com/o/c\"\n"
+        "{AB}
+[repos.c]
+url = \"https://github.com/o/c\"
+"
     ));
     p.source.fail("b", Method::Resolve, "gone");
+    let before = fs::read_to_string(p.path("refs.toml")).unwrap();
 
     assert_eq!(p.run(&["disable", "a"]), 1);
 
-    let config = fs::read_to_string(p.path("refs.toml")).unwrap();
-    assert!(config.contains("enabled = false"), "{config}");
-    let lock = p.lock_text().unwrap();
-    assert!(
-        lock.contains("id = \"c\"") && !lock.contains("id = \"b\""),
-        "{lock}"
-    );
+    assert_eq!(fs::read_to_string(p.path("refs.toml")).unwrap(), before);
+    assert_eq!(p.lock_text(), None);
 }
 
 #[test]

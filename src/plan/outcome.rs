@@ -1,5 +1,5 @@
-//! How a run ends (ADR 0006): the one rule that turns stage 1's failures and stage 2's
-//! result into the outcome and the order of the diagnostics.
+//! How a run ends (ADR 0006): the outcome of `--check`, what became of an edit of
+//! `refs.toml`, and the follow-up hint.
 
 use super::checkouts::Plan;
 
@@ -25,34 +25,6 @@ pub fn check_outcome(plan: Option<&Plan>, lock_drifted: bool) -> Outcome {
     }
 }
 
-/// The outcome and diagnostics of a whole run.
-#[derive(Debug)]
-pub struct Concluded {
-    pub outcome: Outcome,
-    pub diagnostics: Vec<miette::Report>,
-}
-
-/// Combine stage 1's errors with what stage 2 came to. Any stage 1 error fails the run,
-/// whatever stage 2 found; otherwise the outcome is stage 2's. The diagnostics are stage 1's
-/// errors first, then stage 2's.
-pub fn conclude(
-    stage_one: Vec<miette::Report>,
-    stage_two: Outcome,
-    stage_two_diagnostics: Vec<miette::Report>,
-) -> Concluded {
-    let outcome = if stage_one.is_empty() {
-        stage_two
-    } else {
-        Outcome::Failed
-    };
-    let mut diagnostics = stage_one;
-    diagnostics.extend(stage_two_diagnostics);
-    Concluded {
-        outcome,
-        diagnostics,
-    }
-}
-
 /// What happened to `refs.toml` in `edit`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Change {
@@ -60,8 +32,12 @@ pub enum Change {
     Unchanged,
     /// `refs.toml` was written.
     Written,
-    /// The edit or stage 1 failed against it: nothing was written.
+    /// The edit itself failed (it names no such Repo, or the text does not parse): nothing was
+    /// written.
     Rejected,
+    /// Stage 1 failed against the edited config: nothing was written, and `--no-sync` would
+    /// write it.
+    Blocked,
 }
 
 /// The follow-up the CLI gives a user whose project a run left incomplete or failed, named
@@ -76,6 +52,8 @@ pub enum Hint {
     FixOrRemoveThenSync,
     /// The edit was rejected, so `refs.toml` is as it was.
     ConfigUnchanged,
+    /// Stage 1 blocked the edit, so `refs.toml` is as it was; `--no-sync` writes it anyway.
+    ConfigUnchangedTryNoSync,
 }
 
 /// The command a run was, as far as its hint goes. `lock` has no hint.
@@ -98,6 +76,7 @@ pub fn hint(command: Command, outcome: Outcome) -> Option<Hint> {
             incomplete.then_some(match change {
                 Change::Written => Hint::FixOrRemoveThenSync,
                 Change::Rejected => Hint::ConfigUnchanged,
+                Change::Blocked => Hint::ConfigUnchangedTryNoSync,
                 Change::Unchanged => Hint::RunSyncOnceFixed,
             })
         }

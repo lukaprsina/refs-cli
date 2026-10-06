@@ -9,7 +9,6 @@ use crate::diagnostic::{NotLocked, Note, Refusal};
 use crate::lock::Lock;
 use crate::plan::classify::{CheckoutState, classify};
 use crate::plan::outcome::Outcome;
-use crate::plan::settle::Coverage;
 use crate::render::render;
 use crate::source::{Observed, Pin};
 
@@ -214,26 +213,20 @@ fn dirty(id: &str, files: &[String]) -> Refusal {
     }
 }
 
-/// Plan stage 2 against the Lock and what is on disk. The Repos in `coverage` are planned
-/// for; the Withheld ones, which stage 1 could not lock, are left out of the block and their
-/// Checkouts are left alone, neither made, moved nor removed.
+/// Plan stage 2 against the Lock and what is on disk.
 pub fn plan_checkouts<'a>(
-    coverage: &Coverage<'a>,
+    active: &ActiveSet<'a>,
     lock: &Lock,
     checkouts: &Checkouts,
     project: &ProjectObserved,
     force: bool,
 ) -> Result<Plan<'a>, NotLocked> {
-    let Coverage { active, withheld } = coverage;
-    // With no active Repo there is nothing to list: the block goes, markers included, unless
-    // that is only because every Repo is withheld. Then there is nothing true to write and
-    // stripping would claim there are no Repos, so a block that is there is refused as stale.
+    // With no active Repo there is nothing to list: the block goes, markers included.
     let block = if active.repos().next().is_some() {
         Some(render(active, lock, &project.references_dir)?)
     } else {
         None
     };
-    let all_withheld = block.is_none() && !withheld.is_empty();
     let mut stale = Vec::new();
     let mut current = Vec::new();
     let mut refusals = Vec::new();
@@ -273,9 +266,6 @@ pub fn plan_checkouts<'a>(
     // Names refs no longer manages. Only a checkout refs made (`At`) is touched; anything
     // else is for `doctor` to report.
     for (name, observed) in checkouts.unmanaged(active) {
-        if withheld.contains(name) {
-            continue;
-        }
         match observed {
             Observed::At { dirty_files, .. } if !dirty_files.is_empty() && !force => {
                 refusals.push(dirty(name, dirty_files))
@@ -292,10 +282,6 @@ pub fn plan_checkouts<'a>(
             None => strip(current),
         };
         match planned {
-            // the block cannot be rewritten or stripped: name it instead
-            Ok(text) if all_withheld && text != current => refusals.push(Refusal::StaleBlock {
-                path: file.path.clone(),
-            }),
             // an absent file with no block to add is not created
             Ok(text) if file.text.is_none() && text.is_empty() => {}
             Ok(text) if file.text.as_deref() != Some(text.as_str()) => {
