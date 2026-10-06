@@ -4,10 +4,9 @@
 use std::fs;
 
 use refs_cli::config::parse;
-use refs_cli::diagnostic::SourceError;
 use refs_cli::edit::{AddRepo, Edit, Target};
 use refs_cli::source::fake::{Call, FakeSource, Method};
-use refs_cli::sync::{Change, Edited, Hint, Outcome, SyncFlags, edit};
+use refs_cli::sync::{Change, Edited, Hint, Outcome, SyncFlags, edit, edit_only};
 use tempfile::TempDir;
 
 const BEFORE: &str = "[repos.a]\nurl = \"https://github.com/o/a\"\n";
@@ -20,13 +19,7 @@ fn add(dir: &TempDir, source: &FakeSource, name: &str, flags: &SyncFlags) -> Edi
         url: format!("https://github.com/o/{name}"),
         ..AddRepo::default()
     };
-    edit(
-        dir.path(),
-        &Edit::Add(&req),
-        false,
-        || Ok::<_, SourceError>(source),
-        flags,
-    )
+    edit(source, dir.path(), &Edit::Add(&req), flags)
 }
 
 fn project() -> TempDir {
@@ -169,10 +162,9 @@ fn an_edit_that_cannot_resolve_offline_is_rejected_and_writes_nothing() {
 /// `refs enable <id>`, synced.
 fn enable(dir: &TempDir, source: &FakeSource, id: &str) -> Edited {
     edit(
+        source,
         dir.path(),
         &Edit::Enable(Target::Repo(id)),
-        false,
-        || Ok::<_, SourceError>(source),
         &SyncFlags::default(),
     )
 }
@@ -189,13 +181,7 @@ fn with_broken_b() -> (TempDir, FakeSource) {
 }
 
 fn run_edit(dir: &TempDir, source: &FakeSource, the_edit: &Edit) -> Edited {
-    edit(
-        dir.path(),
-        the_edit,
-        false,
-        || Ok::<_, SourceError>(source),
-        &SyncFlags::default(),
-    )
+    edit(source, dir.path(), the_edit, &SyncFlags::default())
 }
 
 fn messages(edited: &Edited) -> String {
@@ -308,36 +294,24 @@ fn an_edit_that_cannot_prune_is_blocked_by_a_broken_repo_and_hints_at_no_sync() 
     assert!(messages(&edited).contains("`b`"), "{}", messages(&edited));
 }
 
-fn no_sync_add(dir: &TempDir, source: &FakeSource, name: &str) -> Edited {
+fn no_sync_add(dir: &TempDir, name: &str) -> Edited {
     let req = AddRepo {
         url: format!("https://github.com/o/{name}"),
         ..AddRepo::default()
     };
-    edit(
-        dir.path(),
-        &Edit::Add(&req),
-        true,
-        || Ok::<_, SourceError>(source),
-        &SyncFlags::default(),
-    )
+    edit_only(dir.path(), &Edit::Add(&req))
 }
 
 #[test]
 fn an_edit_carries_the_hint_for_what_it_left_behind() {
     // Written without a sync: the project is incomplete.
-    let (dir, source) = (project(), FakeSource::new());
-    let edited = no_sync_add(&dir, &source, "b");
+    let dir = project();
+    let edited = no_sync_add(&dir, "b");
     assert_eq!(edited.change, Change::Written);
     assert_eq!(edited.report.hint, Some(Hint::RunSync));
 
     // Nothing to write and nothing to sync.
-    let edited = edit(
-        dir.path(),
-        &Edit::Enable(Target::Repo("a")),
-        true,
-        || Ok::<_, SourceError>(&source),
-        &SyncFlags::default(),
-    );
+    let edited = edit_only(dir.path(), &Edit::Enable(Target::Repo("a")));
     assert_eq!(edited.change, Change::Unchanged);
     assert_eq!(edited.report.hint, None);
 

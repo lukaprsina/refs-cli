@@ -1,5 +1,6 @@
-//! The config-only commands through `cli::run`. They take no `Source`: the factory below
-//! panics, so a command that reached for one (and so for git) would fail its test.
+//! The config-only commands through `cli::run` (`list` and the edits with `--no-sync`). They
+//! take no `Source`: the factory below panics, so a command that reached for one (and so for
+//! git) would fail its test.
 
 use std::fs;
 use std::path::Path;
@@ -77,9 +78,18 @@ fn add_then_remove_leave_refs_toml_byte_identical() {
 fn a_rejected_add_exits_1_and_leaves_refs_toml_untouched() {
     let dir = project(CONFIG);
 
-    assert_eq!(refs(dir.path(), &["add", "http://github.com/o/r"]), 1);
-    assert_eq!(refs(dir.path(), &["add", "https://github.com/o/solid"]), 1);
-    assert_eq!(refs(dir.path(), &["remove", "nope"]), 1);
+    assert_eq!(
+        refs(dir.path(), &["add", "http://github.com/o/r", "--no-sync"]),
+        1
+    );
+    assert_eq!(
+        refs(
+            dir.path(),
+            &["add", "https://github.com/o/solid", "--no-sync"]
+        ),
+        1
+    );
+    assert_eq!(refs(dir.path(), &["remove", "nope", "--no-sync"]), 1);
 
     assert_eq!(config_text(&dir), CONFIG);
 }
@@ -123,7 +133,10 @@ fn group_targets_a_group_and_an_unknown_id_exits_1() {
         1,
         "g is not a repo"
     );
-    assert_eq!(refs(dir.path(), &["enable", "nope", "--group"]), 1);
+    assert_eq!(
+        refs(dir.path(), &["enable", "nope", "--group", "--no-sync"]),
+        1
+    );
 }
 
 #[test]

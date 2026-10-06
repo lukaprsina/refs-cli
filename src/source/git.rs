@@ -24,6 +24,26 @@ pub struct GitSource {
 }
 
 impl GitSource {
+    /// The Source for a project: the Cache in the user's cache directory (found from the
+    /// environment) and the Checkouts in `checkouts`.
+    pub fn from_env(checkouts: PathBuf) -> Result<GitSource, SourceError> {
+        let local_app_data = if cfg!(windows) {
+            std::env::var("LOCALAPPDATA").ok()
+        } else {
+            None
+        };
+        let cache = cache::cache_root(
+            std::env::var("XDG_CACHE_HOME").ok().as_deref(),
+            local_app_data.as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        )
+        .ok_or_else(|| SourceError::Failed {
+            message: "cannot find the cache directory: set XDG_CACHE_HOME (or LOCALAPPDATA on \n                      Windows, or HOME)"
+                .into(),
+        })?;
+        Ok(GitSource::new(cache, checkouts))
+    }
+
     pub fn new(cache_root: PathBuf, checkouts: PathBuf) -> GitSource {
         GitSource {
             cache: Cache::new(&cache_root),

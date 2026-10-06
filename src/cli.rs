@@ -312,7 +312,9 @@ fn run_config<'a>(
 ) -> u8 {
     let (flags, edit) = match command {
         ConfigCommand::List(args) if args.status => {
-            return list_status(root, config, color, make_source, console);
+            return with_source(make_source, root, config, console, |source, console| {
+                list_status(source, root, config, color, console)
+            });
         }
         ConfigCommand::List(_) => {
             console.data(&list(config, color));
@@ -323,28 +325,40 @@ fn run_config<'a>(
         ConfigCommand::Disable(args) => (&args.flags, Edit::Disable(args.target())),
         ConfigCommand::Enable(args) => (&args.flags, Edit::Enable(args.target())),
     };
-    let edited = sync::edit(
-        root,
-        &edit,
-        flags.no_sync,
-        || make_source(root, config),
-        &SyncFlags::default(),
-    );
-    print_edited(&edited, console)
+    if flags.no_sync {
+        print_edited(&sync::edit_only(root, &edit), console)
+    } else {
+        with_source(make_source, root, config, console, |source, console| {
+            let edited = sync::edit(source, root, &edit, &SyncFlags::default());
+            print_edited(&edited, console)
+        })
+    }
+}
+
+/// Build the `Source` and run `f` with it. Only the commands that sync ask for one, so the
+/// others do not need a cache directory.
+fn with_source<'a>(
+    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    root: &Path,
+    config: &Config,
+    console: &mut Console,
+    f: impl FnOnce(&dyn Source, &mut Console) -> u8,
+) -> u8 {
+    match make_source(root, config) {
+        Ok(source) => f(&*source, console),
+        Err(e) => fail(e, console),
+    }
 }
 
 /// `refs list --status`: the config, the Lock and the Checkout state of each active repo.
-fn list_status<'a>(
+fn list_status(
+    source: &dyn Source,
     root: &Path,
     config: &Config,
     color: bool,
-    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
     console: &mut Console,
 ) -> u8 {
-    let result = make_source(root, config)
-        .map_err(|e| vec![miette::Report::new(e)])
-        .and_then(|source| crate::status::build(&*source, root, config));
-    match result {
+    match crate::status::build(source, root, config) {
         Ok(status) => {
             console.data(&crate::list::list_status(
                 config,
@@ -364,30 +378,27 @@ fn run_source<'a>(
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
     console: &mut Console,
 ) -> u8 {
-    let source = match make_source(root, config) {
-        Ok(source) => source,
-        Err(e) => return fail(e, console),
-    };
-    let source = &*source;
-    let (report, check) = match command {
-        SourceCommand::Lock(args) => {
-            let flags = LockFlags {
-                upgrade: args.upgrade(),
-                offline: false,
-            };
-            (sync::lock(source, root, config, &flags), false)
-        }
-        SourceCommand::Sync(args) => {
-            let flags = SyncFlags {
-                offline: args.offline,
-                force: args.force,
-                check: args.check,
-            };
-            (sync::sync(source, root, config, &flags), args.check)
-        }
-    };
-    print(&report, check, console);
-    exit_code(report.outcome)
+    with_source(make_source, root, config, console, |source, console| {
+        let (report, check) = match command {
+            SourceCommand::Lock(args) => {
+                let flags = LockFlags {
+                    upgrade: args.upgrade(),
+                    offline: false,
+                };
+                (sync::lock(source, root, config, &flags), false)
+            }
+            SourceCommand::Sync(args) => {
+                let flags = SyncFlags {
+                    offline: args.offline,
+                    force: args.force,
+                    check: args.check,
+                };
+                (sync::sync(source, root, config, &flags), args.check)
+            }
+        };
+        print(&report, check, console);
+        exit_code(report.outcome)
+    })
 }
 
 /// The words of a hint (ADR 0005). Not a status line: the project is incomplete or failed,

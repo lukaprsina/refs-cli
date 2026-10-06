@@ -167,3 +167,31 @@ impl Source for FakeSource {
         Ok(names)
     }
 }
+
+/// A borrowed fake is a `Source`, so a test can hand one to `cli::run` and keep its handle to
+/// seed it and read its calls.
+impl Source for &FakeSource {
+    fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError> {
+        (**self).resolve(repo)
+    }
+    fn verify(&self, repo: RepoRef, pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError> {
+        (**self).verify(repo, pin, opts)
+    }
+    fn materialise(
+        &self,
+        repo: RepoRef,
+        pin: &Pin,
+        opts: MaterialiseOpts,
+    ) -> Result<(), SourceError> {
+        (**self).materialise(repo, pin, opts)
+    }
+    fn remove(&self, id: &str) -> Result<(), SourceError> {
+        (**self).remove(id)
+    }
+    fn inspect(&self, id: &str) -> Result<Observed, SourceError> {
+        (**self).inspect(id)
+    }
+    fn list(&self) -> Result<Vec<String>, SourceError> {
+        (**self).list()
+    }
+}

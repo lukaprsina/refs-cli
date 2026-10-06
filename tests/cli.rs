@@ -627,3 +627,34 @@ fn add_with_a_missing_group_creates_it_and_remove_takes_it_away_again() {
     assert_eq!(p.run(&["remove", "c"]), 0);
     assert_eq!(fs::read(p.path("refs.toml")).unwrap(), before);
 }
+
+#[test]
+fn only_a_command_that_needs_a_source_asks_for_one() {
+    let p = Project::new(AB);
+    let calls = std::cell::Cell::new(0);
+    let run_refs = |args: &[&str]| {
+        let args = std::iter::once("refs").chain(args.iter().copied());
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        refs_cli::cli::run_with(
+            args.map(Into::into),
+            p.dir.path(),
+            |_, _| {
+                calls.set(calls.get() + 1);
+                Err(refs_cli::diagnostic::SourceError::Failed {
+                    message: "no cache directory".into(),
+                })
+            },
+            &mut out,
+            &mut err,
+        )
+    };
+
+    assert_eq!(run_refs(&["list"]), 0);
+    assert_eq!(run_refs(&["remove", "a", "--no-sync"]), 0);
+    assert_eq!(calls.get(), 0);
+
+    assert_eq!(run_refs(&["sync"]), 1);
+    assert_eq!(run_refs(&["list", "--status"]), 1);
+    assert_eq!(run_refs(&["disable", "b"]), 1);
+    assert_eq!(calls.get(), 3);
+}

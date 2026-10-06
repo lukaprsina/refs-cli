@@ -7,7 +7,7 @@ use std::path::Path;
 use crate::active::{ActiveSet, active};
 use crate::agent_file;
 use crate::config::{self, Config};
-use crate::diagnostic::{Note, SourceError};
+use crate::diagnostic::Note;
 use crate::edit::Edit;
 use crate::exclude;
 use crate::lock::Lock;
@@ -253,6 +253,10 @@ fn rejected(report: Report) -> Edited {
     unwritten(Change::Rejected, report)
 }
 
+fn rejected_by(error: impl miette::Diagnostic + Send + Sync + 'static) -> Edited {
+    rejected(Report::failed(error))
+}
+
 /// The edit was valid but stage 1 failed against it.
 fn blocked(report: Report) -> Edited {
     unwritten(Change::Blocked, report)
@@ -271,8 +275,61 @@ fn unwritten(change: Change, report: Report) -> Edited {
     }
 }
 
-/// Apply `edit` to `<root>/refs.toml` and, unless `no_sync`, sync the project to it. The
-/// edited text is parsed once, here, into the config the sync runs against; `make_source` is asked for a `Source` only if there is a sync.
+/// An edit applied to the text of `<root>/refs.toml` and parsed, but not yet written. The
+/// edited text is parsed once, here, into the config a sync runs against.
+struct Applied {
+    before: String,
+    after: String,
+    config: Config,
+    group_created: Option<String>,
+}
+
+impl Applied {
+    fn read(root: &Path, edit: &Edit) -> Result<Applied, Edited> {
+        let before = project::read_config(root).map_err(rejected_by)?;
+        let applied = edit.apply(&before).map_err(rejected_by)?;
+        let config = config::parse(&applied.text).map_err(rejected_by)?;
+        Ok(Applied {
+            before,
+            after: applied.text,
+            config,
+            group_created: applied.group_created,
+        })
+    }
+
+    fn unchanged(&self) -> bool {
+        self.after == self.before
+    }
+
+    fn edited(&self, change: Change, report: Report, no_sync: bool) -> Edited {
+        Edited {
+            change,
+            group_created: self.group_created.clone(),
+            report: report.with_hint(Command::Edit { change, no_sync }),
+        }
+    }
+}
+
+/// Apply `edit` to `<root>/refs.toml` and write it, without syncing (`--no-sync`): no Source
+/// is needed, and nothing is resolved or verified. An edit that changes nothing writes
+/// nothing.
+pub fn edit_only(root: &Path, edit: &Edit) -> Edited {
+    let applied = match Applied::read(root, edit) {
+        Ok(applied) => applied,
+        Err(edited) => return edited,
+    };
+    let change = if applied.unchanged() {
+        Change::Unchanged
+    } else {
+        match project::write_config(root, &applied.after) {
+            Ok(()) => Change::Written,
+            Err(e) => return rejected_by(e),
+        }
+    };
+    applied.edited(change, Report::new(Outcome::InSync, vec![], vec![]), true)
+}
+
+/// Apply `edit` to `<root>/refs.toml` and sync the project to it.
 ///
 /// Stage 1 runs against the edited config, and `refs.toml` is written only if it passes
 /// (stage 1 writes the Lock), then stage 2 runs on the Lock stage 1 produced, so each Repo
@@ -285,51 +342,17 @@ fn unwritten(change: Change, report: Report) -> Edited {
 /// this function: it writes. The Lock is written before `refs.toml`, so a failed write of
 /// `refs.toml` leaves a Lock with an entry the config does not have, which the next `sync`
 /// removes.
-pub fn edit<S: Source>(
-    root: &Path,
-    edit: &Edit,
-    no_sync: bool,
-    make_source: impl FnOnce() -> Result<S, SourceError>,
-    flags: &SyncFlags,
-) -> Edited {
-    let before = match project::read_config(root) {
-        Ok(text) => text,
-        Err(e) => return rejected(Report::failed(e)),
-    };
-    let applied = match edit.apply(&before) {
+pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) -> Edited {
+    let applied = match Applied::read(root, edit) {
         Ok(applied) => applied,
-        Err(e) => return rejected(Report::failed(e)),
+        Err(edited) => return edited,
     };
-    let after = applied.text;
-    let config = match config::parse(&after) {
-        Ok(config) => config,
-        Err(e) => return rejected(Report::failed(e)),
-    };
-    let edited = |change, report: Report| Edited {
-        change,
-        group_created: applied.group_created.clone(),
-        report: report.with_hint(Command::Edit { change, no_sync }),
-    };
-    let unchanged = after == before;
-    if no_sync {
-        let change = if unchanged {
-            Change::Unchanged
-        } else {
-            match project::write_config(root, &after) {
-                Ok(()) => Change::Written,
-                Err(e) => return rejected(Report::failed(e)),
-            }
-        };
-        return edited(change, Report::new(Outcome::InSync, vec![], vec![]));
+    let config = &applied.config;
+    if applied.unchanged() {
+        let report = sync(source, root, config, flags);
+        return applied.edited(Change::Unchanged, report, false);
     }
-    let source = match make_source() {
-        Ok(source) => source,
-        Err(e) => return rejected(Report::failed(e)),
-    };
-    if unchanged {
-        return edited(Change::Unchanged, sync(&source, root, &config, flags));
-    }
-    let Preflight { active, old, drift } = match preflight(root, &config) {
+    let Preflight { active, old, drift } = match preflight(root, config) {
         Ok(preflight) => preflight,
         Err(report) => return rejected(report),
     };
@@ -341,16 +364,16 @@ pub fn edit<S: Source>(
             },
             Err(e) => return blocked(Report::failed(e)),
         },
-        None => match stage_one(&source, &active, old, &lock_flags(flags), root) {
+        None => match stage_one(source, &active, old, &lock_flags(flags), root) {
             Ok(stage_one) => stage_one,
             Err(halt) => return blocked(halt.into_report(drift)),
         },
     };
-    if let Err(e) = project::write_config(root, &after) {
+    if let Err(e) = project::write_config(root, &applied.after) {
         return rejected(Report::failed(e));
     }
-    let report = plan_and_apply(&source, root, &config, &active, stage_one, drift, flags);
-    edited(Change::Written, report)
+    let report = plan_and_apply(source, root, config, &active, stage_one, drift, flags);
+    applied.edited(Change::Written, report, false)
 }
 
 /// Stage 1: resolve or reuse every Repo and verify them all, collecting every error. All or
