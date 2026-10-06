@@ -122,7 +122,7 @@ fn an_absent_checkout_is_materialised_at_the_locked_pin() {
     let plan = plan(&FakeSource::new(), &project(&set), false);
     assert!(matches!(
         plan.repos.as_slice(),
-        [RepoAction::Materialise { repo, pin: p, .. }] if repo.id == "a" && *p == pin(SHA)
+        [RepoAction::Materialise { repo, pin: p, replace: false, .. }] if repo.id == "a" && *p == pin(SHA)
     ));
     assert!(plan.is_drift());
 }
@@ -205,7 +205,7 @@ fn a_dangling_checkout_is_replaced_with_a_note_and_force_changes_nothing() {
         assert!(
             matches!(
                 plan.repos.as_slice(),
-                [RepoAction::Replace { repo, note: Some(note), .. }]
+                [RepoAction::Materialise { repo, replace: true, note: Some(note), .. }]
                     if repo.id == "a" && code(note) == "refs::sync::recreated"
             ) && plan.refusals.is_empty(),
             "{plan:?}"
@@ -254,7 +254,7 @@ fn a_dirty_checkout_that_must_move_is_refused_naming_the_files() {
 }
 
 #[test]
-fn force_replaces_a_dirty_refusal_by_a_replace_without_a_note() {
+fn force_replaces_a_dirty_refusal_by_a_replacing_materialise_without_a_note() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
     let source = FakeSource::new();
@@ -263,7 +263,7 @@ fn force_replaces_a_dirty_refusal_by_a_replace_without_a_note() {
     assert!(
         matches!(
             plan.repos.as_slice(),
-            [RepoAction::Replace { repo, note: None, .. }] if repo.id == "a"
+            [RepoAction::Materialise { repo, replace: true, note: None, .. }] if repo.id == "a"
         ) && plan.refusals.is_empty(),
         "{plan:?}"
     );
@@ -438,10 +438,12 @@ fn applying_a_plan_to_the_fake_and_replanning_gives_an_empty_plan() {
     for action in &first.repos {
         match action {
             RepoAction::Remove { id } => source.remove(id).unwrap(),
-            RepoAction::Materialise { repo, pin, .. } => {
+            RepoAction::Materialise {
+                repo, pin, replace, ..
+            } => {
+                assert!(!replace, "unexpected {action:?}");
                 source.materialise(*repo, pin, Default::default()).unwrap()
             }
-            RepoAction::Replace { .. } => panic!("unexpected {action:?}"),
         }
     }
     for write in &first.writes {
@@ -507,9 +509,7 @@ fn only_actions_on_a_checkout_the_block_lists_gate_the_agent_file_writes() {
         .iter()
         .map(|a| match a {
             RepoAction::Remove { id } => (id.as_str(), a.gates_writes()),
-            RepoAction::Materialise { repo, .. } | RepoAction::Replace { repo, .. } => {
-                (repo.id, a.gates_writes())
-            }
+            RepoAction::Materialise { repo, .. } => (repo.id, a.gates_writes()),
         })
         .collect();
     // `old` is only removed, `a` is materialised and listed in the block
@@ -517,7 +517,7 @@ fn only_actions_on_a_checkout_the_block_lists_gate_the_agent_file_writes() {
 }
 
 #[test]
-fn a_replace_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
+fn a_replacing_materialise_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
     let source = FakeSource::new();
@@ -525,7 +525,7 @@ fn a_replace_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
     let plan = plan(&source, &project(&set), false);
     assert!(matches!(
         plan.repos.as_slice(),
-        [RepoAction::Replace { .. }]
+        [RepoAction::Materialise { replace: true, .. }]
     ));
     assert!(plan.repos[0].gates_writes());
 }

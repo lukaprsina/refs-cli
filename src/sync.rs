@@ -546,16 +546,16 @@ fn run(
     opts: MaterialiseOpts,
 ) -> Result<Option<Note>, miette::Report> {
     match action {
-        RepoAction::Materialise { repo, pin, .. } => {
-            source
-                .materialise(*repo, pin, opts)
-                .map_err(|e| e.for_repo(repo.id))?;
-            Ok(None)
-        }
-        RepoAction::Replace {
-            repo, pin, note, ..
+        RepoAction::Materialise {
+            repo,
+            pin,
+            replace,
+            note,
+            ..
         } => {
-            source.remove(repo.id).map_err(|e| e.for_repo(repo.id))?;
+            if *replace {
+                source.remove(repo.id).map_err(|e| e.for_repo(repo.id))?;
+            }
             source
                 .materialise(*repo, pin, opts)
                 .map_err(|e| e.for_repo(repo.id))?;

@@ -103,68 +103,36 @@ fn cells(r: &LaidRepo, row: Option<Row>) -> Vec<String> {
     ];
     if let Some(row) = row {
         cells.push(row.sha.clone().unwrap_or("-".into()));
-        cells.push(label(&row).to_string());
+        cells.push(row.kind.to_string());
     }
     cells
 }
 
-/// How one repo's Checkout is labelled: its Checkout state, plus the two states `list`
-/// decides before there is one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StatusLabel {
-    Ok,
-    /// Locked, but nothing (or a dangling directory) is checked out.
-    Missing,
-    /// Another commit is checked out; `dirty` when sync would refuse to move it.
-    WrongSha {
-        dirty: bool,
-    },
-    /// The right commit, checked out with other `paths` than the config asks for (a set, so
-    /// order does not count); `sync` checks it out again unless it is `dirty`.
-    WrongPaths {
-        dirty: bool,
-    },
-    /// A directory that is not one of ours is in the way.
-    Foreign,
-    NotLocked,
-    Disabled,
-}
-
-impl std::fmt::Display for StatusLabel {
+/// The status label: the Checkout state, plus the two states `list` decides before there is
+/// one. `dirty` is added when `sync` would refuse to move the Checkout.
+impl std::fmt::Display for Kind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let (text, dirty) = match self {
-            StatusLabel::Ok => ("ok", false),
-            StatusLabel::Missing => ("missing", false),
-            StatusLabel::WrongSha { dirty } => ("wrong SHA", *dirty),
-            StatusLabel::WrongPaths { dirty } => ("wrong paths", *dirty),
-            StatusLabel::Foreign => ("foreign", false),
-            StatusLabel::NotLocked => ("not locked", false),
-            StatusLabel::Disabled => ("disabled", false),
+            Kind::NotLocked => ("not locked", false),
+            Kind::Disabled => ("disabled", false),
+            Kind::Checkout(state) => match state {
+                CheckoutState::InSync => ("ok", false),
+                // locked, but nothing (or a dangling directory) is checked out
+                CheckoutState::Absent | CheckoutState::Dangling => ("missing", false),
+                CheckoutState::Foreign => ("foreign", false),
+                CheckoutState::Stale { cause, dirty_files } => (
+                    match cause {
+                        Cause::Commit => "wrong SHA",
+                        Cause::Paths => "wrong paths",
+                    },
+                    !dirty_files.is_empty(),
+                ),
+            },
         };
         f.write_str(text)?;
         if dirty {
             f.write_str(", dirty")?;
         }
         Ok(())
-    }
-}
-
-/// How a row's Repo is labelled.
-fn label(row: &Row) -> StatusLabel {
-    match &row.kind {
-        Kind::NotLocked => StatusLabel::NotLocked,
-        Kind::Disabled => StatusLabel::Disabled,
-        Kind::Checkout(state) => match state {
-            CheckoutState::InSync => StatusLabel::Ok,
-            CheckoutState::Absent | CheckoutState::Dangling => StatusLabel::Missing,
-            CheckoutState::Foreign => StatusLabel::Foreign,
-            CheckoutState::Stale { cause, dirty_files } => {
-                let dirty = !dirty_files.is_empty();
-                match cause {
-                    Cause::Commit => StatusLabel::WrongSha { dirty },
-                    Cause::Paths => StatusLabel::WrongPaths { dirty },
-                }
-            }
-        },
     }
 }
