@@ -4,5 +4,5 @@ Config parsing, the active set, locking, Entry building, rendering, Agent-file s
 
 ## Consequences
 
-- The Lock is a union tagged by `source`; only `source` code interprets the pin.
+- The Lock entry carries a `source` tag (only `git` exists); only `source` code interprets the pin.
 - `GitSource` keeps a few real-git contract tests, because those pin down facts about git that a fake would only restate (no fetch refspec in bare clones, per-worktree sparse config, blobless fetch). Pure parts of it (ref preference, URL normalisation, `ls-remote` parsing) are tested as data.

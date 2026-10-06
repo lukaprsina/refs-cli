@@ -4,13 +4,13 @@ mod checkouts;
 mod classify;
 mod lock;
 mod outcome;
-mod settle;
 
 pub use checkouts::{
-    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Plan, ProjectObserved, RepoAction,
-    WriteAgentFile, plan_checkouts,
+    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Placement, Plan, ProjectObserved,
+    RepoAction, WriteAgentFile, plan_checkouts,
 };
 pub use classify::{Cause, CheckoutState, classify};
-pub use lock::{Drift, LockFlags, LockPlan, Step, Upgrade, lock_drift, locked, plan_lock};
-pub use outcome::{Change, Command, Concluded, Hint, Outcome, check_outcome, conclude, hint};
-pub use settle::{Coverage, Failure, Keep, Settled, settle};
+pub use lock::{
+    Drift, LockFlags, LockPlan, Step, Upgrade, lock_drift, locked, plan_lock, shrunk_lock,
+};
+pub use outcome::{Change, Command, Hint, Outcome, check_outcome, hint};

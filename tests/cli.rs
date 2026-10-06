@@ -575,21 +575,20 @@ fn list_status_works_with_no_lock_yet() {
 }
 
 #[test]
-fn a_disable_writes_the_edit_then_reports_the_broken_repo_with_exit_1() {
+fn a_disable_with_nothing_locked_is_blocked_by_a_broken_repo_and_writes_nothing() {
     let p = Project::new(&format!(
-        "{AB}\n[repos.c]\nurl = \"https://github.com/o/c\"\n"
+        "{AB}
+[repos.c]
+url = \"https://github.com/o/c\"
+"
     ));
     p.source.fail("b", Method::Resolve, "gone");
+    let before = fs::read_to_string(p.path("refs.toml")).unwrap();
 
     assert_eq!(p.run(&["disable", "a"]), 1);
 
-    let config = fs::read_to_string(p.path("refs.toml")).unwrap();
-    assert!(config.contains("enabled = false"), "{config}");
-    let lock = p.lock_text().unwrap();
-    assert!(
-        lock.contains("id = \"c\"") && !lock.contains("id = \"b\""),
-        "{lock}"
-    );
+    assert_eq!(fs::read_to_string(p.path("refs.toml")).unwrap(), before);
+    assert_eq!(p.lock_text(), None);
 }
 
 #[test]
@@ -627,4 +626,58 @@ fn add_with_a_missing_group_creates_it_and_remove_takes_it_away_again() {
 
     assert_eq!(p.run(&["remove", "c"]), 0);
     assert_eq!(fs::read(p.path("refs.toml")).unwrap(), before);
+}
+
+#[test]
+fn only_a_command_that_needs_a_source_asks_for_one() {
+    let p = Project::new(AB);
+    let calls = std::cell::Cell::new(0);
+    let run_refs = |args: &[&str]| {
+        let args = std::iter::once("refs").chain(args.iter().copied());
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        refs_cli::cli::run_with(
+            args.map(Into::into),
+            p.dir.path(),
+            |_, _| {
+                calls.set(calls.get() + 1);
+                Err(refs_cli::diagnostic::SourceError::Failed {
+                    message: "no cache directory".into(),
+                })
+            },
+            &mut out,
+            &mut err,
+        )
+    };
+
+    assert_eq!(run_refs(&["list"]), 0);
+    assert_eq!(run_refs(&["remove", "a", "--no-sync"]), 0);
+    assert_eq!(calls.get(), 0);
+
+    assert_eq!(run_refs(&["sync"]), 1);
+    assert_eq!(run_refs(&["list", "--status"]), 1);
+    assert_eq!(run_refs(&["disable", "b"]), 1);
+    assert_eq!(calls.get(), 3);
+}
+
+#[test]
+fn a_syncing_edit_that_cannot_get_a_source_prints_the_error_and_writes_nothing() {
+    let p = Project::new(AB);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+
+    let code = refs_cli::cli::run_with(
+        ["refs", "add", "https://github.com/o/c"].map(Into::into),
+        p.dir.path(),
+        |_, _| {
+            Err(refs_cli::diagnostic::SourceError::Failed {
+                message: "no cache directory".into(),
+            })
+        },
+        &mut out,
+        &mut err,
+    );
+
+    assert_eq!(code, 1);
+    assert!(String::from_utf8_lossy(&err).contains("no cache directory"));
+    assert_eq!(fs::read_to_string(p.path("refs.toml")).unwrap(), AB);
+    assert_eq!(p.lock_text(), None);
 }

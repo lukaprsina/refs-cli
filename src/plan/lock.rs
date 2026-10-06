@@ -83,6 +83,25 @@ pub fn lock_drift(active: &ActiveSet, lock: Option<&Lock>) -> Vec<Drift> {
     drift
 }
 
+/// The Lock a shrinking edit leaves (ADR 0006): when the Lock already has a current Pin for
+/// every active Repo and only holds entries for Repos that are no longer active, those entries
+/// are dropped and nothing is resolved or verified. `None` for any other drift (or none), which
+/// stage 1 handles.
+pub fn shrunk_lock(active: &ActiveSet, lock: Option<&Lock>) -> Option<Lock> {
+    let lock = lock?;
+    let drift = lock_drift(active, Some(lock));
+    let only_removed = !drift.is_empty() && drift.iter().all(|d| matches!(d, Drift::Removed(_)));
+    only_removed.then(|| {
+        Lock::new(
+            lock.repo
+                .iter()
+                .filter(|e| active.get(&e.id).is_some())
+                .cloned()
+                .collect(),
+        )
+    })
+}
+
 /// Stage 1 (ADR 0006): one step per active Repo, in active-set order. `offline` refuses
 /// anything that would resolve: a missing or stale Lock, or any `upgrade`.
 pub fn plan_lock<'a>(

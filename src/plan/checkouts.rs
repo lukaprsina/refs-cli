@@ -5,11 +5,10 @@ use std::collections::BTreeMap;
 use crate::active::ActiveSet;
 use crate::agent_file::{splice, strip};
 use crate::config::RepoRef;
-use crate::diagnostic::{NotLocked, Note, Refusal};
+use crate::diagnostic::{Note, Refusal};
 use crate::lock::Lock;
 use crate::plan::classify::{CheckoutState, classify};
 use crate::plan::outcome::Outcome;
-use crate::plan::settle::Coverage;
 use crate::render::render;
 use crate::source::{Observed, Pin};
 
@@ -93,24 +92,35 @@ pub struct ProjectObserved {
     pub exclude: Exclude,
 }
 
-/// What to do for one Repo's Checkout. One unit per Repo: a Repo's remove and materialise
-/// are a single `Replace`, so nothing in the Plan depends on the order of two actions.
+/// How a Checkout comes to be at a Pin. The two that remove first are one action with the
+/// materialise, so nothing in the Plan depends on the order of two actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    /// Nothing is there.
+    Create,
+    /// Move a clean Checkout to the Pin.
+    Move,
+    /// Remove a Dangling Checkout and create it again; the run says so.
+    Recreate,
+    /// Remove a dirty Checkout (only under `--force`) and create it at the Pin.
+    Overwrite,
+}
+
+impl Placement {
+    /// Whether the existing Checkout is removed before the materialise.
+    pub fn removes_first(self) -> bool {
+        matches!(self, Placement::Recreate | Placement::Overwrite)
+    }
+}
+
+/// What to do for one Repo's Checkout. One unit per Repo.
 #[derive(Debug)]
 pub enum RepoAction<'a> {
-    /// Create the Checkout (`moving` false) or move it to `pin` (`moving` true).
+    /// Put the Repo's Checkout at `pin`.
     Materialise {
         repo: RepoRef<'a>,
         pin: Pin,
-        moving: bool,
-    },
-    /// Remove the Checkout, then materialise it: a Dangling one (`moving` false, nothing
-    /// was there to move), or a dirty one under `--force` (`moving` true). `note` is
-    /// reported once the whole action has succeeded.
-    Replace {
-        repo: RepoRef<'a>,
-        pin: Pin,
-        moving: bool,
-        note: Option<Note>,
+        placement: Placement,
     },
     /// Remove the Checkout of a name that is not Active, for example a disabled or deleted
     /// Repo. It takes an id because a Checkout can outlive its config entry.
@@ -129,21 +139,30 @@ impl RepoAction<'_> {
     /// The Repo the action is for.
     pub fn id(&self) -> &str {
         match self {
-            RepoAction::Materialise { repo, .. } | RepoAction::Replace { repo, .. } => repo.id,
+            RepoAction::Materialise { repo, .. } => repo.id,
             RepoAction::Remove { id } => id,
         }
     }
 
     pub fn how(&self) -> Checkout {
         match self {
-            RepoAction::Materialise { moving, .. } | RepoAction::Replace { moving, .. } => {
-                if *moving {
-                    Checkout::Moved
-                } else {
-                    Checkout::Created
-                }
-            }
+            RepoAction::Materialise { placement, .. } => match placement {
+                Placement::Create | Placement::Recreate => Checkout::Created,
+                Placement::Move | Placement::Overwrite => Checkout::Moved,
+            },
             RepoAction::Remove { .. } => Checkout::Removed,
+        }
+    }
+
+    /// What the run says once the whole action has succeeded.
+    pub fn note(&self) -> Option<Note> {
+        match self {
+            RepoAction::Materialise {
+                repo,
+                placement: Placement::Recreate,
+                ..
+            } => Some(Note::Recreated { id: repo.id.into() }),
+            _ => None,
         }
     }
 
@@ -207,6 +226,14 @@ impl Plan<'_> {
     }
 }
 
+fn place(repo: RepoRef, pin: Pin, placement: Placement) -> RepoAction {
+    RepoAction::Materialise {
+        repo,
+        pin,
+        placement,
+    }
+}
+
 fn dirty(id: &str, files: &[String]) -> Refusal {
     Refusal::DirtyCheckout {
         id: id.into(),
@@ -214,26 +241,20 @@ fn dirty(id: &str, files: &[String]) -> Refusal {
     }
 }
 
-/// Plan stage 2 against the Lock and what is on disk. The Repos in `coverage` are planned
-/// for; the Withheld ones, which stage 1 could not lock, are left out of the block and their
-/// Checkouts are left alone, neither made, moved nor removed.
+/// Plan stage 2 against the Lock and what is on disk.
 pub fn plan_checkouts<'a>(
-    coverage: &Coverage<'a>,
+    active: &ActiveSet<'a>,
     lock: &Lock,
     checkouts: &Checkouts,
     project: &ProjectObserved,
     force: bool,
-) -> Result<Plan<'a>, NotLocked> {
-    let Coverage { active, withheld } = coverage;
-    // With no active Repo there is nothing to list: the block goes, markers included, unless
-    // that is only because every Repo is withheld. Then there is nothing true to write and
-    // stripping would claim there are no Repos, so a block that is there is refused as stale.
+) -> Plan<'a> {
+    // With no active Repo there is nothing to list: the block goes, markers included.
     let block = if active.repos().next().is_some() {
-        Some(render(active, lock, &project.references_dir)?)
+        Some(render(active, lock, &project.references_dir))
     } else {
         None
     };
-    let all_withheld = block.is_none() && !withheld.is_empty();
     let mut stale = Vec::new();
     let mut current = Vec::new();
     let mut refusals = Vec::new();
@@ -242,40 +263,21 @@ pub fn plan_checkouts<'a>(
         let pin = || locked.pin.clone();
         match classify(checkouts.of(repo.id), repo.repo, &locked.pin) {
             CheckoutState::InSync => {}
-            CheckoutState::Absent => current.push(RepoAction::Materialise {
-                repo,
-                pin: pin(),
-                moving: false,
-            }),
-            CheckoutState::Dangling => current.push(RepoAction::Replace {
-                repo,
-                pin: pin(),
-                moving: false,
-                note: Some(Note::Recreated { id: repo.id.into() }),
-            }),
+            CheckoutState::Absent => current.push(place(repo, pin(), Placement::Create)),
+            CheckoutState::Dangling => current.push(place(repo, pin(), Placement::Recreate)),
             CheckoutState::Foreign => refusals.push(Refusal::ForeignDir { id: repo.id.into() }),
             CheckoutState::Stale { dirty_files, .. } if dirty_files.is_empty() => {
-                current.push(RepoAction::Materialise {
-                    repo,
-                    pin: pin(),
-                    moving: true,
-                })
+                current.push(place(repo, pin(), Placement::Move))
             }
-            CheckoutState::Stale { .. } if force => current.push(RepoAction::Replace {
-                repo,
-                pin: pin(),
-                moving: true,
-                note: None,
-            }),
+            CheckoutState::Stale { .. } if force => {
+                current.push(place(repo, pin(), Placement::Overwrite))
+            }
             CheckoutState::Stale { dirty_files, .. } => refusals.push(dirty(repo.id, &dirty_files)),
         }
     }
     // Names refs no longer manages. Only a checkout refs made (`At`) is touched; anything
     // else is for `doctor` to report.
     for (name, observed) in checkouts.unmanaged(active) {
-        if withheld.contains(name) {
-            continue;
-        }
         match observed {
             Observed::At { dirty_files, .. } if !dirty_files.is_empty() && !force => {
                 refusals.push(dirty(name, dirty_files))
@@ -292,10 +294,6 @@ pub fn plan_checkouts<'a>(
             None => strip(current),
         };
         match planned {
-            // the block cannot be rewritten or stripped: name it instead
-            Ok(text) if all_withheld && text != current => refusals.push(Refusal::StaleBlock {
-                path: file.path.clone(),
-            }),
             // an absent file with no block to add is not created
             Ok(text) if file.text.is_none() && text.is_empty() => {}
             Ok(text) if file.text.as_deref() != Some(text.as_str()) => {
@@ -321,10 +319,10 @@ pub fn plan_checkouts<'a>(
         Exclude::Missing => Some(ExcludeAction::Ensure),
         Exclude::NoGit => Some(ExcludeAction::NoGit),
     };
-    Ok(Plan {
+    Plan {
         repos: stale.into_iter().chain(current).collect(),
         writes,
         exclude,
         refusals,
-    })
+    }
 }

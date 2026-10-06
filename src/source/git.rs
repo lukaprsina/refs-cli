@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
-use crate::source::{MaterialiseOpts, Observed, Pin, PinKind, Source, VerifyOpts};
+use crate::source::{MaterialiseOpts, Observed, Pin, Source, VerifyOpts};
 use cache::{Cache, Repo};
 use checkout::{Layout, Record};
 use command::Cmd;
@@ -24,6 +24,26 @@ pub struct GitSource {
 }
 
 impl GitSource {
+    /// The Source for a project: the Cache in the user's cache directory (found from the
+    /// environment) and the Checkouts in `checkouts`.
+    pub fn from_env(checkouts: PathBuf) -> Result<GitSource, SourceError> {
+        let local_app_data = if cfg!(windows) {
+            std::env::var("LOCALAPPDATA").ok()
+        } else {
+            None
+        };
+        let cache = cache::cache_root(
+            std::env::var("XDG_CACHE_HOME").ok().as_deref(),
+            local_app_data.as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        )
+        .ok_or_else(|| SourceError::Failed {
+            message: "cannot find the cache directory: set XDG_CACHE_HOME (or LOCALAPPDATA on \n                      Windows, or HOME)"
+                .into(),
+        })?;
+        Ok(GitSource::new(cache, checkouts))
+    }
+
     pub fn new(cache_root: PathBuf, checkouts: PathBuf) -> GitSource {
         GitSource {
             cache: Cache::new(&cache_root),
@@ -64,7 +84,7 @@ impl Source for GitSource {
     }
 
     fn verify(&self, repo: RepoRef, pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError> {
-        let PinKind::Git { url, sha, .. } = &pin.0;
+        let (url, sha) = (pin.url(), pin.sha());
         remote::check_sha(sha)?;
         self.cache.with_repo(url, sha, opts.offline, |cache| {
             cache.ensure_commit(url, sha, opts.offline)?;
@@ -76,26 +96,38 @@ impl Source for GitSource {
                         return Err(SourceError::PathMissing {
                             repo: repo.id.into(),
                             path: path.into(),
-                            sha: sha.clone(),
+                            sha: sha.to_string(),
                         });
                     }
                     EntryKind::Other => {
                         return Err(SourceError::PathNotDir {
                             repo: repo.id.into(),
                             path: path.into(),
-                            sha: sha.clone(),
+                            sha: sha.to_string(),
                         });
                     }
                 }
             }
             for path in &repo.repo.start {
                 let path = path.get_ref();
-                if cache.entry_kind(sha, path)? == EntryKind::Missing {
-                    return Err(SourceError::StartMissing {
-                        repo: repo.id.into(),
-                        path: path.into(),
-                        sha: sha.clone(),
-                    });
+                let (id, path, sha) = (repo.id.to_string(), path.to_string(), sha.to_string());
+                match cache.entry_kind(&sha, &path)? {
+                    EntryKind::Missing => {
+                        return Err(SourceError::StartMissing {
+                            repo: id,
+                            path,
+                            sha,
+                        });
+                    }
+                    // cone mode checks out the root's files, not its directories
+                    EntryKind::Tree if !repo.repo.paths.is_empty() && !path.contains('/') => {
+                        return Err(SourceError::StartNotFile {
+                            repo: id,
+                            path,
+                            sha,
+                        });
+                    }
+                    _ => {}
                 }
             }
             Ok(())
@@ -108,7 +140,7 @@ impl Source for GitSource {
         pin: &Pin,
         opts: MaterialiseOpts,
     ) -> Result<(), SourceError> {
-        let PinKind::Git { url, sha, .. } = &pin.0;
+        let (url, sha) = (pin.url(), pin.sha());
         remote::check_sha(sha)?;
         let dest = self.checkouts.join(repo.id);
         let cache_name = cache_dir_name(url);
@@ -221,10 +253,7 @@ fn observe(cache: &Repo, dest: &Path, admin: &Path) -> Result<Observed, SourceEr
         .trim()
         .to_string();
     // A record of another commit (someone moved HEAD by hand) is not what is checked out.
-    let record = Record::read(admin).filter(|r| {
-        let PinKind::Git { sha, .. } = &r.pin.0;
-        *sha == head
-    });
+    let record = Record::read(admin).filter(|r| r.pin.sha() == head);
     let (pin, paths) = match record {
         Some(record) => (record.pin, record.paths),
         None => (Pin::git("", "", &head, None), vec![]),

@@ -86,20 +86,6 @@ impl Cmd {
         self
     }
 
-    /// Find the repository from the directory alone, not from `GIT_DIR` and the like that a
-    /// git hook or a wrapper left in the environment.
-    pub fn own_repository(mut self) -> Cmd {
-        for var in [
-            "GIT_DIR",
-            "GIT_WORK_TREE",
-            "GIT_COMMON_DIR",
-            "GIT_INDEX_FILE",
-        ] {
-            self.command.env_remove(var);
-        }
-        self
-    }
-
     pub fn stdin(mut self, input: String) -> Cmd {
         self.stdin = Some(input);
         self

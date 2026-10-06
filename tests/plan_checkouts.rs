@@ -4,7 +4,7 @@ use refs_cli::config::{Config, parse};
 use refs_cli::diagnostic::Refusal;
 use refs_cli::lock::{Lock, LockedRepo};
 use refs_cli::plan::{
-    AgentFileText, Checkout, Checkouts, Coverage, Exclude, ExcludeAction, Plan, ProjectObserved,
+    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Placement, Plan, ProjectObserved,
     RepoAction, plan_checkouts,
 };
 use refs_cli::render::render;
@@ -52,7 +52,7 @@ fn observe(source: &FakeSource, set: &ActiveSet, extra: &[&str]) -> Checkouts {
 
 /// The agent file as it is after a clean `sync`.
 fn synced_text(set: &ActiveSet) -> String {
-    format!("{}\n", render(set, &lock(), ".references").unwrap())
+    format!("{}\n", render(set, &lock(), ".references"))
 }
 
 fn project(set: &ActiveSet) -> ProjectObserved {
@@ -81,14 +81,7 @@ fn plan_with(
     let config: &'static Config = Box::leak(Box::new(parse(CONFIG).unwrap()));
     let set = active(config);
     let observed = observe(source, &set, extra);
-    plan_checkouts(
-        &Coverage::full(set.clone()),
-        &lock(),
-        &observed,
-        project,
-        force,
-    )
-    .unwrap()
+    plan_checkouts(&set, &lock(), &observed, project, force)
 }
 
 /// Only `exclude` is set, and to `exclude`.
@@ -129,7 +122,7 @@ fn an_absent_checkout_is_materialised_at_the_locked_pin() {
     let plan = plan(&FakeSource::new(), &project(&set), false);
     assert!(matches!(
         plan.repos.as_slice(),
-        [RepoAction::Materialise { repo, pin: p, .. }] if repo.id == "a" && *p == pin(SHA)
+        [RepoAction::Materialise { repo, pin: p, placement: Placement::Create, .. }] if repo.id == "a" && *p == pin(SHA)
     ));
     assert!(plan.is_drift());
 }
@@ -173,18 +166,11 @@ fn no_paths_in_the_config_equals_no_sparse_patterns_on_disk() {
     let locked = lock();
     let source = FakeSource::new();
     source.seed("a", at(SHA, &[], &[]));
-    let text = format!("{}\n", render(&set, &locked, ".references").unwrap());
+    let text = format!("{}\n", render(&set, &locked, ".references"));
     let mut project = project(&set);
     project.agent_files[0].text = Some(text);
     let observed = observe(&source, &set, &[]);
-    let plan = plan_checkouts(
-        &Coverage::full(set.clone()),
-        &locked,
-        &observed,
-        &project,
-        false,
-    )
-    .unwrap();
+    let plan = plan_checkouts(&set, &locked, &observed, &project, false);
     assert!(empty(&plan), "{plan:?}");
 }
 
@@ -219,10 +205,14 @@ fn a_dangling_checkout_is_replaced_with_a_note_and_force_changes_nothing() {
         assert!(
             matches!(
                 plan.repos.as_slice(),
-                [RepoAction::Replace { repo, note: Some(note), .. }]
-                    if repo.id == "a" && code(note) == "refs::sync::recreated"
+                [RepoAction::Materialise { repo, placement: Placement::Recreate, .. }]
+                    if repo.id == "a"
             ) && plan.refusals.is_empty(),
             "{plan:?}"
+        );
+        assert_eq!(
+            code(&plan.repos[0].note().unwrap()),
+            "refs::sync::recreated"
         );
         assert!(plan.is_drift());
         assert_eq!(plan.repos[0].how(), Checkout::Created);
@@ -268,7 +258,7 @@ fn a_dirty_checkout_that_must_move_is_refused_naming_the_files() {
 }
 
 #[test]
-fn force_replaces_a_dirty_refusal_by_a_replace_without_a_note() {
+fn force_overwrites_a_dirty_checkout_instead_of_refusing_and_says_nothing() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
     let source = FakeSource::new();
@@ -277,11 +267,12 @@ fn force_replaces_a_dirty_refusal_by_a_replace_without_a_note() {
     assert!(
         matches!(
             plan.repos.as_slice(),
-            [RepoAction::Replace { repo, note: None, .. }] if repo.id == "a"
+            [RepoAction::Materialise { repo, placement: Placement::Overwrite, .. }] if repo.id == "a"
         ) && plan.refusals.is_empty(),
         "{plan:?}"
     );
     assert_eq!(plan.repos[0].how(), Checkout::Moved);
+    assert!(plan.repos[0].note().is_none());
 }
 
 #[test]
@@ -365,7 +356,7 @@ fn a_stale_block_is_rewritten_keeping_the_text_around_it() {
     let stale = "# Notes\n\n<!-- BEGIN:refs -->\nold\n<!-- END:refs -->\n\nafter\n";
     let project = with_agent_files(&set, &[("AGENTS.md", Some(stale)), ("CLAUDE.md", None)]);
     let plan = plan(&in_sync_source(), &project, false);
-    let block = render(&set, &lock(), ".references").unwrap();
+    let block = render(&set, &lock(), ".references");
     let [first, second] = plan.writes.as_slice() else {
         panic!("{plan:?}");
     };
@@ -452,10 +443,15 @@ fn applying_a_plan_to_the_fake_and_replanning_gives_an_empty_plan() {
     for action in &first.repos {
         match action {
             RepoAction::Remove { id } => source.remove(id).unwrap(),
-            RepoAction::Materialise { repo, pin, .. } => {
+            RepoAction::Materialise {
+                repo,
+                pin,
+                placement,
+                ..
+            } => {
+                assert_eq!(*placement, Placement::Create, "unexpected {action:?}");
                 source.materialise(*repo, pin, Default::default()).unwrap()
             }
-            RepoAction::Replace { .. } => panic!("unexpected {action:?}"),
         }
     }
     for write in &first.writes {
@@ -467,25 +463,6 @@ fn applying_a_plan_to_the_fake_and_replanning_gives_an_empty_plan() {
             .text = Some(write.text.clone());
     }
     assert!(empty(&plan(&source, &project, false)));
-}
-
-#[test]
-fn a_repo_missing_from_the_lock_is_an_error() {
-    let config = parse(CONFIG).unwrap();
-    let set = active(&config);
-    let empty = Lock {
-        version: 1,
-        repo: vec![],
-    };
-    let err = plan_checkouts(
-        &Coverage::full(set.clone()),
-        &empty,
-        &observe(&FakeSource::new(), &set, &[]),
-        &project(&set),
-        false,
-    )
-    .unwrap_err();
-    assert_eq!(err.ids, vec!["a".to_string()]);
 }
 
 #[test]
@@ -540,9 +517,7 @@ fn only_actions_on_a_checkout_the_block_lists_gate_the_agent_file_writes() {
         .iter()
         .map(|a| match a {
             RepoAction::Remove { id } => (id.as_str(), a.gates_writes()),
-            RepoAction::Materialise { repo, .. } | RepoAction::Replace { repo, .. } => {
-                (repo.id, a.gates_writes())
-            }
+            RepoAction::Materialise { repo, .. } => (repo.id, a.gates_writes()),
         })
         .collect();
     // `old` is only removed, `a` is materialised and listed in the block
@@ -550,7 +525,7 @@ fn only_actions_on_a_checkout_the_block_lists_gate_the_agent_file_writes() {
 }
 
 #[test]
-fn a_replace_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
+fn a_recreate_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
     let source = FakeSource::new();
@@ -558,7 +533,10 @@ fn a_replace_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
     let plan = plan(&source, &project(&set), false);
     assert!(matches!(
         plan.repos.as_slice(),
-        [RepoAction::Replace { .. }]
+        [RepoAction::Materialise {
+            placement: Placement::Recreate,
+            ..
+        }]
     ));
     assert!(plan.repos[0].gates_writes());
 }
@@ -579,14 +557,7 @@ fn with_no_active_repo_the_block_is_removed_and_the_rest_kept() {
     );
     let empty_lock = Lock::new(vec![]);
     let observed = Checkouts::observe(&set, &[], |_| Ok::<_, ()>(Observed::Absent)).unwrap();
-    let plan = plan_checkouts(
-        &Coverage::full(set.clone()),
-        &empty_lock,
-        &observed,
-        &project,
-        false,
-    )
-    .unwrap();
+    let plan = plan_checkouts(&set, &empty_lock, &observed, &project, false);
     let writes: Vec<(&str, &str)> = plan
         .writes
         .iter()
@@ -594,116 +565,4 @@ fn with_no_active_repo_the_block_is_removed_and_the_rest_kept() {
         .collect();
     assert_eq!(writes, [("AGENTS.md", "# Notes\n\n\n\nafter\n")]);
     assert!(plan.is_drift());
-}
-
-const TWO: &str = r#"
-[repos.a]
-url = "https://github.com/o/a"
-ref = "next"
-
-[repos.b]
-url = "https://github.com/o/b"
-ref = "next"
-"#;
-
-#[test]
-fn a_withheld_repo_is_left_alone_and_out_of_the_block() {
-    let config = parse(TWO).unwrap();
-    let full = active(&config);
-    let locked = Lock {
-        version: 1,
-        repo: vec![LockedRepo {
-            id: "a".into(),
-            pin: pin(SHA),
-        }],
-    };
-    let coverage = Coverage {
-        active: full.without(&["b".to_string()]),
-        withheld: vec!["b".to_string()],
-    };
-    // `b` has a Checkout at some other commit, and `a` has none: only `a` is made.
-    let source = FakeSource::new();
-    source.seed("b", at(OTHER_SHA, &[], &[]));
-    let listing = vec!["b".to_string()];
-    let observed = Checkouts::observe(&coverage.active, &listing, |n| source.inspect(n)).unwrap();
-    let project = ProjectObserved {
-        references_dir: ".references".into(),
-        agent_files: vec![AgentFileText {
-            path: "AGENTS.md".into(),
-            text: None,
-        }],
-        exclude: Exclude::Present,
-    };
-
-    let plan = plan_checkouts(&coverage, &locked, &observed, &project, false).unwrap();
-
-    assert!(
-        matches!(plan.repos.as_slice(), [RepoAction::Materialise { repo, .. }] if repo.id == "a"),
-        "{plan:?}"
-    );
-    let [write] = plan.writes.as_slice() else {
-        panic!("{plan:?}")
-    };
-    assert!(write.text.contains("[a @") && !write.text.contains("[b @"));
-}
-
-fn two_lock() -> Lock {
-    Lock {
-        version: 1,
-        repo: ["a", "b"]
-            .map(|id| LockedRepo {
-                id: id.into(),
-                pin: pin(SHA),
-            })
-            .into(),
-    }
-}
-
-/// After a `remove` where every remaining Repo (`a`, `b`) failed to lock: nothing is covered.
-/// `text` is the Agent file as the last sync left it.
-fn plan_all_withheld(text: Option<String>) -> Plan<'static> {
-    let config: &'static Config = Box::leak(Box::new(parse(TWO).unwrap()));
-    let coverage = Coverage {
-        active: active(config).without(&["a".to_string(), "b".to_string()]),
-        withheld: vec!["a".to_string(), "b".to_string()],
-    };
-    let source = FakeSource::new();
-    let observed = Checkouts::observe(&coverage.active, &[], |n| source.inspect(n)).unwrap();
-    let project = ProjectObserved {
-        references_dir: ".references".into(),
-        agent_files: vec![AgentFileText {
-            path: "AGENTS.md".into(),
-            text,
-        }],
-        exclude: Exclude::Present,
-    };
-    plan_checkouts(&coverage, &Lock::new(vec![]), &observed, &project, false).unwrap()
-}
-
-fn block_of_two() -> String {
-    let config = parse(TWO).unwrap();
-    format!(
-        "{}\n",
-        render(&active(&config), &two_lock(), ".references").unwrap()
-    )
-}
-
-#[test]
-fn all_withheld_refuses_to_leave_the_stale_block_and_writes_no_agent_file() {
-    let plan = plan_all_withheld(Some(block_of_two()));
-
-    assert!(
-        matches!(plan.refusals.as_slice(), [Refusal::StaleBlock { path }] if path == "AGENTS.md"),
-        "{plan:?}"
-    );
-    assert!(plan.writes.is_empty(), "{plan:?}");
-}
-
-#[test]
-fn all_withheld_has_nothing_to_refuse_in_an_agent_file_with_no_block() {
-    let plan = plan_all_withheld(Some("# Notes\n".into()));
-    assert!(empty(&plan), "{plan:?}");
-
-    let plan = plan_all_withheld(None);
-    assert!(empty(&plan), "{plan:?}");
 }

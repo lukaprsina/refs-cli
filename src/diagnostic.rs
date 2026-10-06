@@ -218,6 +218,19 @@ pub enum SourceError {
         sha: String,
     },
 
+    #[error("`start` file `{path}` in `{repo}` at {sha} is a directory that is not checked out")]
+    #[diagnostic(
+        code(refs::git::start_not_file),
+        help(
+            "with `paths` set, only files directly in the repo root are checked out besides them"
+        )
+    )]
+    StartNotFile {
+        repo: String,
+        path: String,
+        sha: String,
+    },
+
     #[error("`start` file `{path}` does not exist in `{repo}` at {sha}")]
     #[diagnostic(code(refs::git::start_missing))]
     StartMissing {
@@ -267,6 +280,7 @@ impl SourceError {
             SourceError::PathMissing { .. }
             | SourceError::PathNotDir { .. }
             | SourceError::StartMissing { .. }
+            | SourceError::StartNotFile { .. }
             | SourceError::ObjectMissing { .. } => miette::Report::new(self),
             cause => miette::Report::new(RepoFailed {
                 id: id.into(),
@@ -360,19 +374,6 @@ pub enum BlockError {
     },
 }
 
-/// `render` was asked for Repos the Lock does not cover. `plan` makes sure the Lock is
-/// current before it renders, so this is a caller bug, but writing a block that silently
-/// leaves a Repo out would be worse.
-#[derive(Debug, Error, Diagnostic)]
-#[error("refs.lock has no entry for: {}", ids.join(", "))]
-#[diagnostic(
-    code(refs::render::not_locked),
-    help("run `refs lock` to resolve them")
-)]
-pub struct NotLocked {
-    pub ids: Vec<String>,
-}
-
 /// `plan_lock` was asked for something it must not do.
 #[derive(Debug, Error, Diagnostic)]
 pub enum LockRefusal {
@@ -419,15 +420,6 @@ pub enum Refusal {
         #[diagnostic_source]
         error: BlockError,
     },
-
-    #[error("`{path}` has a Managed block that no longer matches the checkouts")]
-    #[diagnostic(
-        code(refs::sync::stale_block),
-        help(
-            "every remaining repo failed to lock, so the block can be neither rewritten nor stripped; fix them and run `refs sync`"
-        )
-    )]
-    StaleBlock { path: String },
 }
 
 /// An autofix `sync` announces; not drift.

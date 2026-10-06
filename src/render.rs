@@ -10,24 +10,13 @@ use std::fmt::Write;
 use crate::active::{ActiveSet, Section};
 use crate::agent_file::{BEGIN, END};
 use crate::config::{RepoRef, is_full_sha as is_commit_id};
-use crate::diagnostic::NotLocked;
 use crate::lock::{Lock, LockedRepo};
 
 /// The block, markers included, without a trailing newline (what `agent_file::splice`
-/// takes). `references_dir` is `Settings::references_dir`.
-pub fn render(active: &ActiveSet, lock: &Lock, references_dir: &str) -> Result<String, NotLocked> {
+/// takes). `references_dir` is `Settings::references_dir`. The Lock must have an entry for
+/// every active Repo: `plan` makes sure of it before it renders.
+pub fn render(active: &ActiveSet, lock: &Lock, references_dir: &str) -> String {
     let locked = |repo: RepoRef| lock.repo.iter().find(|l| l.id == repo.id);
-    let missing: Vec<String> = active
-        .sections
-        .iter()
-        .flat_map(|s| &s.repos)
-        .filter(|r| locked(**r).is_none())
-        .map(|r| r.id.to_string())
-        .collect();
-    if !missing.is_empty() {
-        return Err(NotLocked { ids: missing });
-    }
-
     let repos = || active.sections.iter().flat_map(|s| &s.repos);
     let first_id = repos().next().map(|r| r.id);
     let first_package = repos()
@@ -39,11 +28,11 @@ pub fn render(active: &ActiveSet, lock: &Lock, references_dir: &str) -> Result<S
     out.push_str("```\n\n");
     for section in &active.sections {
         out.push_str(&section_text(section, |r| {
-            locked(r).expect("checked above")
+            locked(r).expect("the Lock covers every active Repo")
         }));
     }
     out.push_str(END);
-    Ok(out)
+    out
 }
 
 fn preamble(dir: &str, first_id: Option<&str>, first_package: Option<&str>) -> String {
