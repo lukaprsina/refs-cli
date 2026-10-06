@@ -140,14 +140,21 @@ impl Cmd {
             .command
             .spawn()
             .map_err(|e| failed(format!("could not run git: {e}"), String::new()))?;
-        if let Some(input) = &self.stdin {
+        // Written from its own thread: git answers while it is still reading, so a caller
+        // that wrote all of stdin before reading stdout would stall once both pipes are full.
+        let writer = self.stdin.take().map(|input| {
             let mut stdin = child.stdin.take().expect("stdin was piped");
             // A git that exits early closes the pipe; its exit status says why.
-            let _ = stdin.write_all(input.as_bytes());
-        }
+            std::thread::spawn(move || {
+                let _ = stdin.write_all(input.as_bytes());
+            })
+        });
         let output = child
             .wait_with_output()
             .map_err(|e| failed(format!("could not run git: {e}"), String::new()))?;
+        if let Some(writer) = writer {
+            writer.join().expect("the stdin writer does not panic");
+        }
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         if !output.status.success() {
             return Err(failed(

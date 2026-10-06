@@ -553,6 +553,40 @@ mod materialise {
         assert!(env.files("a").contains("docs/guide/a.md"));
         assert!(env.files("b").contains("src/lib.rs"));
     }
+
+    /// `prefetch` pipes every blob id to `git cat-file --batch-check` and reads the answers;
+    /// with enough blobs neither pipe can hold what git and refs each have to say, so a
+    /// refs that writes all of stdin before reading stdout never finishes.
+    #[test]
+    fn a_repo_with_thousands_of_blobs_is_checked_out() {
+        const FILES: usize = 4000;
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["config", "uploadpack.allowFilter", "true"]);
+        fs::create_dir_all(p.join("many")).unwrap();
+        for i in 0..FILES {
+            fs::write(p.join(format!("many/{i}.txt")), i.to_string()).unwrap();
+        }
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "many"]);
+        let sha = git(p, &["rev-parse", "HEAD"]);
+        let remote = Remote { dir, sha };
+        let env = Env::new();
+
+        // Not a scoped thread: a deadlock must fail the test, not hang its join.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (source, repo, pin_remote) = (env.source(), remote.repo(&["many"], &[]), remote);
+        std::thread::spawn(move || {
+            let result = materialise(&source, "r", &pin_remote, &repo, ONLINE);
+            let _ = tx.send(result);
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .expect("materialise finished: refs and git are not waiting on each other");
+        assert_eq!(result, Ok(()));
+        assert_eq!(env.files("r").len(), FILES);
+    }
 }
 
 mod checkout {
