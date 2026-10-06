@@ -25,23 +25,9 @@ pub fn check_outcome(plan: Option<&Plan>, lock_drifted: bool) -> Outcome {
     }
 }
 
-/// What happened to `refs.toml` in `edit`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Change {
-    /// The edit gave the text it already had; nothing was written.
-    Unchanged,
-    /// `refs.toml` was written.
-    Written,
-    /// The edit itself failed (it names no such Repo, or the text does not parse): nothing was
-    /// written.
-    Rejected,
-    /// Stage 1 failed against the edited config: nothing was written, and `--no-sync` would
-    /// write it.
-    Blocked,
-}
-
 /// The follow-up the CLI gives a user whose project a run left incomplete or failed, named
-/// for why it is given. Decided by `hint`; `cli` only gives each its words (ADR 0005).
+/// for why it is given. `sync` sets it where it knows why; `cli` only gives each its words
+/// (ADR 0005).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hint {
     /// `refs.toml` was written without a sync (`--no-sync`): the project is incomplete.
@@ -50,35 +36,9 @@ pub enum Hint {
     RunSyncOnceFixed,
     /// `refs.toml` was written, then the sync failed or was refused.
     FixOrRemoveThenSync,
-    /// The edit was rejected, so `refs.toml` is as it was.
+    /// The edit was rejected, or a write failed, so `refs.toml` is as it was and `--no-sync`
+    /// would not help.
     ConfigUnchanged,
     /// Stage 1 blocked the edit, so `refs.toml` is as it was; `--no-sync` writes it anyway.
     ConfigUnchangedTryNoSync,
-}
-
-/// The command a run was, as far as its hint goes. `lock` has no hint.
-#[derive(Debug, Clone, Copy)]
-pub enum Command {
-    Sync,
-    Edit { change: Change, no_sync: bool },
-}
-
-/// The hint of a run: at most one, since with `no_sync` an edit does not sync, so it cannot
-/// also fail.
-pub fn hint(command: Command, outcome: Outcome) -> Option<Hint> {
-    let incomplete = matches!(outcome, Outcome::Failed | Outcome::Refused);
-    match command {
-        Command::Sync => incomplete.then_some(Hint::RunSyncOnceFixed),
-        Command::Edit { change, no_sync } => {
-            if no_sync && change == Change::Written {
-                return Some(Hint::RunSync);
-            }
-            incomplete.then_some(match change {
-                Change::Written => Hint::FixOrRemoveThenSync,
-                Change::Rejected => Hint::ConfigUnchanged,
-                Change::Blocked => Hint::ConfigUnchangedTryNoSync,
-                Change::Unchanged => Hint::RunSyncOnceFixed,
-            })
-        }
-    }
 }

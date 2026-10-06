@@ -11,10 +11,10 @@ use crate::diagnostic::Note;
 use crate::edit::Edit;
 use crate::exclude;
 use crate::lock::Lock;
-pub use crate::plan::{Change, Checkout, Hint, Outcome};
+pub use crate::plan::{Checkout, Hint, Outcome};
 use crate::plan::{
-    Checkouts, Command, Drift, ExcludeAction, LockFlags, Plan, RepoAction, Step, check_outcome,
-    hint, lock_drift, locked, plan_checkouts, plan_lock, shrunk_lock,
+    Checkouts, Drift, ExcludeAction, LockFlags, Plan, RepoAction, Step, check_outcome, lock_drift,
+    locked, plan_checkouts, plan_lock, shrunk_lock,
 };
 use crate::project;
 use crate::source::{MaterialiseOpts, Source, VerifyOpts};
@@ -26,10 +26,13 @@ pub struct SyncFlags {
     pub check: bool,
 }
 
-/// Something a run changed on disk, for the CLI to say. `refs.toml` is not here: only `edit`
-/// writes it, and it says so in `Edited::change`.
+/// Something a run changed on disk, for the CLI to say.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Changed {
+    /// `refs.toml` was written (only an edit does).
+    Config,
+    /// The edit created this Group in `refs.toml`.
+    Group(String),
     /// `refs.lock` was written.
     Lock,
     /// The Checkout of this Repo was created, moved or removed.
@@ -38,37 +41,54 @@ pub enum Changed {
     AgentFile(String),
 }
 
+/// How a run went, for the CLI to print: the one result of `lock`, `sync` and every edit.
 #[derive(Debug)]
 pub struct Report {
     pub outcome: Outcome,
-    /// What the run changed on disk, in the order it happened.
+    /// What the run changed on disk, in the order the CLI says it.
     pub changes: Vec<Changed>,
     /// How the Lock differed from the config when the run began.
     pub drift: Vec<Drift>,
     /// Refusals, failures and notes, in the order they happened.
     pub diagnostics: Vec<miette::Report>,
-    /// What to tell the user to do next, if anything.
+    /// What to tell the user to do next, if anything. Set where `sync` knows why.
     pub hint: Option<Hint>,
 }
 
 impl Report {
-    fn new(outcome: Outcome, drift: Vec<Drift>, diagnostics: Vec<miette::Report>) -> Report {
+    fn new(outcome: Outcome) -> Report {
         Report {
             outcome,
             changes: Vec::new(),
-            drift,
-            diagnostics,
+            drift: Vec::new(),
+            diagnostics: Vec::new(),
             hint: None,
         }
     }
 
-    fn with_hint(mut self, command: Command) -> Report {
-        self.hint = hint(command, self.outcome);
+    fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
+        Report {
+            diagnostics: vec![miette::Report::new(error)],
+            ..Report::new(Outcome::Failed)
+        }
+    }
+
+    fn with_drift(mut self, drift: Vec<Drift>) -> Report {
+        self.drift = drift;
         self
     }
 
-    fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
-        Report::new(Outcome::Failed, vec![], vec![miette::Report::new(error)])
+    fn with_hint(mut self, hint: Hint) -> Report {
+        self.hint = Some(hint);
+        self
+    }
+
+    /// Give `hint` if the run failed or was refused, so left the project incomplete.
+    fn hint_if_incomplete(self, hint: Hint) -> Report {
+        match self.outcome {
+            Outcome::Failed | Outcome::Refused => self.with_hint(hint),
+            Outcome::InSync | Outcome::OutOfDate => self,
+        }
     }
 }
 
@@ -79,56 +99,13 @@ struct StageOne {
     wrote_lock: bool,
 }
 
-/// Stage 1 stopped the run: the outcome and every diagnostic.
-struct Halt {
-    outcome: Outcome,
-    diagnostics: Vec<miette::Report>,
-}
-
-impl Halt {
-    fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Halt {
-        Halt {
-            outcome: Outcome::Failed,
-            diagnostics: vec![miette::Report::new(error)],
-        }
-    }
-
-    fn into_report(self, drift: Vec<Drift>) -> Report {
-        Report::new(self.outcome, drift, self.diagnostics)
-    }
-}
-
-/// What stage 2 did or found, before it is combined with stage 1's.
-struct StageTwo {
-    outcome: Outcome,
-    diagnostics: Vec<miette::Report>,
-    changes: Vec<Changed>,
-}
-
-impl StageTwo {
-    fn only(outcome: Outcome) -> StageTwo {
-        StageTwo {
-            outcome,
-            diagnostics: Vec::new(),
-            changes: Vec::new(),
-        }
-    }
-}
-
-/// The Report of a run that got through stage 1: the outcome is stage 2's, and the Lock write
-/// came before everything stage 2 did.
-fn finish(stage_one: StageOne, drift: Vec<Drift>, stage_two: StageTwo) -> Report {
-    let mut changes = stage_two.changes;
+/// The Report of a run that got through stage 1: `stage_two` is what stage 2 found or did,
+/// and the Lock write came before everything stage 2 did.
+fn finish(stage_one: StageOne, drift: Vec<Drift>, mut stage_two: Report) -> Report {
     if stage_one.wrote_lock {
-        changes.insert(0, Changed::Lock);
+        stage_two.changes.insert(0, Changed::Lock);
     }
-    Report {
-        outcome: stage_two.outcome,
-        changes,
-        drift,
-        diagnostics: stage_two.diagnostics,
-        hint: None,
-    }
+    stage_two.with_drift(drift)
 }
 
 /// What every run starts from: the active set, the Lock on disk (if any) and how it differs.
@@ -152,14 +129,14 @@ pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags
         Err(report) => return report,
     };
     match stage_one(source, &active, old, flags, root) {
-        Ok(stage_one) => finish(stage_one, drift, StageTwo::only(Outcome::InSync)),
-        Err(halt) => halt.into_report(drift),
+        Ok(stage_one) => finish(stage_one, drift, Report::new(Outcome::InSync)),
+        Err(report) => report.with_drift(drift),
     }
 }
 
 /// `refs sync`. With `check`, nothing is resolved, verified, fetched or written.
 pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
-    run_sync(source, root, config, flags).with_hint(Command::Sync)
+    run_sync(source, root, config, flags).hint_if_incomplete(Hint::RunSyncOnceFixed)
 }
 
 fn run_sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
@@ -175,18 +152,18 @@ fn run_sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
             },
             // Nothing to plan against: the Lock is what is out of date.
             None => {
-                let stage_two = StageTwo::only(check_outcome(None, true));
                 let stage_one = StageOne {
                     lock: Lock::new(vec![]),
                     wrote_lock: false,
                 };
+                let stage_two = Report::new(check_outcome(None, true));
                 return finish(stage_one, drift, stage_two);
             }
         }
     } else {
         match stage_one(source, &active, old, &lock_flags(flags), root) {
             Ok(stage_one) => stage_one,
-            Err(halt) => return halt.into_report(drift),
+            Err(report) => return report.with_drift(drift),
         }
     };
     plan_and_apply(source, root, config, &active, stage_one, drift, flags)
@@ -217,15 +194,15 @@ fn plan_and_apply(
         .iter()
         .any(|d| matches!(d, Drift::LockMissing | Drift::Added(_)));
     if flags.check && uncovered {
-        let stage_two = StageTwo::only(check_outcome(None, true));
+        let stage_two = Report::new(check_outcome(None, true));
         return finish(stage_one, drift, stage_two);
     }
     let plan = match plan_stage_two(source, root, config, active, &stage_one.lock, flags.force) {
         Ok(plan) => plan,
         Err(errors) => {
-            let stage_two = StageTwo {
+            let stage_two = Report {
                 diagnostics: errors,
-                ..StageTwo::only(Outcome::Failed)
+                ..Report::new(Outcome::Failed)
             };
             return finish(stage_one, drift, stage_two);
         }
@@ -239,40 +216,9 @@ fn plan_and_apply(
     finish(stage_one, drift, stage_two)
 }
 
-/// The result of `edit`: what happened to `refs.toml`, and what followed.
-#[derive(Debug)]
-pub struct Edited {
-    pub change: Change,
-    /// The Group the edit created (`add --group x` for a Group that was missing).
-    pub group_created: Option<String>,
-    /// The problems of the edit and of the sync that followed it.
-    pub report: Report,
-}
-
-fn rejected(report: Report) -> Edited {
-    unwritten(Change::Rejected, report)
-}
-
-fn rejected_by(error: impl miette::Diagnostic + Send + Sync + 'static) -> Edited {
-    rejected(Report::failed(error))
-}
-
-/// The edit was valid but stage 1 failed against it.
-fn blocked(report: Report) -> Edited {
-    unwritten(Change::Blocked, report)
-}
-
-fn unwritten(change: Change, report: Report) -> Edited {
-    // An edit that was not written never syncs, so `no_sync` does not change its hint.
-    let command = Command::Edit {
-        change,
-        no_sync: false,
-    };
-    Edited {
-        change,
-        group_created: None,
-        report: report.with_hint(command),
-    }
+/// A failed edit: `refs.toml` is as it was, and `--no-sync` would not help.
+fn rejected(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
+    Report::failed(error).with_hint(Hint::ConfigUnchanged)
 }
 
 /// An edit applied to the text of `<root>/refs.toml` and parsed, but not yet written. The
@@ -285,10 +231,10 @@ struct Applied {
 }
 
 impl Applied {
-    fn read(root: &Path, edit: &Edit) -> Result<Applied, Edited> {
-        let before = project::read_config(root).map_err(rejected_by)?;
-        let applied = edit.apply(&before).map_err(rejected_by)?;
-        let config = config::parse(&applied.text).map_err(rejected_by)?;
+    fn read(root: &Path, edit: &Edit) -> Result<Applied, Report> {
+        let before = project::read_config(root).map_err(rejected)?;
+        let applied = edit.apply(&before).map_err(rejected)?;
+        let config = config::parse(&applied.text).map_err(rejected)?;
         Ok(Applied {
             before,
             after: applied.text,
@@ -301,32 +247,33 @@ impl Applied {
         self.after == self.before
     }
 
-    fn edited(&self, change: Change, report: Report, no_sync: bool) -> Edited {
-        Edited {
-            change,
-            group_created: self.group_created.clone(),
-            report: report.with_hint(Command::Edit { change, no_sync }),
-        }
+    /// `report` of a run that came after the edit was written: what the edit did is said
+    /// first.
+    fn written(self, mut report: Report) -> Report {
+        let mut edit = vec![Changed::Config];
+        edit.extend(self.group_created.map(Changed::Group));
+        report.changes.splice(0..0, edit);
+        report
     }
 }
 
 /// Apply `edit` to `<root>/refs.toml` and write it, without syncing (`--no-sync`): no Source
 /// is needed, and nothing is resolved or verified. An edit that changes nothing writes
 /// nothing.
-pub fn edit_only(root: &Path, edit: &Edit) -> Edited {
+pub fn edit_only(root: &Path, edit: &Edit) -> Report {
     let applied = match Applied::read(root, edit) {
         Ok(applied) => applied,
-        Err(edited) => return edited,
+        Err(report) => return report,
     };
-    let change = if applied.unchanged() {
-        Change::Unchanged
-    } else {
-        match project::write_config(root, &applied.after) {
-            Ok(()) => Change::Written,
-            Err(e) => return rejected_by(e),
-        }
-    };
-    applied.edited(change, Report::new(Outcome::InSync, vec![], vec![]), true)
+    if applied.unchanged() {
+        return Report::new(Outcome::InSync);
+    }
+    match project::write_config(root, &applied.after) {
+        Ok(()) => applied
+            .written(Report::new(Outcome::InSync))
+            .with_hint(Hint::RunSync),
+        Err(e) => rejected(e),
+    }
 }
 
 /// Apply `edit` to `<root>/refs.toml` and sync the project to it.
@@ -338,56 +285,70 @@ pub fn edit_only(root: &Path, edit: &Edit) -> Edited {
 /// `disable`) while the Lock covers every remaining Repo: the Lock is pruned, with nothing
 /// resolved or verified, so a Repo the edit did not touch cannot block it. A stage 2 failure
 /// keeps the edit and the Lock; `refs sync` retries it.
-/// An edit that changes nothing writes nothing and just syncs. `flags.check` is not for
+/// The report says the write of `refs.toml` first (`Changed::Config`, then any `Group`), and
+/// has a `Hint` for an edit that was not written: a write that fails says only that
+/// `refs.toml` is as it was. An edit that changes nothing writes nothing and just syncs. `flags.check` is not for
 /// this function: it writes. The Lock is written before `refs.toml`, so a failed write of
 /// `refs.toml` leaves a Lock with an entry the config does not have, which the next `sync`
 /// removes.
-pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) -> Edited {
+pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) -> Report {
     let applied = match Applied::read(root, edit) {
         Ok(applied) => applied,
-        Err(edited) => return edited,
+        Err(report) => return report,
     };
     let config = &applied.config;
     if applied.unchanged() {
-        let report = sync(source, root, config, flags);
-        return applied.edited(Change::Unchanged, report, false);
+        return sync(source, root, config, flags);
     }
     let Preflight { active, old, drift } = match preflight(root, config) {
         Ok(preflight) => preflight,
-        Err(report) => return rejected(report),
+        Err(report) => return report.with_hint(Hint::ConfigUnchanged),
     };
-    let stage_one = match shrunk_lock(&active, old.as_ref()) {
-        Some(lock) => match lock.write(&Lock::path(root)) {
-            Ok(()) => StageOne {
-                lock,
-                wrote_lock: true,
-            },
-            Err(e) => return blocked(Report::failed(e)),
+    let lock = match shrunk_lock(&active, old.as_ref()) {
+        Some(lock) => lock,
+        None => match resolve_all(source, &active, old.as_ref(), &lock_flags(flags)) {
+            Ok(lock) => lock,
+            Err(report) => {
+                let blocked = report.with_hint(Hint::ConfigUnchangedTryNoSync);
+                return blocked.with_drift(drift);
+            }
         },
-        None => match stage_one(source, &active, old, &lock_flags(flags), root) {
-            Ok(stage_one) => stage_one,
-            Err(halt) => return blocked(halt.into_report(drift)),
-        },
+    };
+    let stage_one = match commit(root, old.as_ref(), lock) {
+        Ok(stage_one) => stage_one,
+        Err(report) => return report.with_drift(drift).with_hint(Hint::ConfigUnchanged),
     };
     if let Err(e) = project::write_config(root, &applied.after) {
-        return rejected(Report::failed(e));
+        return finish(stage_one, drift, rejected(e));
     }
-    let report = plan_and_apply(source, root, config, &active, stage_one, drift, flags);
-    applied.edited(Change::Written, report, false)
+    let report = plan_and_apply(source, root, config, &active, stage_one, drift, flags)
+        .hint_if_incomplete(Hint::FixOrRemoveThenSync);
+    applied.written(report)
 }
 
-/// Stage 1: resolve or reuse every Repo and verify them all, collecting every error. All or
-/// nothing: a failure of any Repo fails the run with every error and writes nothing.
+/// Stage 1 as `lock` and `sync` run it: resolve and verify, then write the Lock.
 fn stage_one(
     source: &dyn Source,
     active: &ActiveSet,
     old: Option<Lock>,
     flags: &LockFlags,
     root: &Path,
-) -> Result<StageOne, Halt> {
-    let plan = plan_lock(active, old.as_ref(), flags).map_err(|r| Halt {
-        outcome: Outcome::Refused,
-        diagnostics: vec![miette::Report::new(r)],
+) -> Result<StageOne, Report> {
+    let lock = resolve_all(source, active, old.as_ref(), flags)?;
+    commit(root, old.as_ref(), lock)
+}
+
+/// Resolve or reuse every Repo and verify them all, collecting every error. All or nothing:
+/// a failure of any Repo fails the run with every error.
+fn resolve_all(
+    source: &dyn Source,
+    active: &ActiveSet,
+    old: Option<&Lock>,
+    flags: &LockFlags,
+) -> Result<Lock, Report> {
+    let plan = plan_lock(active, old, flags).map_err(|refusal| Report {
+        diagnostics: vec![miette::Report::new(refusal)],
+        ..Report::new(Outcome::Refused)
     })?;
     let mut errors: Vec<miette::Report> = Vec::new();
     let mut entries = Vec::new();
@@ -413,16 +374,21 @@ fn stage_one(
             Err(e) => errors.push(e.for_repo(repo.id)),
         }
     }
-    if !errors.is_empty() {
-        return Err(Halt {
-            outcome: Outcome::Failed,
+    if errors.is_empty() {
+        Ok(Lock::new(passed))
+    } else {
+        Err(Report {
             diagnostics: errors,
-        });
+            ..Report::new(Outcome::Failed)
+        })
     }
-    let lock = Lock::new(passed);
-    let wrote_lock = old.as_ref() != Some(&lock);
+}
+
+/// Write `lock` if it differs from the one on disk.
+fn commit(root: &Path, old: Option<&Lock>, lock: Lock) -> Result<StageOne, Report> {
+    let wrote_lock = old != Some(&lock);
     if wrote_lock && let Err(e) = lock.write(&Lock::path(root)) {
-        return Err(Halt::failed(e));
+        return Err(Report::failed(e));
     }
     Ok(StageOne { lock, wrote_lock })
 }
@@ -469,11 +435,11 @@ fn plan_stage_two<'a>(
 }
 
 /// `--check`: report what applying the plan would do.
-fn check(plan: Plan, lock_drifted: bool) -> StageTwo {
-    StageTwo {
-        outcome: check_outcome(Some(&plan), lock_drifted),
+fn check(plan: Plan, lock_drifted: bool) -> Report {
+    let outcome = check_outcome(Some(&plan), lock_drifted);
+    Report {
         diagnostics: plan.refusals.into_iter().map(miette::Report::new).collect(),
-        changes: Vec::new(),
+        ..Report::new(outcome)
     }
 }
 
@@ -485,7 +451,7 @@ fn apply(
     references_dir: &str,
     plan: Plan,
     flags: &SyncFlags,
-) -> StageTwo {
+) -> Report {
     let opts = MaterialiseOpts {
         offline: flags.offline,
     };
@@ -532,10 +498,10 @@ fn apply(
         Some(ExcludeAction::NoGit) => diagnostics.push(Note::NoGitRepo.into()),
         None => {}
     }
-    StageTwo {
-        outcome,
-        diagnostics,
+    Report {
         changes,
+        diagnostics,
+        ..Report::new(outcome)
     }
 }
 
