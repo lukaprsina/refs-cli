@@ -208,11 +208,11 @@ mod tree_blobs {
     #[test]
     fn lists_blob_ids_once_in_order_and_skips_trees_and_submodules() {
         let out = format!(
-            "100644 blob {A}\tREADME.md\n\
-             040000 tree {B}\tdocs\n\
-             160000 commit {C}\tvendor\n\
-             100755 blob {B}\tbin/run\n\
-             100644 blob {A}\tcopy.md\n"
+            "100644 blob {A}\tREADME.md\0\
+             040000 tree {B}\tdocs\0\
+             160000 commit {C}\tvendor\0\
+             100755 blob {B}\tline\nbreak\0\
+             100644 blob {A}\tcopy.md\0"
         );
         assert_eq!(tree_blobs(&out), [A, B]);
     }

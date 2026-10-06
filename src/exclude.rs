@@ -7,6 +7,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use crate::diagnostic::ProjectError;
+use crate::line_ending;
 use crate::plan::Exclude;
 use crate::worktree::Worktree;
 
@@ -17,12 +18,13 @@ fn rule_present(text: &str, rule: &str) -> bool {
 
 /// `text` with `rule` appended as a line; a missing final newline is supplied first.
 fn with_rule(text: &str, rule: &str) -> String {
+    let eol = line_ending::of(text);
     let mut out = text.to_string();
     if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
+        out.push_str(eol);
     }
     out.push_str(rule);
-    out.push('\n');
+    out.push_str(eol);
     out
 }
 

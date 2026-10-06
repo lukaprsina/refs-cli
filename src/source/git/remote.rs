@@ -175,12 +175,12 @@ pub fn entry_kind(ls_tree: &str) -> EntryKind {
     }
 }
 
-/// The distinct blob ids in `git ls-tree` output, in order. Submodule entries are skipped:
-/// their commits are not in this repository.
-pub fn tree_blobs(ls_tree: &str) -> Vec<String> {
+/// The distinct blob ids in `git ls-tree -z` output (NUL separated, so no path can break an
+/// entry), in order. Submodule entries are skipped: their commits are not in this repository.
+pub fn tree_blobs(ls_tree_z: &str) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
-    ls_tree
-        .lines()
+    ls_tree_z
+        .split('\0')
         .filter_map(|line| line.split_once('\t').map(|(meta, _)| meta))
         .filter_map(|meta| {
             let mut fields = meta.split_whitespace().skip(1);

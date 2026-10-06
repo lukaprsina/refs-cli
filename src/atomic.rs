@@ -41,6 +41,11 @@ fn builder() -> Builder<'static, 'static> {
     Builder::new()
 }
 
+/// Whether `path` is marked read-only: a refusal that will not pass, so it is not retried.
+fn read_only(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|meta| meta.permissions().readonly())
+}
+
 /// Rename `tmp` over `path`. Windows refuses (access denied) while another process is
 /// replacing or reading the same file, which passes in moments, so it is tried again.
 fn persist(mut tmp: NamedTempFile, path: &Path) -> io::Result<()> {
@@ -51,7 +56,8 @@ fn persist(mut tmp: NamedTempFile, path: &Path) -> io::Result<()> {
             Err(e)
                 if cfg!(windows)
                     && e.error.kind() == ErrorKind::PermissionDenied
-                    && tries < RENAME_RETRIES =>
+                    && tries < RENAME_RETRIES
+                    && !read_only(path) =>
             {
                 tries += 1;
                 tmp = e.file;

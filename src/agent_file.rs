@@ -5,6 +5,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 
 use crate::diagnostic::BlockError;
+use crate::line_ending;
 
 pub(crate) const BEGIN: &str = "<!-- BEGIN:refs -->";
 pub(crate) const END: &str = "<!-- END:refs -->";
@@ -17,12 +18,8 @@ pub(crate) const END: &str = "<!-- END:refs -->";
 pub fn splice(text: &str, block: &str) -> Result<String, BlockError> {
     let region = find_region(text)?;
     let sample = region.as_ref().map_or(text, |r| &text[r.clone()]);
-    let eol = if sample.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    };
-    let block = block.replace("\r\n", "\n").replace('\n', eol);
+    let eol = line_ending::of(sample);
+    let block = line_ending::convert(block, eol);
     match region {
         Some(region) => Ok(format!(
             "{}{block}{}",

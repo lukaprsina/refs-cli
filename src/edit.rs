@@ -8,6 +8,7 @@ use toml_edit::{Array, Document, DocumentMut, Item, Table, value};
 
 use crate::config;
 use crate::diagnostic::EditError;
+use crate::line_ending;
 
 /// What `refs add` was asked for. Only `url` is required; the rest follow spec §6.1. It is
 /// also the shape of the command line, so the CLI parses straight into it.
@@ -119,7 +120,7 @@ fn add_creating_group(text: &str, req: &AddRepo) -> Result<Applied, EditError> {
         out.push('\n');
     }
     out.push_str(&table_text("repos", &id, repo_table(req)));
-    match_line_endings(&mut out, text);
+    let mut out = line_ending::convert(&out, line_ending::of(text));
     if !text.is_empty() && !text.ends_with('\n') {
         out.pop();
     }
@@ -223,7 +224,7 @@ pub fn disable(text: &str, target: Target) -> Result<String, EditError> {
         out.replace_range(span, "false");
     } else {
         let at = line_end(text, body_end(table));
-        let eol = eol(text);
+        let eol = line_ending::of(text);
         let line = if text[..at].ends_with('\n') {
             format!("enabled = false{eol}")
         } else {
@@ -304,11 +305,6 @@ fn line_end(text: &str, at: usize) -> usize {
     text[at..].find('\n').map_or(text.len(), |i| at + i + 1)
 }
 
-/// The line ending `text` uses.
-fn eol(text: &str) -> &'static str {
-    if text.contains("\r\n") { "\r\n" } else { "\n" }
-}
-
 /// Cut the table `target` out of `text`: its header, its comment lines directly
 /// above, the blank line before those, and every line up to its last key. What follows the
 /// last key (blank lines, comments for the next table) stays. Cutting by text, not through
@@ -356,11 +352,4 @@ fn open(text: &str) -> Result<config::Config, EditError> {
 
 fn parse(text: &str) -> Result<Document<&str>, EditError> {
     Document::parse(text).map_err(|e| EditError::Unreadable(e.to_string()))
-}
-
-/// Give `text` the `\r\n` line endings of `original` if it used them.
-fn match_line_endings(text: &mut String, original: &str) {
-    if eol(original) == "\r\n" {
-        *text = text.replace("\r\n", "\n").replace('\n', "\r\n");
-    }
 }

@@ -266,7 +266,7 @@ impl Repo {
             let mut cmd = self
                 .git()
                 .no_lazy_fetch()
-                .arg("ls-tree")
+                .args(["ls-tree", "-z"])
                 .args(args)
                 .arg(sha);
             if !paths.is_empty() {

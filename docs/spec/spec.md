@@ -489,7 +489,7 @@ The lock is **stale** when its entries differ from the active set: an id added o
 - **Diagnostics:** library errors are `thiserror` enums deriving `miette::Diagnostic` with codes named `refs::<area>::<name>` (e.g. `refs::config::bad_id`; areas `config`, `lock`, `git`, `sync`, `block`, `doctor`). Only `refs.toml` validation errors carry spans, and all of them are collected and reported together (`#[related]` on a wrapper error, one `NamedSource` per child). Config checks for untrusted input get codes too (`refs::config::bad_url` for option-like values and passwords in URLs, `refs::config::bad_ref`, `refs::config::path_not_dir`). Git failures the spec treats specially get their own code (ref not found, ambiguous ref, path missing at SHA, `start` missing or a root directory that is not checked out, foreign directory in `.references/`, dirty checkout, generator mismatch under `--check`, git too old, server refuses fetch-by-SHA); everything else is `refs::git::failed` with the trimmed stderr. Don't parse stderr to detect auth failures. Only the binary enables miette's `fancy` feature.
 - **Atomic writes** for `refs.lock` and AGENTS.md: temp file in the same directory, then rename.
 - **Paths:** `camino` or careful `Path` handling; forward slashes in rendered output.
-- **Windows:** not a target for the MVP; avoid gratuitous Unix-only assumptions.
+- **Windows:** supported, and CI runs on it. Atomic writes retry a rename Windows refuses while another process holds the file; avoid Unix-only assumptions.
 
 ### 11.1 Milestones
 
