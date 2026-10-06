@@ -468,7 +468,7 @@ version = 1
 
 [[repo]]
 id = "solid"
-source = "git"              # discriminator; other kinds add their own fields later
+source = "git"              # the only kind; any other value is rejected on read
 url = "https://github.com/solidjs/solid"
 ref = "next"
 sha = "1a2b3c4d5e6f…"      # full 40 hex; always a commit (peeled), never a tag object (§7.2)
@@ -476,7 +476,7 @@ branch = "main"             # only when ref = "HEAD": the remote's default branc
 paths = ["packages", "documentation"]
 ```
 
-The entry is a tagged union on `source`. `git` is the only kind in the MVP and keeps git-specific field names (`url`, `ref`, `sha`). Adding a kind is additive and needs no `version` bump. `source` is required in every lock entry (the lock is machine-written). `[repos.<id>]` in `refs.toml` has no `source` key in the MVP; a repo is a git repo. A later kind adds an optional key defaulting to `"git"`. Code outside the source module treats the resolved identity as an opaque pin.
+`source` says where the pin came from. `git` is the only kind in the MVP and the fields are git's (`url`, `ref`, `sha`); the code holds a plain `Pin` and the tag is only checked on read. A later kind would turn the `Pin` back into a union, which is additive and needs no `version` bump. `source` is required in every lock entry (the lock is machine-written). `[repos.<id>]` in `refs.toml` has no `source` key in the MVP; a repo is a git repo.
 
 The lock is **stale** when its entries differ from the active set: an id added or missing, or an entry whose `source`, `url` or `ref` differs from the config. The lock records no `paths` (they are a set, checked by `verify` and applied by the checkout stage), so reordering or editing them does not stale it. This is a direct comparison, not a hash, so a report can name the repo and the field. Enable/disable changes the active set and so stales the lock. Stale does not mean re-resolve: `lock` re-resolves only when `url`, `ref` or `source` changed or the repo is newly active. A floating ref whose upstream branch was renamed is noticed only by `lock --upgrade`, like any floating-ref movement. Group membership and display fields (`description`, `name`, `packages`, `start` and the lock's `branch`) don't stale the lock; they only affect the block on the next `sync`. `sync --check` reports a missing or stale lock as out of date with exit code 3.
 

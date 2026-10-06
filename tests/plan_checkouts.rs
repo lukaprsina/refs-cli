@@ -525,7 +525,7 @@ fn only_actions_on_a_checkout_the_block_lists_gate_the_agent_file_writes() {
 }
 
 #[test]
-fn a_replacing_materialise_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
+fn a_recreate_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
     let source = FakeSource::new();

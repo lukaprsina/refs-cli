@@ -10,89 +10,79 @@ use crate::config::{Repo, RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
 use crate::lock::Field;
 
-/// A resolved identity of a Repo. Only this module interprets it; everything else
-/// goes through the display surface.
+/// A resolved identity of a Repo: a commit of a remote. In the Lock the `source` tag says
+/// where it came from; `git` is the only one, and any other is rejected on read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Pin(PinKind);
+pub struct Pin {
+    source: PinSource,
+    url: String,
+    #[serde(rename = "ref")]
+    git_ref: String,
+    sha: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    branch: Option<String>,
+}
 
-/// Tagged by `source`, which is how it appears in the Lock.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "source", rename_all = "lowercase")]
-enum PinKind {
-    Git {
-        url: String,
-        #[serde(rename = "ref")]
-        git_ref: String,
-        sha: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        branch: Option<String>,
-    },
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum PinSource {
+    Git,
 }
 
 impl Pin {
     pub fn git(url: &str, git_ref: &str, sha: &str, branch: Option<&str>) -> Pin {
-        Pin(PinKind::Git {
+        Pin {
+            source: PinSource::Git,
             url: url.into(),
             git_ref: git_ref.into(),
             sha: sha.into(),
             branch: branch.map(Into::into),
-        })
+        }
+    }
+
+    /// The remote.
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// The full commit id.
+    pub fn sha(&self) -> &str {
+        &self.sha
     }
 
     /// Whether the pin is well formed (a full 40-hex commit id), for input read from disk.
     pub fn is_well_formed(&self) -> bool {
-        match &self.0 {
-            PinKind::Git { sha, .. } => is_full_sha(sha),
-        }
+        is_full_sha(&self.sha)
     }
 
     /// The fields of `repo` that no longer match what this pin resolved. Empty means the
     /// pin still serves the Repo: this is the one rule behind lock drift and pin reuse.
     pub fn drift_from(&self, repo: &Repo) -> Vec<Field> {
-        match &self.0 {
-            PinKind::Git { url, git_ref, .. } => [
-                (url.as_str() != repo.url.as_ref(), Field::Url),
-                (git_ref != repo.effective_ref(), Field::Ref),
-            ]
-            .into_iter()
-            .filter_map(|(differs, field)| differs.then_some(field))
-            .collect(),
-        }
+        [
+            (self.url.as_str() != repo.url.as_ref(), Field::Url),
+            (self.git_ref != repo.effective_ref(), Field::Ref),
+        ]
+        .into_iter()
+        .filter_map(|(differs, field)| differs.then_some(field))
+        .collect()
     }
 
     /// Whether both pins name the same commit of the same remote. The display-only
     /// `branch` does not count.
     pub fn same_commit(&self, other: &Pin) -> bool {
-        match (&self.0, &other.0) {
-            (
-                PinKind::Git {
-                    url, git_ref, sha, ..
-                },
-                PinKind::Git {
-                    url: u,
-                    git_ref: r,
-                    sha: s,
-                    ..
-                },
-            ) => url == u && git_ref == r && sha == s,
-        }
+        self.url == other.url && self.git_ref == other.git_ref && self.sha == other.sha
     }
 
     /// The first 7 characters of the commit id, for the block.
     pub fn short_id(&self) -> &str {
-        match &self.0 {
-            PinKind::Git { sha, .. } => sha.get(..7).unwrap_or(sha),
-        }
+        self.sha.get(..7).unwrap_or(&self.sha)
     }
 
     /// What the block shows after `@`: the remote's branch for a `HEAD` ref, else the ref.
     pub fn display_ref(&self) -> &str {
-        match &self.0 {
-            PinKind::Git {
-                git_ref, branch, ..
-            } if git_ref == "HEAD" => branch.as_deref().unwrap_or(git_ref),
-            PinKind::Git { git_ref, .. } => git_ref,
+        match &self.branch {
+            Some(branch) if self.git_ref == "HEAD" => branch,
+            _ => &self.git_ref,
         }
     }
 }
