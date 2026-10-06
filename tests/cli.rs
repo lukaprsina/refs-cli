@@ -658,3 +658,26 @@ fn only_a_command_that_needs_a_source_asks_for_one() {
     assert_eq!(run_refs(&["disable", "b"]), 1);
     assert_eq!(calls.get(), 3);
 }
+
+#[test]
+fn a_syncing_edit_that_cannot_get_a_source_prints_the_error_and_writes_nothing() {
+    let p = Project::new(AB);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+
+    let code = refs_cli::cli::run_with(
+        ["refs", "add", "https://github.com/o/c"].map(Into::into),
+        p.dir.path(),
+        |_, _| {
+            Err(refs_cli::diagnostic::SourceError::Failed {
+                message: "no cache directory".into(),
+            })
+        },
+        &mut out,
+        &mut err,
+    );
+
+    assert_eq!(code, 1);
+    assert!(String::from_utf8_lossy(&err).contains("no cache directory"));
+    assert_eq!(fs::read_to_string(p.path("refs.toml")).unwrap(), AB);
+    assert_eq!(p.lock_text(), None);
+}

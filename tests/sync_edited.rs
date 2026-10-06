@@ -348,3 +348,24 @@ fn an_edit_carries_the_hint_for_what_it_left_behind() {
     assert_eq!(edited.change, Change::Unchanged);
     assert_eq!(edited.report.hint, Some(Hint::RunSyncOnceFixed));
 }
+
+#[test]
+fn a_lock_that_drifted_for_another_repo_is_not_pruned() {
+    let a_moved = ABC.replacen(
+        "url = \"https://github.com/o/a\"",
+        "url = \"https://github.com/o/a\"\nref = \"next\"",
+        1,
+    );
+    let d_added = format!("{ABC}\n[repos.d]\nurl = \"https://github.com/o/d\"\n");
+    // `a` changed its ref, or `d` was added by hand: either way the Lock is not just too big.
+    for config in [a_moved, d_added] {
+        let (dir, source) = synced_then_b_breaks();
+        fs::write(dir.path().join("refs.toml"), &config).unwrap();
+
+        let edited = run_edit(&dir, &source, &Edit::Remove("c"));
+
+        assert_eq!(edited.change, Change::Blocked, "{config}");
+        assert_eq!(read(&dir, "refs.toml").unwrap(), config);
+        assert!(messages(&edited).contains("`b`"), "{}", messages(&edited));
+    }
+}
