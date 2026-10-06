@@ -37,9 +37,7 @@ impl std::fmt::Display for Field {
 }
 
 /// One locked Repo. The `source` tag and its fields live in the `Pin`. The Lock records
-/// what a Repo resolved to, not which `paths` it checks out, so a `paths` key in an older
-/// `refs.lock` is ignored on read and gone the next time the Lock is written (format
-/// version stays 1).
+/// what a Repo resolved to, not which `paths` it checks out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockedRepo {
     pub id: String,

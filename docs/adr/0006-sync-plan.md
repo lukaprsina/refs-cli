@@ -44,7 +44,7 @@ A Lock entry is `id` plus a Pin (`source`, `url`, `ref`, `sha`, `branch`). It ha
 
 Two rules decide matching. `Pin::drift_from(repo)` (url and Ref, defined in `source`) decides Lock drift, pin reuse and the checkout stage's input. `plan::classify(observed, repo, locked)` (same commit as the locked Pin, `paths` as a set, plus whether a mismatch is dirty) decides a Checkout's state once, for the checkout stage and `list --status`: the plan maps the state to actions and refusals, and `list` maps it to labels, adding `disabled` and `not locked` itself because `classify` only runs for a locked Pin. Lock-entry construction takes the Pin straight from `resolve`.
 
-The format version stays 1. A Lock holding `paths` is still read (unknown keys are ignored), is current if url and Ref match, and loses the keys the next time the Lock is written for another reason; nothing rewrites it just to drop them.
+The format version is 1.
 
 ## Verification and offline
 

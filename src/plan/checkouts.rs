@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use crate::active::ActiveSet;
 use crate::agent_file::{splice, strip};
 use crate::config::RepoRef;
-use crate::diagnostic::{NotLocked, Note, Refusal};
+use crate::diagnostic::{Note, Refusal};
 use crate::lock::Lock;
 use crate::plan::classify::{CheckoutState, classify};
 use crate::plan::outcome::Outcome;
@@ -220,10 +220,10 @@ pub fn plan_checkouts<'a>(
     checkouts: &Checkouts,
     project: &ProjectObserved,
     force: bool,
-) -> Result<Plan<'a>, NotLocked> {
+) -> Plan<'a> {
     // With no active Repo there is nothing to list: the block goes, markers included.
     let block = if active.repos().next().is_some() {
-        Some(render(active, lock, &project.references_dir)?)
+        Some(render(active, lock, &project.references_dir))
     } else {
         None
     };
@@ -307,10 +307,10 @@ pub fn plan_checkouts<'a>(
         Exclude::Missing => Some(ExcludeAction::Ensure),
         Exclude::NoGit => Some(ExcludeAction::NoGit),
     };
-    Ok(Plan {
+    Plan {
         repos: stale.into_iter().chain(current).collect(),
         writes,
         exclude,
         refusals,
-    })
+    }
 }

@@ -1,4 +1,3 @@
-use miette::Diagnostic;
 use refs_cli::active::active;
 use refs_cli::config::parse;
 use refs_cli::lock::{Lock, LockedRepo};
@@ -24,7 +23,7 @@ fn lock(repos: &[(&str, &str, Option<&str>)]) -> Lock {
 /// Render the `config` text against `lock`, into the default references directory.
 fn block(config: &str, lock: &Lock) -> String {
     let config = parse(config).unwrap();
-    render(&active(&config), lock, config.settings.references_dir()).unwrap()
+    render(&active(&config), lock, config.settings.references_dir())
 }
 
 #[test]
@@ -152,19 +151,6 @@ fn references_dir_is_substituted_into_the_prose() {
     let text = block(config, &lock(&[("a", "HEAD", None)]));
     assert!(!text.contains(".references"), "{text}");
     insta::assert_snapshot!(text);
-}
-
-#[test]
-fn a_repo_the_lock_does_not_cover_is_an_error_naming_it() {
-    let config = parse("[repos.a]\nurl = \"https://example.com/o/r\"\n[repos.b]\nurl = \"https://example.com/o/r\"\n").unwrap();
-    let err = render(
-        &active(&config),
-        &lock(&[("a", "HEAD", None)]),
-        ".references",
-    )
-    .unwrap_err();
-    assert_eq!(err.ids, ["b"]);
-    assert_eq!(err.code().unwrap().to_string(), "refs::render::not_locked");
 }
 
 #[test]

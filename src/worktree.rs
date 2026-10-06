@@ -20,7 +20,6 @@ impl Worktree {
     /// inside of a `.git`), or when git's answer cannot be read back safely.
     pub fn locate(dir: &Path) -> Option<Worktree> {
         let out = Cmd::new()
-            .own_repository()
             .dir(dir)
             .args(["rev-parse", "--path-format=absolute"])
             .args(["--is-inside-work-tree", "--show-toplevel"])

@@ -7,7 +7,7 @@ use std::path::Path;
 use crate::active::{ActiveSet, active};
 use crate::agent_file;
 use crate::config::{self, Config};
-use crate::diagnostic::{NotLocked, Note, SourceError};
+use crate::diagnostic::{Note, SourceError};
 use crate::edit::Edit;
 use crate::exclude;
 use crate::lock::Lock;
@@ -211,17 +211,20 @@ fn plan_and_apply(
     drift: Vec<Drift>,
     flags: &SyncFlags,
 ) -> Report {
+    // Only `--check` can meet a Lock that does not cover the active set, and it does not
+    // repair it: the Lock is what is out of date, and there is nothing to plan against.
+    let uncovered = drift
+        .iter()
+        .any(|d| matches!(d, Drift::LockMissing | Drift::Added(_)));
+    if flags.check && uncovered {
+        let stage_two = StageTwo::only(check_outcome(None, true));
+        return finish(stage_one, drift, stage_two);
+    }
     let plan = match plan_stage_two(source, root, config, active, &stage_one.lock, flags.force) {
         Ok(plan) => plan,
-        // Only `--check` can meet a Lock that does not cover the active set, and it does not
-        // repair it: the Lock is what is out of date.
-        Err(StageTwoError::NotLocked(_)) if flags.check => {
-            let stage_two = StageTwo::only(check_outcome(None, true));
-            return finish(stage_one, drift, stage_two);
-        }
-        Err(e) => {
+        Err(errors) => {
             let stage_two = StageTwo {
-                diagnostics: e.into_reports(),
+                diagnostics: errors,
                 ..StageTwo::only(Outcome::Failed)
             };
             return finish(stage_one, drift, stage_two);
@@ -401,26 +404,9 @@ fn stage_one(
     Ok(StageOne { lock, wrote_lock })
 }
 
-/// Why stage 2 produced no Plan.
-enum StageTwoError {
-    /// The Lock does not cover every active Repo.
-    NotLocked(NotLocked),
-    /// Reading the project or the checkouts failed; every failure is collected.
-    Read(Vec<miette::Report>),
-}
-
-impl StageTwoError {
-    /// The reports to show. Past stage 1 (and not `--check`) the Lock covers every active
-    /// Repo, so `NotLocked` is only met by `--check`, which maps it to out of date first.
-    fn into_reports(self) -> Vec<miette::Report> {
-        match self {
-            StageTwoError::NotLocked(e) => vec![e.into()],
-            StageTwoError::Read(errors) => errors,
-        }
-    }
-}
-
-/// Read the project and what is on disk, then plan the checkouts.
+/// Read the project and what is on disk, then plan the checkouts. Reading can fail in
+/// several places at once, and every failure is returned. The Lock must cover every active
+/// Repo.
 fn plan_stage_two<'a>(
     source: &dyn Source,
     root: &Path,
@@ -428,7 +414,7 @@ fn plan_stage_two<'a>(
     active: &ActiveSet<'a>,
     lock: &Lock,
     force: bool,
-) -> Result<Plan<'a>, StageTwoError> {
+) -> Result<Plan<'a>, Vec<miette::Report>> {
     let mut errors: Vec<miette::Report> = Vec::new();
     let listing = source.list().unwrap_or_else(|e| {
         errors.push(e.into());
@@ -451,12 +437,12 @@ fn plan_stage_two<'a>(
         }
     };
     let (Some(project), Some(checkouts)) = (project, checkouts) else {
-        return Err(StageTwoError::Read(errors));
+        return Err(errors);
     };
     if !errors.is_empty() {
-        return Err(StageTwoError::Read(errors));
+        return Err(errors);
     }
-    plan_checkouts(active, lock, &checkouts, &project, force).map_err(StageTwoError::NotLocked)
+    Ok(plan_checkouts(active, lock, &checkouts, &project, force))
 }
 
 /// `--check`: report what applying the plan would do.

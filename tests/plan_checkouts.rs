@@ -52,7 +52,7 @@ fn observe(source: &FakeSource, set: &ActiveSet, extra: &[&str]) -> Checkouts {
 
 /// The agent file as it is after a clean `sync`.
 fn synced_text(set: &ActiveSet) -> String {
-    format!("{}\n", render(set, &lock(), ".references").unwrap())
+    format!("{}\n", render(set, &lock(), ".references"))
 }
 
 fn project(set: &ActiveSet) -> ProjectObserved {
@@ -81,7 +81,7 @@ fn plan_with(
     let config: &'static Config = Box::leak(Box::new(parse(CONFIG).unwrap()));
     let set = active(config);
     let observed = observe(source, &set, extra);
-    plan_checkouts(&set, &lock(), &observed, project, force).unwrap()
+    plan_checkouts(&set, &lock(), &observed, project, force)
 }
 
 /// Only `exclude` is set, and to `exclude`.
@@ -166,11 +166,11 @@ fn no_paths_in_the_config_equals_no_sparse_patterns_on_disk() {
     let locked = lock();
     let source = FakeSource::new();
     source.seed("a", at(SHA, &[], &[]));
-    let text = format!("{}\n", render(&set, &locked, ".references").unwrap());
+    let text = format!("{}\n", render(&set, &locked, ".references"));
     let mut project = project(&set);
     project.agent_files[0].text = Some(text);
     let observed = observe(&source, &set, &[]);
-    let plan = plan_checkouts(&set, &locked, &observed, &project, false).unwrap();
+    let plan = plan_checkouts(&set, &locked, &observed, &project, false);
     assert!(empty(&plan), "{plan:?}");
 }
 
@@ -351,7 +351,7 @@ fn a_stale_block_is_rewritten_keeping_the_text_around_it() {
     let stale = "# Notes\n\n<!-- BEGIN:refs -->\nold\n<!-- END:refs -->\n\nafter\n";
     let project = with_agent_files(&set, &[("AGENTS.md", Some(stale)), ("CLAUDE.md", None)]);
     let plan = plan(&in_sync_source(), &project, false);
-    let block = render(&set, &lock(), ".references").unwrap();
+    let block = render(&set, &lock(), ".references");
     let [first, second] = plan.writes.as_slice() else {
         panic!("{plan:?}");
     };
@@ -456,25 +456,6 @@ fn applying_a_plan_to_the_fake_and_replanning_gives_an_empty_plan() {
 }
 
 #[test]
-fn a_repo_missing_from_the_lock_is_an_error() {
-    let config = parse(CONFIG).unwrap();
-    let set = active(&config);
-    let empty = Lock {
-        version: 1,
-        repo: vec![],
-    };
-    let err = plan_checkouts(
-        &set,
-        &empty,
-        &observe(&FakeSource::new(), &set, &[]),
-        &project(&set),
-        false,
-    )
-    .unwrap_err();
-    assert_eq!(err.ids, vec!["a".to_string()]);
-}
-
-#[test]
 fn force_leaves_the_clean_rows_unchanged() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
@@ -565,7 +546,7 @@ fn with_no_active_repo_the_block_is_removed_and_the_rest_kept() {
     );
     let empty_lock = Lock::new(vec![]);
     let observed = Checkouts::observe(&set, &[], |_| Ok::<_, ()>(Observed::Absent)).unwrap();
-    let plan = plan_checkouts(&set, &empty_lock, &observed, &project, false).unwrap();
+    let plan = plan_checkouts(&set, &empty_lock, &observed, &project, false);
     let writes: Vec<(&str, &str)> = plan
         .writes
         .iter()
