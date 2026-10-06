@@ -43,10 +43,30 @@ fn io(what: &str, path: &Path, source: std::io::Error) -> SourceError {
     failed(format!("{what} {}: {source}", path.display()))
 }
 
+/// `path` as git spells it (symlinks and Windows short names resolved), though some of it may
+/// not exist: the deepest existing ancestor is resolved and the rest appended. A worktree's
+/// `.git` names its admin directory that way, and must still be placed once the Cache is gone.
+fn resolved(path: &Path) -> PathBuf {
+    let mut tail = Vec::new();
+    let mut head = path;
+    loop {
+        if let Ok(real) = dunce::canonicalize(head) {
+            return tail.iter().rev().fold(real, |p, name| p.join(name));
+        }
+        match (head.parent(), head.file_name()) {
+            (Some(parent), Some(name)) => {
+                tail.push(name);
+                head = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
 impl Cache {
     pub fn new(cache_root: &Path) -> Cache {
         Cache {
-            root: cache_root.join("git"),
+            root: resolved(cache_root).join("git"),
         }
     }
 

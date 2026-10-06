@@ -638,6 +638,43 @@ mod checkout {
 
         assert_eq!(source.inspect("r").unwrap(), Observed::Dangling);
     }
+
+    /// A second spelling of `dir`, as a symlink on Unix or the 8.3 short name on Windows (where
+    /// a CI runner's temporary directory is spelled that way). Git writes the real one.
+    fn other_spelling(dir: &std::path::Path) -> PathBuf {
+        #[cfg(unix)]
+        {
+            let alias = dir.with_file_name("alias");
+            std::os::unix::fs::symlink(dir, &alias).unwrap();
+            alias
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let out = Command::new("cmd")
+                .raw_arg(format!(
+                    "/C for %I in (\"{}\") do @echo %~sI",
+                    dir.display()
+                ))
+                .output()
+                .unwrap();
+            PathBuf::from(String::from_utf8(out.stdout).unwrap().trim())
+        }
+    }
+
+    #[test]
+    fn a_wiped_cache_is_dangling_whatever_way_its_root_is_spelled() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let real = env.dir.path().join("a_directory_with_a_long_name");
+        fs::create_dir_all(&real).unwrap();
+        let source = GitSource::new(other_spelling(&real).join("cache"), env.checkouts());
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        fs::remove_dir_all(real.join("cache")).unwrap();
+
+        assert_eq!(source.inspect("r").unwrap(), Observed::Dangling);
+    }
+
     #[test]
     fn remove_takes_the_checkout_and_its_registration() {
         let (remote, env) = (Remote::new(), Env::new());

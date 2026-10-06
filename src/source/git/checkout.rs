@@ -83,7 +83,7 @@ pub struct Link {
 }
 
 /// Classify `dest` by its `.git` file: a Checkout of ours points at a worktree directory
-/// inside `cache_root`. A directory without one, or with one pointing anywhere else, is
+/// inside `cache_root` (spelled as git does: see `Cache::new`). A directory without one, or with one pointing anywhere else, is
 /// foreign even if it is a clone of the very same remote.
 pub fn layout(dest: &Path, cache_root: &Path) -> Result<Layout, SourceError> {
     let io = |what: &str, path: &Path, e: std::io::Error| SourceError::Failed {
@@ -112,11 +112,7 @@ pub fn layout(dest: &Path, cache_root: &Path) -> Result<Layout, SourceError> {
     };
     // A relative path is relative to the Checkout (git can be told to write them).
     let admin = lexical_path(&dest.join(path));
-    let cache_name = worktree_entry(&admin, cache_root).or_else(|| {
-        let canonical = dunce::canonicalize(cache_root).ok()?;
-        worktree_entry(&admin, &canonical)
-    });
-    Ok(match cache_name {
+    Ok(match worktree_entry(&admin, cache_root) {
         None => Layout::Foreign,
         Some(_) if !admin.is_dir() => Layout::Dangling,
         Some(cache_name) => Layout::Linked(Link { cache_name, admin }),
