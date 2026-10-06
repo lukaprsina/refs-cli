@@ -6,6 +6,10 @@ use std::time::Duration;
 
 use tempfile::{Builder, NamedTempFile};
 
+/// How often, and how far apart, a rename refused for access is tried again (Windows only).
+const RENAME_RETRIES: u32 = 100;
+const RENAME_BACKOFF: Duration = Duration::from_millis(10);
+
 /// Write `contents` to a uniquely named temp file beside `path`, then rename it into place;
 /// the temp file shares the directory so the rename never crosses a file system, and is
 /// removed if anything fails. The existing file's permissions carry over; a new file gets
@@ -47,11 +51,11 @@ fn persist(mut tmp: NamedTempFile, path: &Path) -> io::Result<()> {
             Err(e)
                 if cfg!(windows)
                     && e.error.kind() == ErrorKind::PermissionDenied
-                    && tries < 100 =>
+                    && tries < RENAME_RETRIES =>
             {
                 tries += 1;
                 tmp = e.file;
-                std::thread::sleep(Duration::from_millis(10));
+                std::thread::sleep(RENAME_BACKOFF);
             }
             Err(e) => return Err(e.error),
         }

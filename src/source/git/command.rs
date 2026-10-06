@@ -165,3 +165,30 @@ impl Cmd {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A git that exits without reading its stdin closes the pipe on the writer, which is
+    /// not an error of ours: the run reports git's own failure and does not hang.
+    #[test]
+    fn a_git_that_exits_before_reading_its_stdin_fails_on_its_own_terms() {
+        let input = "x
+"
+        .repeat(1_000_000);
+
+        let failure = Cmd::new()
+            .git_dir(Path::new("no-such-git-dir"))
+            .args(["cat-file", "--batch-check"])
+            .stdin(input)
+            .run()
+            .unwrap_err();
+
+        assert!(
+            failure.stderr.contains("no-such-git-dir"),
+            "{}",
+            failure.stderr
+        );
+    }
+}
