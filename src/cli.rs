@@ -204,9 +204,10 @@ pub fn run<'a>(
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
 ) -> u8 {
     use std::io::IsTerminal;
+    let styled = no_color_env_unset();
     let terminal = Terminal {
-        out: std::io::stdout().is_terminal(),
-        err: std::io::stderr().is_terminal(),
+        out: styled && std::io::stdout().is_terminal(),
+        err: styled && std::io::stderr().is_terminal(),
     };
     run_on(
         args,
@@ -218,7 +219,9 @@ pub fn run<'a>(
     )
 }
 
-/// Which of the output streams are terminals; clap's own messages are styled only for those.
+/// Which of the output streams are styled: a terminal, with `NO_COLOR` unset. Decided once
+/// in `run`, so nothing below it reads the environment. Clap's messages and the dimming of
+/// `list` follow it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Terminal {
     pub out: bool,
@@ -237,7 +240,7 @@ pub fn run_with<'a>(
     run_on(args, cwd, make_source, out, err, Terminal::default())
 }
 
-/// `run_with`, told which streams are terminals.
+/// `run_with`, told which streams are styled.
 pub fn run_on<'a>(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
@@ -253,7 +256,7 @@ pub fn run_on<'a>(
                 terminal.err
             } else {
                 terminal.out
-            } && no_color_env_unset();
+            };
             let rendered = e.render();
             let text = if styled {
                 rendered.ansi().to_string()
@@ -270,7 +273,7 @@ pub fn run_on<'a>(
     };
     install_report_handler(cli.no_color);
     let start = cli.project.as_deref().unwrap_or(cwd);
-    let color = !cli.no_color && stdout_is_colorful();
+    let color = !cli.no_color && terminal.out;
     let mut console = Console {
         out,
         err,
@@ -457,12 +460,6 @@ fn exit_code(outcome: Outcome) -> u8 {
         Outcome::OutOfDate => EXIT_OUT_OF_DATE,
         Outcome::Refused | Outcome::Failed => EXIT_ERROR,
     }
-}
-
-/// Dim only on a terminal, and not when `NO_COLOR` is set.
-fn stdout_is_colorful() -> bool {
-    use std::io::IsTerminal;
-    std::io::stdout().is_terminal() && no_color_env_unset()
 }
 
 fn no_color_env_unset() -> bool {

@@ -179,6 +179,54 @@ fn a_usage_error_is_styled_only_for_a_terminal() {
     assert!(plain.contains("--frobnicate") && styled.contains("--frobnicate"));
 }
 
+/// `refs list` on a project with one disabled repo, with the streams styled as given.
+fn list_output(args: &[&str], terminal: refs_cli::cli::Terminal) -> String {
+    use refs_cli::cli::run_on;
+    use refs_cli::source::Source;
+    let p = Project::new(
+        "[repos.a]
+url = \"https://github.com/o/a\"
+[repos.b]
+url = \"https://github.com/o/b\"
+enabled = false
+",
+    );
+    let args = std::iter::once("refs")
+        .chain(["list"])
+        .chain(args.iter().copied());
+    let source = |_: &_, _: &_| Ok(Box::new(&p.source) as Box<dyn Source>);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = run_on(
+        args.map(Into::into),
+        p.dir.path(),
+        source,
+        &mut out,
+        &mut err,
+        terminal,
+    );
+    assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
+    String::from_utf8(out).unwrap()
+}
+
+#[test]
+fn list_dims_disabled_lines_only_on_a_styled_stdout_without_no_color() {
+    use refs_cli::cli::Terminal;
+    let styled = Terminal {
+        out: true,
+        err: true,
+    };
+
+    assert!(list_output(&[], styled).contains("[2m- b"));
+    assert!(!list_output(&[], Terminal::default()).contains(''));
+    assert!(!list_output(&["--no-color"], styled).contains(''));
+    // Only stdout matters: `list` writes nothing to stderr.
+    let err_only = Terminal {
+        out: false,
+        err: true,
+    };
+    assert!(!list_output(&[], err_only).contains(''));
+}
+
 #[test]
 fn a_usage_error_exits_2() {
     let p = Project::new(AB);
