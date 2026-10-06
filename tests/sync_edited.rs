@@ -371,10 +371,23 @@ fn a_lock_that_drifted_for_another_repo_is_not_pruned() {
     }
 }
 
-// `atomic::write` stages `<path>.tmp`, so a directory of that name makes the write fail on
-// every platform without touching permissions.
-fn make_write_fail(dir: &TempDir, file: &str) {
-    fs::create_dir(dir.path().join(format!("{file}.tmp"))).unwrap();
+// A non-empty directory where `refs.lock` belongs makes the rename of its write fail on
+// every platform without touching permissions. Nothing reads the Lock as a file first.
+fn make_lock_write_fail(dir: &TempDir) {
+    let path = dir.path().join("refs.lock");
+    let _ = fs::remove_file(&path);
+    fs::create_dir(&path).unwrap();
+    fs::write(path.join("keep"), "").unwrap();
+}
+
+// `refs.toml` must stay readable, so only a read-only file makes its rewrite fail, and only
+// where renaming over one is refused: Windows. The two tests that need it are gated to it.
+#[cfg(windows)]
+fn make_config_write_fail(dir: &TempDir) {
+    let path = dir.path().join("refs.toml");
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&path, permissions).unwrap();
 }
 
 #[test]
@@ -382,7 +395,7 @@ fn a_lock_write_failure_does_not_hint_at_no_sync() {
     for the_edit in [Edit::Remove("a"), Edit::Disable(Target::Repo("a"))] {
         let (dir, source) = synced_then_b_breaks();
         // `b` is broken, so only the prune can pass; the Lock write is what fails.
-        make_write_fail(&dir, "refs.lock");
+        make_lock_write_fail(&dir);
         let config = read(&dir, "refs.toml");
 
         let edited = run_edit(&dir, &source, &the_edit);
@@ -393,16 +406,17 @@ fn a_lock_write_failure_does_not_hint_at_no_sync() {
     }
     // Not a prune: stage 1 resolves `b` fine and then cannot write the Lock.
     let (dir, source) = (project(), FakeSource::new());
-    make_write_fail(&dir, "refs.lock");
+    make_lock_write_fail(&dir);
     let edited = add(&dir, &source, "b", &SyncFlags::default());
     assert_eq!(edited.hint, Some(Hint::ConfigUnchanged));
     assert_eq!(read(&dir, "refs.toml").unwrap(), BEFORE);
 }
 
+#[cfg(windows)]
 #[test]
 fn a_refs_toml_write_failure_after_a_prune_leaves_the_pruned_lock_and_the_old_config() {
     let (dir, source) = synced_then_b_breaks();
-    make_write_fail(&dir, "refs.toml");
+    make_config_write_fail(&dir);
     let config = read(&dir, "refs.toml");
 
     let edited = run_edit(&dir, &source, &Edit::Remove("a"));
@@ -444,10 +458,11 @@ fn an_edit_says_what_it_did_to_refs_toml_first_then_the_lock_then_the_rest() {
     );
 }
 
+#[cfg(windows)]
 #[test]
 fn a_failed_refs_toml_write_still_reports_the_lock_it_pruned() {
     let (dir, source) = synced_then_b_breaks();
-    make_write_fail(&dir, "refs.toml");
+    make_config_write_fail(&dir);
 
     let report = run_edit(&dir, &source, &Edit::Remove("a"));
 
