@@ -1,7 +1,7 @@
 [package]
 name = "refs-cli"
 description = "Pinned, sparse checkouts of your dependencies' source and docs for coding agents, plus an AGENTS.md block that points to them"
-version = "0.1.0-prerelease.1"
+version = "0.1.0"
 edition = "2024"
 repository = "https://github.com/lukaprsina/refs-cli"
 license = "MIT"
