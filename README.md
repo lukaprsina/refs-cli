@@ -20,7 +20,9 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/lukaprsina/refs-cli/rel
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/lukaprsina/refs-cli/releases/latest/download/refs-cli-installer.ps1 | iex"
 ```
 
-Update with `refs update`; it works for installs made by these installers. If GitHub rate-limits the lookup, set `AXOUPDATER_GITHUB_TOKEN`, e.g. `AXOUPDATER_GITHUB_TOKEN=$(gh auth token) refs update`.
+With a Rust toolchain: `cargo binstall refs-cli` (prebuilt binary) or `cargo install refs-cli` (builds from source).
+
+Update with `refs update`; it works for installs made by the installers above, not by cargo. If GitHub rate-limits the lookup, set `AXOUPDATER_GITHUB_TOKEN`, e.g. `AXOUPDATER_GITHUB_TOKEN=$(gh auth token) refs update`.
 
 Release artifacts carry GitHub artifact attestations:
 

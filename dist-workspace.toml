@@ -17,3 +17,5 @@ install-path = "CARGO_HOME"
 install-updater = false
 # Whether to enable GitHub Attestations
 github-attestations = true
+# Publish to crates.io (trusted publishing) after the GitHub release
+publish-jobs = ["./publish-crates"]
