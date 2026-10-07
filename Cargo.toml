@@ -10,6 +10,11 @@ keywords = ["agents", "ai", "documentation", "git", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 exclude = ["prototype/", "docs/", "TODO.md", ".githooks/", ".github/"]
 
+# cargo-release: CI publishes (dist + trusted publishing), so only bump, tag and push.
+[package.metadata.release]
+publish = false
+allow-branch = ["main"]
+
 [features]
 # Exposes `source::fake` to integration tests and downstream test code.
 testing = []
