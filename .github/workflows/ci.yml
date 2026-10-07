@@ -1,13 +1,20 @@
 name: ci
 on:
-  push:
-    branches: [prod]
+  workflow_call:
+    inputs:
+      plan:
+        required: false
+        type: string
+  workflow_dispatch:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   check:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, windows-latest]
+        os: [ubuntu-26.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -17,4 +24,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: scripts/check
         shell: bash
-      - run: cargo test --quiet
+      - run: cargo test --quiet --locked

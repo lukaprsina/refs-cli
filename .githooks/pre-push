@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# See pre-commit: the tests run real git in temp dirs and must not inherit the hook's git env.
+root=$(git rev-parse --show-toplevel)
+for v in $(git rev-parse --local-env-vars); do unset "$v"; done
+cd "$root" && exec cargo test --quiet --locked

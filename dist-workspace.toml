@@ -17,5 +17,7 @@ install-path = "CARGO_HOME"
 install-updater = false
 # Whether to enable GitHub Attestations
 github-attestations = true
+# Run the full CI (all OSes) before the GitHub release is created
+global-artifacts-jobs = ["./ci"]
 # Publish to crates.io (trusted publishing) after the GitHub release
 publish-jobs = ["./publish-crates"]
