@@ -73,6 +73,14 @@ impl Axo {
         // The installer would write to our stdout and stderr, past `-q`; a failed install
         // carries its captured output in the error instead.
         updater.disable_installer_output();
+        // axoupdater does not read this itself. Unauthenticated release lookups hit GitHub's
+        // rate limit fast from CI; locally, `AXOUPDATER_GITHUB_TOKEN=$(gh auth token)` does it.
+        if let Some(token) = std::env::var("AXOUPDATER_GITHUB_TOKEN")
+            .ok()
+            .filter(|token| !token.is_empty())
+        {
+            updater.set_github_token(&token);
+        }
         updater.load_receipt().map_err(from_axo)?;
         match updater.check_receipt_is_for_this_executable() {
             Ok(true) => Ok(updater),

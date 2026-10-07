@@ -1,8 +1,14 @@
 [package]
 name = "refs-cli"
+description = "Pinned, sparse checkouts of your dependencies' source and docs for coding agents, plus an AGENTS.md block that points to them"
 version = "0.1.0"
 edition = "2024"
 repository = "https://github.com/lukaprsina/refs-cli"
+license = "MIT"
+readme = "README.md"
+keywords = ["agents", "ai", "documentation", "git", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["prototype/", "docs/", "TODO.md", ".githooks/", ".github/"]
 
 [features]
 # Exposes `source::fake` to integration tests and downstream test code.
