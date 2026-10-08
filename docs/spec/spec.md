@@ -16,7 +16,7 @@ There is no MCP server, no query API and no generated file index. The product is
 
 > One hop to the block (what exists, which packages, where to start); two hops to the files.
 
-- **One hop:** the managed block in `AGENTS.md`, always in context. Per repo: id, ref, short SHA, a description, the npm-style packages it documents, and start paths.
+- **One hop:** the managed block in `AGENTS.md`, always in context. Per repo: id, ref, short SHA, a description, the packages it documents, and start paths.
 - **Two hops:** the files under `.references/<repo>/`.
 
 ---
@@ -86,7 +86,7 @@ Caveat: one vendor, one framework that models already know changes often. Vercel
 
 Ranked:
 
-1. `add` infers `packages` from `package.json` `name`s under `paths`. This becomes the default way `packages` gets filled; `--packages` (and the other `add` metadata flags) only override it.
+1. Registry shorthand (`npm:`, `cargo:`, `pypi:`), tag matching and the Used version from the Package lockfile (ADR 0009 and the ecosystem work). `add` already infers `packages` from the new Checkout's Manifests; `--packages` skips that.
 2. An optional inline tree as an add-on to the header lines (Vercel favoured one; revisit if evals show a gap).
 3. Per-file hints (titles, export names), if evals show a need. Markdown/MDX via a real parser (`pulldown-cmark` or `markdown`), never regex scraping.
 4. Linter/formatter exclusion: generating ignore entries for common tools. In the MVP this is the user's job; `init` says so.
@@ -132,7 +132,7 @@ Ranked:
 - **Repo:** one upstream git repository at one ref, e.g. `solid`. A docs site in a separate repo (e.g. `solidjs/solid-docs`) is simply another repo entry, usually in the same group.
 - **Group:** organisational unit. Groups are the headings of the managed block, and a group's `description` is the "when to look here" hint for the agent.
 - **Paths:** per repo, one flat list of repo-relative directories. Their union is the sparse checkout. Absent = whole repo.
-- **Packages:** optional per repo; the package names (as imported in code, e.g. `@solidjs/router`) this repo documents or implements.
+- **Packages:** optional per repo; the names of the packages this repo documents or implements, as written in their Manifests (e.g. `@solidjs/router`). `add` fills them from the new Checkout; they may be set by hand (ADR 0009).
 - **Start:** optional per repo; repo-relative files worth reading first (e.g. a migration guide). Each must be in the checkout: inside a `paths` entry, or (cone mode always includes these, verified) a file directly in the repo root. Files in ancestor directories of a `paths` entry are also checked out by cone mode, but are not accepted as `start` values.
 - **Active:** a repo is active when it and its group are both enabled (`enabled`, default `true`). Only active repos are locked, checked out and rendered. Everything downstream of config parsing sees only the active set.
 - **Ref:** branch, tag, or full commit SHA. Omitted → `"HEAD"` (the remote's default branch).

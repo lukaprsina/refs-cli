@@ -37,7 +37,7 @@ refs init
 refs add
 ```
 
-In a terminal `refs add` asks for what you didn't pass: the URL, id, group (type to filter, or a new name to create one), ref, paths, packages, start and description. It then locks the repo and syncs, and prints the equivalent command line:
+In a terminal `refs add` asks for what you didn't pass: the URL, id, group (type to filter, or a new name to create one), ref, paths, start and description. It then locks the repo and syncs, reads the package names from the new checkout's manifests (`package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`) and asks you to confirm them, and prints the equivalent command line:
 
 ```text
 > Repository URL https://github.com/solidjs/solid

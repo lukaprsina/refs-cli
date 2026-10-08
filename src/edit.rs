@@ -33,12 +33,19 @@ pub struct AddRepo {
     /// Repo-relative directories to check out
     #[arg(long, num_args = 1.., value_name = "PATH")]
     pub paths: Vec<String>,
-    /// Names, as imported in code, of the packages the repo documents or implements
+    /// Names of the packages the repo documents or implements; read from its Manifests when absent
     #[arg(long, num_args = 1.., value_name = "PACKAGE")]
     pub packages: Vec<String>,
     /// Repo-relative files worth reading first
     #[arg(long, num_args = 1.., value_name = "PATH")]
     pub start: Vec<String>,
+}
+
+impl AddRepo {
+    /// The id the repo gets: the one asked for, or the last segment of the URL.
+    pub fn resolved_id(&self) -> String {
+        self.id.clone().unwrap_or_else(|| id_from_url(&self.url))
+    }
 }
 
 /// One edit of `refs.toml`.
@@ -48,6 +55,7 @@ pub enum Edit<'a> {
     Remove(&'a str),
     Disable(Target<'a>),
     Enable(Target<'a>),
+    SetPackages { id: &'a str, names: &'a [String] },
 }
 
 /// What an edit gave: the new text, and the Group it had to create for it.
@@ -74,6 +82,7 @@ impl Edit<'_> {
             Edit::Remove(id) => remove(text, id).map(Applied::of),
             Edit::Disable(target) => disable(text, *target).map(Applied::of),
             Edit::Enable(target) => enable(text, *target).map(Applied::of),
+            Edit::SetPackages { id, names } => set_packages(text, id, names).map(Applied::of),
         }
     }
 }
@@ -87,7 +96,7 @@ pub fn add(text: &str, req: &AddRepo) -> Result<String, EditError> {
 
 fn add_creating_group(text: &str, req: &AddRepo) -> Result<Applied, EditError> {
     let config = open(text)?;
-    let id = req.id.clone().unwrap_or_else(|| id_from_url(&req.url));
+    let id = req.resolved_id();
     if config.repos.contains_key(id.as_str()) {
         return Err(EditError::IdTaken { id });
     }

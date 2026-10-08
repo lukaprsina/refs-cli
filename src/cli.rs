@@ -358,7 +358,7 @@ fn run_config<'a>(
     config: &Config,
     color: bool,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
-    prompter: Option<&mut dyn Prompter>,
+    mut prompter: Option<&mut dyn Prompter>,
     console: &mut Console,
 ) -> u8 {
     let mut asked_repo = None;
@@ -373,10 +373,22 @@ fn run_config<'a>(
             return 0;
         }
         ConfigCommand::Add { repo, flags } => {
-            let repo = match complete_add(repo, config, prompter, console) {
+            let packages_later = !flags.no_sync;
+            let repo = match complete_add(
+                repo,
+                config,
+                prompter.as_deref_mut(),
+                packages_later,
+                console,
+            ) {
                 Ok(repo) => asked_repo.insert(repo),
                 Err(code) => return code,
             };
+            if packages_later {
+                return with_source(make_source, root, config, console, |source, console| {
+                    add(source, root, config, repo, prompter, console)
+                });
+            }
             (flags, Edit::Add(repo))
         }
         ConfigCommand::Remove(args) => (&args.flags, Edit::Remove(&args.id)),
@@ -398,7 +410,8 @@ fn run_config<'a>(
 fn complete_add(
     repo: &AddRepo,
     config: &Config,
-    prompter: Option<&mut dyn Prompter>,
+    prompter: Option<&mut (dyn Prompter + '_)>,
+    packages_later: bool,
     console: &mut Console,
 ) -> Result<AddRepo, u8> {
     let mut repo = repo.clone();
@@ -409,7 +422,7 @@ fn complete_add(
         }
         return Ok(repo);
     };
-    match prompt::fill_add(&mut repo, config, prompter) {
+    match prompt::fill_add(&mut repo, config, prompter, packages_later) {
         Ok(filled) => {
             if filled.asked {
                 console.status(format_args!(
@@ -428,6 +441,33 @@ fn complete_add(
             Err(EXIT_ERROR)
         }
     }
+}
+
+/// `refs add` with a sync: the add, then the `packages` read from the new Checkout.
+fn add(
+    source: &dyn Source,
+    root: &Path,
+    config: &Config,
+    repo: &AddRepo,
+    prompter: Option<&mut dyn Prompter>,
+    console: &mut Console,
+) -> u8 {
+    let added = crate::add::run(source, root, config, repo, prompter);
+    let mut code = 0;
+    for report in &added.reports {
+        let reported = print_report(report, false, console);
+        if code == 0 {
+            code = reported;
+        }
+    }
+    if added.packages_skipped {
+        console.status(format_args!(
+            "added `{}` without packages; set them in {}",
+            repo.resolved_id(),
+            project::CONFIG_FILE
+        ));
+    }
+    code
 }
 
 /// Build the `Source` and run `f` with it. Only the commands that sync ask for one, so the

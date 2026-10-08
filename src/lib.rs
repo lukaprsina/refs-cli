@@ -1,4 +1,5 @@
 pub mod active;
+pub mod add;
 pub mod agent_file;
 pub mod atomic;
 pub mod cli;

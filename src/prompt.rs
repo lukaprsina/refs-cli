@@ -47,10 +47,14 @@ pub struct Filled {
 /// Complete `repo` by asking for each value it does not have. A value given on the command
 /// line is never asked for again; an empty answer leaves a value absent, as omitting its flag
 /// would.
+///
+/// With `packages_later` the packages are not asked here: `add` reads them from the new
+/// Checkout and asks then (ADR 0009), see `ask_packages`.
 pub fn fill_add(
     repo: &mut AddRepo,
     config: &Config,
     prompter: &mut dyn Prompter,
+    packages_later: bool,
 ) -> Result<Filled, Abort> {
     let mut asked = false;
     if repo.url.is_empty() {
@@ -76,19 +80,35 @@ pub fn fill_add(
         asked = true;
         repo.description = ask_optional(prompter, "Description (one line on what the repo is)")?;
     }
-    let any_list_empty = repo.paths.is_empty() || repo.packages.is_empty() || repo.start.is_empty();
+    let packages_now = !packages_later && repo.packages.is_empty();
+    let any_list_empty = repo.paths.is_empty() || packages_now || repo.start.is_empty();
     if any_list_empty {
         asked = true;
-        if prompter.confirm("Customize paths, packages and start?")? {
-            for (list, message) in [
-                (&mut repo.paths, "Paths to check out (space-separated)"),
+        let question = if packages_later {
+            "Customize paths and start?"
+        } else {
+            "Customize paths, packages and start?"
+        };
+        if prompter.confirm(question)? {
+            let packages_asked = !packages_later;
+            for (list, message, wanted) in [
+                (
+                    &mut repo.paths,
+                    "Paths to check out (space-separated)",
+                    true,
+                ),
                 (
                     &mut repo.packages,
                     "Packages it documents (space-separated)",
+                    packages_asked,
                 ),
-                (&mut repo.start, "Files to read first (space-separated)"),
+                (
+                    &mut repo.start,
+                    "Files to read first (space-separated)",
+                    true,
+                ),
             ] {
-                if list.is_empty() {
+                if wanted && list.is_empty() {
                     let answer = ask_optional(prompter, message)?.unwrap_or_default();
                     *list = answer.split_whitespace().map(str::to_owned).collect();
                 }
@@ -96,6 +116,18 @@ pub fn fill_add(
         }
     }
     Ok(Filled { asked })
+}
+
+/// The packages of a repo that has just been checked out, with `inferred` as the default. The
+/// answer is split on whitespace; an empty one is none.
+pub fn ask_packages(
+    inferred: &[String],
+    prompter: &mut dyn Prompter,
+) -> Result<Vec<String>, Abort> {
+    let default = inferred.join(" ");
+    let default = Some(default.as_str()).filter(|d| !d.is_empty());
+    let answer = prompter.text("Packages (space-separated)", default, &|_| Ok(()))?;
+    Ok(answer.split_whitespace().map(str::to_owned).collect())
 }
 
 /// Whether to file the repo under a group, and which: one that exists or a new one, by name.
