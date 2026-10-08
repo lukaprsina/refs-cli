@@ -22,7 +22,8 @@ pub enum Ecosystem {
 }
 
 impl Ecosystem {
-    pub const ALL: [Ecosystem; 3] = [Ecosystem::Npm, Ecosystem::Cargo, Ecosystem::Pypi];
+    /// Every ecosystem, for finding the one a shorthand names. Add a new one here too.
+    const ALL: [Ecosystem; 3] = [Ecosystem::Npm, Ecosystem::Cargo, Ecosystem::Pypi];
 
     /// The shorthand prefix.
     fn prefix(self) -> &'static str {
@@ -139,7 +140,7 @@ impl RegistryError {
     }
 }
 
-/// Looks packages up. One call per `add`, for the registry's latest document.
+/// Looks packages up. One call per `add`, for the document that names the package's repository.
 pub trait Registry {
     fn lookup(&self, ecosystem: Ecosystem, name: &str) -> Result<Found, RegistryError>;
 }

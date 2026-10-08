@@ -1,5 +1,5 @@
-//! crates.io: `GET https://crates.io/api/v1/crates/{name}?include=` The fields
-//! are in the `crate` object.
+//! crates.io: `GET https://crates.io/api/v1/crates/{name}?include=`. The fields are
+//! in the `crate` object.
 
 use serde::Deserialize;
 
@@ -23,8 +23,7 @@ struct Entry {
 pub fn found(body: &str) -> Result<Found, Failure> {
     let document: Document =
         serde_json::from_str(body).map_err(|e| Failure::Malformed(e.to_string()))?;
-    let entry = document.krate;
-    let url = entry.and_then(|entry| {
+    let url = document.krate.and_then(|entry| {
         entry
             .repository
             .as_deref()

@@ -29,7 +29,7 @@ impl Registry for Http {
             lookup: lookup.clone(),
             why,
         };
-        let (url, read) = document(ecosystem, name);
+        let (url, read) = endpoint(ecosystem, name);
         let client = Client::builder()
             .user_agent(USER_AGENT)
             .timeout(TIMEOUT)
@@ -52,11 +52,11 @@ impl Registry for Http {
 }
 
 /// An adapter: reads a registry's document for where the package lives.
-type Read = fn(&str) -> Result<Found, Failure>;
+type Adapter = fn(&str) -> Result<Found, Failure>;
 
 /// The URL of the document that holds the repository, the cheapest one the registry serves,
 /// and the adapter that reads it.
-fn document(ecosystem: Ecosystem, name: &str) -> (String, Read) {
+fn endpoint(ecosystem: Ecosystem, name: &str) -> (String, Adapter) {
     let name = encode(name);
     match ecosystem {
         Ecosystem::Npm => (
