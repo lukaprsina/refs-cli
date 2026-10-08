@@ -162,7 +162,8 @@ fn parse_shorthand(url: &str) -> Option<(Ecosystem, &str)> {
 }
 
 /// `repo` with a registry shorthand in its `url` replaced by what the registry says: the git
-/// URL, and the package's name and directory as defaults for what the command line left out.
+/// URL, and the package's directory and name as its `paths` and `packages`, unless the command
+/// line gave them (ADR 0009).
 /// Any other `repo` comes back as it is.
 /// With `offline` a shorthand is refused, as it needs the network.
 pub fn expand(
