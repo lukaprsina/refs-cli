@@ -86,6 +86,10 @@ _Avoid_: Index, snippet, section
 The line that keeps the references directory out of default search, kept in the repository's local git exclude file and never in a tracked ignore file. `refs init` and `refs sync` add it; outside a git worktree there is nowhere to put it.
 _Avoid_: gitignore entry
 
+**Tooling gap**:
+A linter, formatter or type checker whose configuration does not exclude the references directory, so it would read the Checkouts: the Exclude rule does not reach tools that follow only their own config or `.gitignore`. refs only reports it, with the lines to add; it never edits the tool's files.
+_Avoid_: Warning, missing ignore
+
 **Preamble**:
 The fixed instructions at the top of the Managed block. Owned by refs, not configurable, and versioned with the tool.
 _Avoid_: Prompt, boilerplate, header
