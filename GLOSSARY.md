@@ -27,8 +27,12 @@ The repo-relative locations of a Repo that are made readable. Absent means the w
 _Avoid_: Docs, sources, includes
 
 **Packages**:
-The names, as imported in code, of the packages a Repo documents or implements, in any language. Names are taken as written, with no ecosystem qualifier.
+The names of the packages a Repo documents or implements, in any language: read from its Manifests or set by hand. Names are taken as written, with no ecosystem qualifier, so they are not always the name used in an import (a crate `foo-bar` is imported as `foo_bar`).
 _Avoid_: Exports, libraries, modules
+
+**Manifest**:
+A file inside a Repo that names the package it defines, such as `package.json` or `Cargo.toml`. Only the Manifests within a Repo's Paths exist in its Checkout.
+_Avoid_: Package file, metadata file
 
 **Start**:
 Files inside a Repo's Paths that are worth reading first.
