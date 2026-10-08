@@ -375,19 +375,20 @@ fn run_config<'a>(
         }
         ConfigCommand::Add { repo, flags } => {
             let packages_later = !flags.no_sync;
-            let repo = match complete_add(
+            let (repo, asked) = match complete_add(
                 repo,
                 config,
                 prompter.as_deref_mut(),
                 packages_later,
                 console,
             ) {
-                Ok(repo) => asked_repo.insert(repo),
+                Ok(completed) => completed,
                 Err(code) => return code,
             };
+            let repo = asked_repo.insert(repo);
             if packages_later {
                 return with_source(make_source, root, config, console, |source, console| {
-                    add(source, root, config, repo, prompter, console)
+                    add(source, root, config, repo, asked, prompter, console)
                 });
             }
             (flags, Edit::Add(repo))
@@ -406,32 +407,31 @@ fn run_config<'a>(
     }
 }
 
-/// `repo` with what the command line left out: asked for when there is a prompter, otherwise
-/// only a missing URL is a problem (usage, exit 2). On a cancel nothing has been edited.
+/// `repo` with what the command line left out, and whether anything was asked: asked for when
+/// there is a prompter, otherwise only a missing URL is a problem (usage, exit 2). On a cancel
+/// nothing has been edited. The `equivalent:` line is printed here unless `packages_later`,
+/// when `add` prints it once the packages are known.
 fn complete_add(
     repo: &AddRepo,
     config: &Config,
     prompter: Option<&mut (dyn Prompter + '_)>,
     packages_later: bool,
     console: &mut Console,
-) -> Result<AddRepo, u8> {
+) -> Result<(AddRepo, bool), u8> {
     let mut repo = repo.clone();
     let Some(prompter) = prompter else {
         if repo.url.is_empty() {
             console.problem("error: a URL is required when not run in a terminal");
             return Err(EXIT_USAGE);
         }
-        return Ok(repo);
+        return Ok((repo, false));
     };
     match prompt::fill_add(&mut repo, config, prompter, packages_later) {
         Ok(filled) => {
-            if filled.asked {
-                console.status(format_args!(
-                    "equivalent: {}",
-                    prompt::equivalent_command(&repo)
-                ));
+            if filled.asked && !packages_later {
+                equivalent(&repo, console);
             }
-            Ok(repo)
+            Ok((repo, filled.asked))
         }
         Err(prompt::Abort::Cancelled) => {
             console.problem("cancelled");
@@ -444,12 +444,21 @@ fn complete_add(
     }
 }
 
-/// `refs add` with a sync: the add, then the `packages` read from the new Checkout.
+fn equivalent(repo: &AddRepo, console: &mut Console) {
+    console.status(format_args!(
+        "equivalent: {}",
+        prompt::equivalent_command(repo)
+    ));
+}
+
+/// `refs add` with a sync: the add, then the `packages` read from the new Checkout. When
+/// something was `asked`, the `equivalent:` line comes last, with those `packages`.
 fn add(
     source: &dyn Source,
     root: &Path,
     config: &Config,
     repo: &AddRepo,
+    asked: bool,
     prompter: Option<&mut dyn Prompter>,
     console: &mut Console,
 ) -> u8 {
@@ -460,6 +469,11 @@ fn add(
         if code == 0 {
             code = reported;
         }
+    }
+    if asked {
+        let mut repo = repo.clone();
+        repo.packages = added.packages.clone();
+        equivalent(&repo, console);
     }
     if let Some(why) = &added.skipped {
         if let Skipped::PromptFailed(why) = why {

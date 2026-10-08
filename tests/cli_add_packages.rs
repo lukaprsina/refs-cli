@@ -159,6 +159,22 @@ fn the_confirm_defaults_to_the_inferred_names_and_the_answer_is_written() {
 }
 
 #[test]
+fn the_equivalent_command_includes_the_confirmed_packages() {
+    let dir = project_with_checkout_of_foo("package.json", r#"{ "name": "foo-js" }"#);
+    let source = FakeSource::new();
+    let mut script = Script::new([Answer::Yes(false), Answer::Text("")]);
+
+    let run = add_foo(dir.path(), &source, &[], Some(&mut script));
+
+    let line = run.err.lines().find(|l| l.starts_with("equivalent:"));
+    assert!(
+        line.is_some_and(|l| l.contains("--packages foo-js")),
+        "{}",
+        run.err
+    );
+}
+
+#[test]
 fn a_cancel_at_the_confirm_leaves_the_repo_added_without_packages_and_says_so() {
     let dir = project_with_checkout_of_foo("package.json", r#"{ "name": "foo-js" }"#);
     let source = FakeSource::new();

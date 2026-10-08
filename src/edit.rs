@@ -42,9 +42,11 @@ pub struct AddRepo {
 }
 
 impl AddRepo {
-    /// The id the repo gets: the one asked for, or the last segment of the URL.
+    /// The id the repo gets: the one asked for, or the last segment of the URL in lowercase.
     pub fn resolved_id(&self) -> String {
-        self.id.clone().unwrap_or_else(|| id_from_url(&self.url))
+        self.id
+            .clone()
+            .unwrap_or_else(|| id_from_url(&self.url).to_lowercase())
     }
 }
 

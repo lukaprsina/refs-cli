@@ -16,6 +16,8 @@ use crate::sync::{self, Outcome, Report, SyncFlags};
 pub struct Added {
     /// The add and its sync, then the sync that wrote `packages` if there was one.
     pub reports: Vec<Report>,
+    /// The `packages` written by the second sync; empty when there was none.
+    pub packages: Vec<String>,
     /// Why the repo was left without the `packages` it was asked for, if it was.
     pub skipped: Option<Skipped>,
 }
@@ -42,6 +44,7 @@ pub fn run(
     let first = sync::edit(source, root, &Edit::Add(repo), &SyncFlags::default());
     let mut added = Added {
         reports: Vec::new(),
+        packages: Vec::new(),
         skipped: None,
     };
     let infer = repo.packages.is_empty() && first.outcome == Outcome::InSync;
@@ -74,6 +77,7 @@ pub fn run(
             names: &names,
         };
         added.reports.push(sync::edit(source, root, &edit, &flags));
+        added.packages = names;
     }
     added
 }

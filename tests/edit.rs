@@ -139,6 +139,7 @@ fn the_default_id_is_the_last_url_segment_without_dot_git() {
         ("https://github.com/solidjs/solid-router/", "solid-router"),
         ("git@github.com:solidjs/solid-router.git", "solid-router"),
         ("ssh://git@host/solid-router.git", "solid-router"),
+        ("https://github.com/Effect-TS/Effect", "effect"),
     ] {
         let config = refs_cli::config::parse(&add(CONFIG, &new_repo(url)).unwrap()).unwrap();
         assert_eq!(config.repos.last().unwrap().0.as_ref(), id, "{url}");
