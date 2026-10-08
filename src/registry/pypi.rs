@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use super::url::{clean, forge};
-use super::{Failure, Found};
+use super::{Answer, Found, parse};
 
 #[derive(Deserialize)]
 struct Document {
@@ -31,9 +31,8 @@ const SOURCE_LABELS: [&str; 6] = [
 
 /// Where the project in `body` lives: a source label, else a homepage that is a repository on a
 /// forge. Other links (funding, documentation) are not guessed at.
-pub fn found(body: &str) -> Result<Found, Failure> {
-    let document: Document =
-        serde_json::from_str(body).map_err(|e| Failure::Malformed(e.to_string()))?;
+pub fn found(body: &str) -> Answer {
+    let document: Document = parse(body)?;
     let urls = document.info.project_urls.unwrap_or_default();
     let by_label = |wanted: &str| {
         urls.iter()
@@ -45,8 +44,8 @@ pub fn found(body: &str) -> Result<Found, Failure> {
         .find_map(|label| by_label(label).and_then(clean))
         .or_else(|| by_label("homepage").and_then(forge))
         .or_else(|| document.info.home_page.as_deref().and_then(forge));
-    Ok(Found {
-        url: url.ok_or(Failure::NoRepository)?,
+    Ok(url.map(|url| Found {
+        url,
         directory: None,
-    })
+    }))
 }

@@ -19,13 +19,13 @@
 //! (`packages/opensrc/cli/src/core/registries/mod.rs`, Apache-2.0), rewritten as assertions on
 //! the adapters; see NOTICE.
 
-use refs_cli::registry::{Failure, Found, crates, npm, pypi};
+use refs_cli::registry::{Found, crates, npm, pypi};
 
-fn found(url: &str, directory: Option<&str>) -> Found {
-    Found {
+fn found(url: &str, directory: Option<&str>) -> Option<Found> {
+    Some(Found {
         url: url.into(),
         directory: directory.map(Into::into),
-    }
+    })
 }
 
 fn npm_with(repository: &str) -> String {
@@ -109,13 +109,13 @@ fn npm_without_a_repository_url_is_no_repository() {
         r#"{ "name": "x", "repository": { "type": "git" } }"#,
         r#"{ "name": "x", "repository": "" }"#,
     ] {
-        assert_eq!(npm::found(body), Err(Failure::NoRepository), "{body}");
+        assert_eq!(npm::found(body), Ok(None), "{body}");
     }
 }
 
 #[test]
 fn a_body_that_is_not_json_is_malformed() {
-    assert!(matches!(npm::found("<html>"), Err(Failure::Malformed(_))));
+    assert!(npm::found("<html>").is_err());
 }
 
 fn crate_with(repository: &str, homepage: &str) -> String {
@@ -152,12 +152,9 @@ fn crates_falls_back_to_a_homepage_only_when_it_is_a_forge_repository() {
         "https://github.com/o",
     ] {
         let body = crate_with("null", &format!(r#""{site}""#));
-        assert_eq!(crates::found(&body), Err(Failure::NoRepository), "{site}");
+        assert_eq!(crates::found(&body), Ok(None), "{site}");
     }
-    assert_eq!(
-        crates::found(&crate_with("null", "null")),
-        Err(Failure::NoRepository)
-    );
+    assert_eq!(crates::found(&crate_with("null", "null")), Ok(None));
 }
 
 fn pypi_with(project_urls: &str, home_page: &str) -> String {
@@ -201,7 +198,7 @@ fn pypi_prefers_source_to_homepage_and_trusts_a_homepage_only_on_a_forge() {
     );
 
     let docs = pypi_with(r#"{ "Homepage": "https://example.org" }"#, "null");
-    assert_eq!(pypi::found(&docs), Err(Failure::NoRepository));
+    assert_eq!(pypi::found(&docs), Ok(None));
 }
 
 #[test]
@@ -217,7 +214,7 @@ fn pypi_falls_back_to_the_legacy_home_page_and_tolerates_nothing_at_all() {
         pypi_with("null", r#""""#),
         pypi_with("{}", "null"),
     ] {
-        assert_eq!(pypi::found(&body), Err(Failure::NoRepository), "{body}");
+        assert_eq!(pypi::found(&body), Ok(None), "{body}");
     }
 }
 
@@ -228,7 +225,7 @@ fn pypi_does_not_take_a_funding_link_for_the_repository() {
         "null",
     );
 
-    assert_eq!(pypi::found(&body), Err(Failure::NoRepository));
+    assert_eq!(pypi::found(&body), Ok(None));
 }
 
 #[test]
@@ -239,6 +236,6 @@ fn a_url_that_is_not_http_or_https_is_not_a_repository() {
         "ext::sh -c id",
     ] {
         let body = npm_with(&format!(r#"{{ "url": "{raw}" }}"#));
-        assert_eq!(npm::found(&body), Err(Failure::NoRepository), "{raw}");
+        assert_eq!(npm::found(&body), Ok(None), "{raw}");
     }
 }

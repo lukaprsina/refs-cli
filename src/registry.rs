@@ -53,29 +53,14 @@ pub struct Found {
     pub directory: Option<String>,
 }
 
-/// Why a registry's answer holds no repository.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Failure {
-    /// The package has no repository URL, or none that can be used.
-    NoRepository,
-    /// The body is not the document the registry is known to send.
-    Malformed(String),
-}
+/// What an adapter makes of a registry's document: where the package lives, `None` when the
+/// document names no repository that can be used, or why the body is not the document the
+/// registry is known to send.
+pub type Answer = Result<Option<Found>, String>;
 
-/// The package asked of a registry, as a message names it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Lookup {
-    pub registry: &'static str,
-    pub name: String,
-}
-
-impl Lookup {
-    pub fn new(ecosystem: Ecosystem, name: &str) -> Self {
-        Lookup {
-            registry: ecosystem.registry(),
-            name: name.to_owned(),
-        }
-    }
+/// The registry's document in `body`, or why it is not the one the registry is known to send.
+fn parse<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, String> {
+    serde_json::from_str(body).map_err(|e| e.to_string())
 }
 
 /// Why a registry could not say where a package lives.
@@ -85,59 +70,65 @@ pub enum RegistryError {
     #[diagnostic(code(refs::registry::unavailable))]
     Unavailable,
 
-    #[error("`{}` is not on {}", .lookup.name, .lookup.registry)]
+    #[error("`{}` is not on {}", .name, .ecosystem.registry())]
     #[diagnostic(code(refs::registry::not_found))]
-    NotFound { lookup: Lookup },
+    NotFound { ecosystem: Ecosystem, name: String },
 
-    #[error("{} has no repository for `{}`", .lookup.registry, .lookup.name)]
+    #[error("{} has no repository for `{}`", .ecosystem.registry(), .name)]
     #[diagnostic(
         code(refs::registry::no_repository),
         help("add it by its git URL instead")
     )]
-    NoRepository { lookup: Lookup },
+    NoRepository { ecosystem: Ecosystem, name: String },
 
-    #[error("could not ask {} about `{}`: {why}", .lookup.registry, .lookup.name)]
+    #[error("could not ask {} about `{}`: {why}", .ecosystem.registry(), .name)]
     #[diagnostic(code(refs::registry::request_failed))]
-    Request { lookup: Lookup, why: String },
+    Request {
+        ecosystem: Ecosystem,
+        name: String,
+        why: String,
+    },
 
-    #[error("{} answered {status} about `{}`", .lookup.registry, .lookup.name)]
+    #[error("{} answered {status} about `{}`", .ecosystem.registry(), .name)]
     #[diagnostic(code(refs::registry::bad_status))]
-    Status { lookup: Lookup, status: u16 },
+    Status {
+        ecosystem: Ecosystem,
+        name: String,
+        status: u16,
+    },
 
     #[error(
         "{} sent an answer about `{}` that refs cannot read: {why}",
-        .lookup.registry, .lookup.name
+        .ecosystem.registry(), .name
     )]
     #[diagnostic(code(refs::registry::malformed))]
-    Malformed { lookup: Lookup, why: String },
+    Malformed {
+        ecosystem: Ecosystem,
+        name: String,
+        why: String,
+    },
 
-    #[error("`{prefix}{name}` needs the network, which `--offline` forbids")]
+    #[error(
+        "`{}{name}` needs the network, which `--offline` forbids",
+        .ecosystem.prefix()
+    )]
     #[diagnostic(
         code(refs::registry::offline),
         help("add it by its git URL, or leave out `--offline`")
     )]
-    Offline { prefix: &'static str, name: String },
+    Offline { ecosystem: Ecosystem, name: String },
 
     #[error(
         "{} gives `{url}` for `{}`, which cannot be used: {problem}",
-        .lookup.registry, .lookup.name
+        .ecosystem.registry(), .name
     )]
     #[diagnostic(code(refs::registry::bad_url), help("add it by a git URL you trust"))]
     BadUrl {
-        lookup: Lookup,
+        ecosystem: Ecosystem,
+        name: String,
         url: String,
         problem: String,
     },
-}
-
-impl RegistryError {
-    /// What a registry's `failure` means for `lookup`.
-    fn failed(lookup: Lookup, failure: Failure) -> Self {
-        match failure {
-            Failure::NoRepository => RegistryError::NoRepository { lookup },
-            Failure::Malformed(why) => RegistryError::Malformed { lookup, why },
-        }
-    }
 }
 
 /// Looks packages up. One call per `add`, for the document that names the package's repository.
@@ -176,14 +167,15 @@ pub fn expand(
     };
     if offline {
         return Err(RegistryError::Offline {
-            prefix: ecosystem.prefix(),
+            ecosystem,
             name: name.to_owned(),
         });
     }
     let found = registry.lookup(ecosystem, name)?;
     if let Some((problem, _)) = crate::config::url_problem(&found.url) {
         return Err(RegistryError::BadUrl {
-            lookup: Lookup::new(ecosystem, name),
+            ecosystem,
+            name: name.to_owned(),
             url: found.url,
             problem: problem.to_owned(),
         });

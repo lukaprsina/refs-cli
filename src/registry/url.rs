@@ -38,10 +38,15 @@ const SHORTHANDS: [(&str, &str); 3] = [
 /// path; `None` when it does not name a repository, as when its scheme is neither http nor
 /// https (`http` stays, for `config::url_problem` to reject like a hand-typed one).
 pub(super) fn clean(raw: &str) -> Option<String> {
+    cleaned(raw).map(|(_, url)| url)
+}
+
+/// `clean`, with the host the URL is on.
+fn cleaned(raw: &str) -> Option<(String, String)> {
     let raw = raw.trim();
     for (prefix, host) in SHORTHANDS {
         if let Some(path) = raw.strip_prefix(prefix) {
-            return clean(&format!("https://{host}/{path}"));
+            return cleaned(&format!("https://{host}/{path}"));
         }
     }
     let raw = raw.strip_prefix("git+").unwrap_or(raw);
@@ -75,7 +80,12 @@ pub(super) fn clean(raw: &str) -> Option<String> {
     }
     let last = path.pop()?;
     path.push(last.strip_suffix(".git").unwrap_or(last));
-    (path.len() >= 2).then(|| format!("{scheme}://{host}/{}", path.join("/")))
+    (path.len() >= 2).then(|| {
+        (
+            host.to_owned(),
+            format!("{scheme}://{host}/{}", path.join("/")),
+        )
+    })
 }
 
 /// The URL for an npm `repository` string with no scheme and no prefix: `owner/name` is GitHub.
@@ -96,8 +106,7 @@ const FORGES: [&str; 4] = ["github.com", "gitlab.com", "bitbucket.org", "codeber
 /// `clean`, but only for a repository on a forge. The host is compared whole, so
 /// `github.com.attacker.example` and a `github.com` in the path do not pass.
 pub(super) fn forge(raw: &str) -> Option<String> {
-    let url = clean(raw)?;
-    let host = url.split_once("://")?.1.split('/').next()?;
+    let (host, url) = cleaned(raw)?;
     FORGES
         .iter()
         .any(|forge| host.eq_ignore_ascii_case(forge))

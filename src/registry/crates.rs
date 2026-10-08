@@ -4,7 +4,7 @@
 use serde::Deserialize;
 
 use super::url::{clean, forge};
-use super::{Failure, Found};
+use super::{Answer, Found, parse};
 
 #[derive(Deserialize)]
 struct Document {
@@ -20,9 +20,8 @@ struct Entry {
 
 /// Where the crate in `body` lives: its `repository`, else its `homepage` when that is a
 /// repository on a forge.
-pub fn found(body: &str) -> Result<Found, Failure> {
-    let document: Document =
-        serde_json::from_str(body).map_err(|e| Failure::Malformed(e.to_string()))?;
+pub fn found(body: &str) -> Answer {
+    let document: Document = parse(body)?;
     let url = document.krate.and_then(|entry| {
         entry
             .repository
@@ -30,8 +29,8 @@ pub fn found(body: &str) -> Result<Found, Failure> {
             .and_then(clean)
             .or_else(|| entry.homepage.as_deref().and_then(forge))
     });
-    Ok(Found {
-        url: url.ok_or(Failure::NoRepository)?,
+    Ok(url.map(|url| Found {
+        url,
         directory: None,
-    })
+    }))
 }

@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use super::{Ecosystem, Found, Lookup, Registry, RegistryError};
+use super::{Ecosystem, Found, Registry, RegistryError};
 
 /// One lookup the fake received, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +44,8 @@ impl Registry for FakeRegistry {
             .get(&(ecosystem, name.to_owned()))
             .cloned()
             .ok_or_else(|| RegistryError::NotFound {
-                lookup: Lookup::new(ecosystem, name),
+                ecosystem,
+                name: name.to_owned(),
             })
     }
 }

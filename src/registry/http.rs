@@ -8,7 +8,7 @@ use std::time::Duration;
 use reqwest::StatusCode;
 use reqwest::blocking::Client;
 
-use super::{Ecosystem, Failure, Found, Lookup, Registry, RegistryError, crates, npm, pypi};
+use super::{Answer, Ecosystem, Found, Registry, RegistryError, crates, npm, pypi};
 
 /// crates.io answers 403 to a request without a User-Agent that says who is asking.
 const USER_AGENT: &str = concat!(
@@ -24,9 +24,10 @@ pub struct Http;
 
 impl Registry for Http {
     fn lookup(&self, ecosystem: Ecosystem, name: &str) -> Result<Found, RegistryError> {
-        let lookup = Lookup::new(ecosystem, name);
+        let name_owned = || name.to_owned();
         let request = |why: String| RegistryError::Request {
-            lookup: lookup.clone(),
+            ecosystem,
+            name: name_owned(),
             why,
         };
         let (url, read) = endpoint(ecosystem, name);
@@ -37,22 +38,39 @@ impl Registry for Http {
             .map_err(|e| request(e.to_string()))?;
         let response = client.get(url).send().map_err(|e| request(e.to_string()))?;
         match response.status() {
-            StatusCode::NOT_FOUND => return Err(RegistryError::NotFound { lookup }),
+            StatusCode::NOT_FOUND => {
+                return Err(RegistryError::NotFound {
+                    ecosystem,
+                    name: name_owned(),
+                });
+            }
             status if !status.is_success() => {
                 return Err(RegistryError::Status {
-                    lookup,
+                    ecosystem,
+                    name: name_owned(),
                     status: status.as_u16(),
                 });
             }
             _ => {}
         }
         let body = response.text().map_err(|e| request(e.to_string()))?;
-        read(&body).map_err(|failure| RegistryError::failed(lookup, failure))
+        match read(&body) {
+            Ok(Some(found)) => Ok(found),
+            Ok(None) => Err(RegistryError::NoRepository {
+                ecosystem,
+                name: name_owned(),
+            }),
+            Err(why) => Err(RegistryError::Malformed {
+                ecosystem,
+                name: name_owned(),
+                why,
+            }),
+        }
     }
 }
 
 /// An adapter: reads a registry's document for where the package lives.
-type Adapter = fn(&str) -> Result<Found, Failure>;
+type Adapter = fn(&str) -> Answer;
 
 /// The URL of the document that holds the repository, the cheapest one the registry serves,
 /// and the adapter that reads it.
