@@ -42,6 +42,14 @@ _Avoid_: Entry points, hints
 A branch, tag or full commit SHA naming what to follow in a Repo.
 _Avoid_: Version, revision
 
+**Package lockfile**:
+A file written by a package manager (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`) that records the versions a project resolved. refs only reads it, and it is not the Lock.
+_Avoid_: Lock, lockfile
+
+**Used version**:
+The version of a package that a project's Package lockfile says the project uses. It picks a Ref when a Repo is added from a registry.
+_Avoid_: Installed version, locked version, Ref
+
 ### Pinning
 
 **Lock**:
