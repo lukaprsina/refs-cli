@@ -10,15 +10,15 @@ ADR 0005 has `refs` follow uv, and uv never prompts. `refs add` departs from tha
 
 - **Gate.** Prompt only when stdin and stderr are both terminals and `--no-input` is not set. `run` decides this once, next to `Terminal`, so nothing below it reads the environment. CI, pipes and coding agents are never terminals, so they never block on a prompt.
 - **Fill, don't replace.** A flag skips only its own prompt. An empty answer means absent, the same as leaving the flag out. `--no-input` is the way to be asked nothing.
-- **What is asked.** With a URL given: `id` (default: last URL segment), `group` (a yes/no, default no, then one text prompt that filters the existing Groups as you type: Enter on a highlighted one picks it, Enter on a name that matches none creates a Group, as `--group` does; a name that differs from an existing Group only in case is refused), `ref` and `description`, then one confirm for `paths`, `packages` and `start`. A bare `refs add` asks for the URL first. Without a terminal it is a usage error (exit 2).
+- **What is asked.** With a URL given: `id` (default: last URL segment, lowercased), `group` (a yes/no, default no, then one text prompt that filters the existing Groups as you type: Enter on a highlighted one picks it, Enter on a name that matches none creates a Group, as `--group` does; a name that differs from an existing Group only in case is refused), `ref` and `description`, then one confirm for `paths` and `start`, and for `packages` too when no sync follows (`--no-sync`); with a sync, ADR 0009 reads `packages` from the new Checkout and asks then. A bare `refs add` asks for the URL first. Without a terminal it is a usage error (exit 2).
 - **Validation.** The URL, id and group name are checked with the same rules as `config::parse`, so a bad answer is re-asked on the spot. The free-text answers (ref, description, paths, packages, start) are left to `config::parse`, which stays the final authority and rejects them after the edit, as it does for flags.
 - **Cancel.** Esc or Ctrl-C changes nothing, prints "cancelled" (even with `-q`) and exits 1; a terminal that fails prints why and exits 1. No new exit code.
-- **Echo.** The equivalent command line is printed as a status line (hidden by `-q`), so the flags get learned. There is no confirm before the sync; `--no-sync` exists.
+- **Echo.** The equivalent command line is printed as a status line (hidden by `-q`), so the flags get learned. With a sync it comes last, once the `packages` are known (ADR 0009). There is no confirm before the sync; `--no-sync` exists.
 - **`--no-input` is global**, like `-q`, so `remove`, `enable` and `disable` can reuse it. No environment variable for now.
 
 ## Why
 
-- A bare `refs add <url>` asks for what the person would otherwise have to look up flag by flag, and `package.json` inference (spec §3.2, rank 1) will later fill `packages` by default (`start` is not inferred), so that prompt becomes a confirmation of inferred values.
+- A bare `refs add <url>` asks for what the person would otherwise have to look up flag by flag, and ADR 0009 fills `packages` by default from the Checkout's Manifests (`start` is not inferred), so that prompt is a confirmation of inferred values.
 - Gating on a terminal keeps the commands scriptable and agent-safe without a mode flag, which is what the uv-style CLI promises.
 
 ## Consequences
