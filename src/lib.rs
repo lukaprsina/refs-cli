@@ -10,6 +10,7 @@ pub mod init;
 mod line_ending;
 pub mod list;
 pub mod lock;
+pub mod packages;
 pub mod plan;
 pub mod project;
 pub mod prompt;
