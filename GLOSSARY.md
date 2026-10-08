@@ -34,6 +34,10 @@ _Avoid_: Exports, libraries, modules
 A file inside a Repo that names the package it defines, such as `package.json` or `Cargo.toml`. Only the Manifests within a Repo's Paths, and the files at the root and along the way to each path, exist in its Checkout.
 _Avoid_: Package file, metadata file
 
+**Registry**:
+A package index (npm, crates.io, PyPI) that `add` asks for a package's repository. Named in `add` by a prefix (`npm:`, `cargo:`, `pypi:`); the Repo that is stored has the git URL, never the prefix.
+_Avoid_: Source, Cache
+
 **Start**:
 Files inside a Repo's Paths that are worth reading first.
 _Avoid_: Entry points, hints

@@ -169,7 +169,8 @@ fn a_usage_error_is_styled_only_for_a_terminal() {
             terminal,
             Outside {
                 prompter: None,
-                updater: &Unmanaged
+                updater: &Unmanaged,
+                registry: &refs_cli::registry::Unavailable,
             }
         ),
         2
@@ -212,6 +213,7 @@ enabled = false
         Outside {
             prompter: None,
             updater: &Unmanaged,
+            registry: &refs_cli::registry::Unavailable,
         },
     );
     assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));

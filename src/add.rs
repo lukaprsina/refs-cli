@@ -33,15 +33,16 @@ pub enum Skipped {
 
 /// Add `repo` to the project at `root` and sync it. Unless `repo` names its `packages`, they
 /// are then read from the Checkout: asked for with the names found as the default when there
-/// is a `prompter`, otherwise the names found are written.
+/// is a `prompter`, otherwise the names found are written. `flags` are for the add's own sync.
 pub fn run(
     source: &dyn Source,
     root: &Path,
     config: &Config,
     repo: &AddRepo,
+    flags: &SyncFlags,
     prompter: Option<&mut dyn Prompter>,
 ) -> Added {
-    let first = sync::edit(source, root, &Edit::Add(repo), &SyncFlags::default());
+    let first = sync::edit(source, root, &Edit::Add(repo), flags);
     let mut added = Added {
         reports: Vec::new(),
         packages: Vec::new(),

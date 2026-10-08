@@ -1,0 +1,11 @@
+refs-cli
+Copyright (c) 2026 Luka Pršina (MIT License, see LICENSE)
+
+This product includes software developed by Vercel Inc.:
+
+  opensrc (https://github.com/vercel-labs/opensrc), Copyright 2025 Vercel Inc.,
+  licensed under the Apache License, Version 2.0.
+
+  Used in: src/registry/url.rs and tests/registry.rs (the cleaning of a repository URL from a
+  package registry, and the test cases for it), derived from
+  packages/opensrc/cli/src/core/registries/. Each file says what was changed.

@@ -21,6 +21,7 @@ use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::prompt::{self, Prompter};
+use crate::registry::{self, Registry};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
 use crate::update::{self, Updater};
@@ -44,6 +45,9 @@ pub struct Cli {
     /// Never prompt, even in a terminal
     #[arg(long, global = true)]
     no_input: bool,
+    /// Never contact the network
+    #[arg(long, global = true)]
+    offline: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -161,9 +165,6 @@ struct SyncArgs {
     /// Change nothing; exit 3 if the lock, checkouts or blocks are out of date
     #[arg(long)]
     check: bool,
-    /// Never contact the network
-    #[arg(long)]
-    offline: bool,
     /// Discard local changes in checkouts
     #[arg(long)]
     force: bool,
@@ -238,6 +239,7 @@ pub fn run<'a>(
         Outside {
             prompter: interactive.then_some(&mut prompter as &mut dyn Prompter),
             updater: &update::Axo,
+            registry: &registry::Http,
         },
     )
 }
@@ -270,6 +272,7 @@ pub fn run_with<'a>(
         Outside {
             prompter: None,
             updater: &update::Unmanaged,
+            registry: &registry::Unavailable,
         },
     )
 }
@@ -280,6 +283,8 @@ pub struct Outside<'a> {
     pub prompter: Option<&'a mut dyn Prompter>,
     /// What `update` installs through.
     pub updater: &'a dyn Updater,
+    /// Where `add npm:...` looks packages up.
+    pub registry: &'a dyn Registry,
 }
 
 /// `run_with`, told which streams are styled and given what the run reaches outside.
@@ -334,14 +339,25 @@ pub fn run_on<'a>(
                     &config,
                     color,
                     make_source,
-                    prompter,
+                    Asking {
+                        prompter,
+                        registry: outside.registry,
+                        offline: cli.offline,
+                    },
                     &mut console,
                 )
             }
             Err(code) => code,
         },
         Command::Source(command) => match load(start, &mut console) {
-            Ok((root, config)) => run_source(&command, &root, &config, make_source, &mut console),
+            Ok((root, config)) => run_source(
+                &command,
+                &root,
+                &config,
+                cli.offline,
+                make_source,
+                &mut console,
+            ),
             Err(code) => code,
         },
     }
@@ -353,16 +369,27 @@ fn load(start: &Path, console: &mut Console) -> Result<(PathBuf, Config), u8> {
     project::load(start).map_err(|reports| fail_all(reports, console))
 }
 
+/// Who and what a config command may ask: a person, a registry, unless `--offline`.
+struct Asking<'a> {
+    prompter: Option<&'a mut dyn Prompter>,
+    registry: &'a dyn Registry,
+    offline: bool,
+}
+
 fn run_config<'a>(
     command: &ConfigCommand,
     root: &Path,
     config: &Config,
     color: bool,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
-    mut prompter: Option<&mut dyn Prompter>,
+    mut asking: Asking,
     console: &mut Console,
 ) -> u8 {
     let mut asked_repo = None;
+    let flags_for_sync = SyncFlags {
+        offline: asking.offline,
+        ..SyncFlags::default()
+    };
     let (flags, edit) = match command {
         ConfigCommand::List(args) if args.status => {
             return with_source(make_source, root, config, console, |source, console| {
@@ -375,10 +402,14 @@ fn run_config<'a>(
         }
         ConfigCommand::Add { repo, flags } => {
             let packages_later = !flags.no_sync;
+            let repo = match registry::expand(repo, asking.registry, asking.offline) {
+                Ok(expanded) => expanded,
+                Err(e) => return fail(e, console),
+            };
             let (repo, asked) = match complete_add(
-                repo,
+                &repo,
                 config,
-                prompter.as_deref_mut(),
+                asking.prompter.as_deref_mut(),
                 packages_later,
                 console,
             ) {
@@ -388,7 +419,12 @@ fn run_config<'a>(
             let repo = asked_repo.insert(repo);
             if packages_later {
                 return with_source(make_source, root, config, console, |source, console| {
-                    add(source, root, config, repo, asked, prompter, console)
+                    let job = AddJob {
+                        repo,
+                        flags: &flags_for_sync,
+                        asked,
+                    };
+                    add(source, root, config, &job, asking.prompter, console)
                 });
             }
             (flags, Edit::Add(repo))
@@ -401,7 +437,7 @@ fn run_config<'a>(
         print_report(&sync::edit_only(root, &edit), false, console)
     } else {
         with_source(make_source, root, config, console, |source, console| {
-            let report = sync::edit(source, root, &edit, &SyncFlags::default());
+            let report = sync::edit(source, root, &edit, &flags_for_sync);
             print_report(&report, false, console)
         })
     }
@@ -451,18 +487,25 @@ fn equivalent(repo: &AddRepo, console: &mut Console) {
     ));
 }
 
+/// The repo an `add` was asked for, how to sync it, and whether anything was asked on the way.
+struct AddJob<'r> {
+    repo: &'r AddRepo,
+    flags: &'r SyncFlags,
+    asked: bool,
+}
+
 /// `refs add` with a sync: the add, then the `packages` read from the new Checkout. When
 /// something was `asked`, the `equivalent:` line comes last, with those `packages`.
 fn add(
     source: &dyn Source,
     root: &Path,
     config: &Config,
-    repo: &AddRepo,
-    asked: bool,
+    job: &AddJob,
     prompter: Option<&mut dyn Prompter>,
     console: &mut Console,
 ) -> u8 {
-    let added = crate::add::run(source, root, config, repo, prompter);
+    let AddJob { repo, flags, asked } = *job;
+    let added = crate::add::run(source, root, config, repo, flags, prompter);
     let mut code = 0;
     for report in &added.reports {
         let reported = print_report(report, false, console);
@@ -472,7 +515,9 @@ fn add(
     }
     if asked {
         let mut repo = repo.clone();
-        repo.packages = added.packages.clone();
+        if !added.packages.is_empty() {
+            repo.packages = added.packages.clone();
+        }
         equivalent(&repo, console);
     }
     if let Some(why) = &added.skipped {
@@ -528,6 +573,7 @@ fn run_source<'a>(
     command: &SourceCommand,
     root: &Path,
     config: &Config,
+    offline: bool,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
     console: &mut Console,
 ) -> u8 {
@@ -536,13 +582,13 @@ fn run_source<'a>(
             SourceCommand::Lock(args) => {
                 let flags = LockFlags {
                     upgrade: args.upgrade(),
-                    offline: false,
+                    offline,
                 };
                 (sync::lock(source, root, config, &flags), false)
             }
             SourceCommand::Sync(args) => {
                 let flags = SyncFlags {
-                    offline: args.offline,
+                    offline,
                     force: args.force,
                     check: args.check,
                 };

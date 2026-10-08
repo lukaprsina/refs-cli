@@ -15,6 +15,7 @@ pub mod packages;
 pub mod plan;
 pub mod project;
 pub mod prompt;
+pub mod registry;
 pub mod render;
 pub mod source;
 pub mod status;

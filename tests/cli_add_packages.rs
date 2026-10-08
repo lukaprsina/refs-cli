@@ -130,6 +130,7 @@ fn add_foo(
         Outside {
             prompter,
             updater: &Unmanaged,
+            registry: &refs_cli::registry::Unavailable,
         },
     );
     Run {

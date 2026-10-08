@@ -96,7 +96,7 @@ Commit `refs.toml`, `refs.lock` and `AGENTS.md`. `.references/` is excluded thro
 | Command | Does |
 |---|---|
 | `refs init` | Create `refs.toml` and the git exclude rule |
-| `refs add [url]` | Add a repo, lock it, sync. Asks for what is missing in a terminal; `--no-input` turns that off, `--no-sync` only edits |
+| `refs add [url]` | Add a repo, lock it, sync. `url` can be `npm:<name>`, `cargo:<name>` or `pypi:<name>`: the registry says where the package lives. Asks for what is missing in a terminal; `--no-input` turns that off, `--no-sync` only edits |
 | `refs remove <id>` | Remove a repo |
 | `refs disable` / `enable` | Switch a repo or group (`--group`) off or on without removing it |
 | `refs list` | Show the repos; `--status` adds the lock and checkout state |
@@ -104,9 +104,13 @@ Commit `refs.toml`, `refs.lock` and `AGENTS.md`. `.references/` is excluded thro
 | `refs sync` | Make checkouts and the block match `refs.lock`; `--check` exits 3 when out of date, for CI |
 | `refs update` | Replace this program with the latest release |
 
-Flags: `refs <command> --help`.
+Flags: `refs <command> --help`. `--offline` (any command) never contacts the network.
 
 ## Notes
 
 - Linters, formatters and type checkers may scan `.references/`; excluding it is up to you.
 - Claude Code reads `AGENTS.md` only when there is no `CLAUDE.md`; if you have one, have it import `@AGENTS.md`.
+
+## Thanks
+
+The registry lookups and the cleaning of repository URLs build on [opensrc](https://github.com/vercel-labs/opensrc) by Vercel (Apache-2.0; see `NOTICE`).

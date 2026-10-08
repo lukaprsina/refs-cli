@@ -123,6 +123,7 @@ fn refs(dir: &Path, args: &[&str], prompter: Option<&mut dyn Prompter>) -> Run {
         Outside {
             prompter,
             updater: &Unmanaged,
+            registry: &refs_cli::registry::Unavailable,
         },
     );
     Run {
