@@ -9,7 +9,7 @@ pub mod pypi;
 mod url;
 
 mod http;
-pub use http::Http;
+pub use http::{Fetch, Http, Reply, Reqwest};
 
 use crate::edit::AddRepo;
 

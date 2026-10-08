@@ -239,7 +239,7 @@ pub fn run<'a>(
         Outside {
             prompter: interactive.then_some(&mut prompter as &mut dyn Prompter),
             updater: &update::Axo,
-            registry: &registry::Http,
+            registry: &registry::Http::new(registry::Reqwest),
         },
     )
 }
