@@ -1,5 +1,5 @@
-//! PyPI: `GET https://pypi.org/pypi/{name}/json` (or `/{name}/{version}/json`). The repository
-//! is one of `info.project_urls`, whose labels are free text and vary in case.
+//! PyPI: `GET https://pypi.org/pypi/{name}/json` The repository is
+//! one of `info.project_urls`, whose labels are free text and vary in case.
 
 use std::collections::BTreeMap;
 

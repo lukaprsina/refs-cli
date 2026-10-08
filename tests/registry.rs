@@ -160,16 +160,6 @@ fn crates_falls_back_to_a_homepage_only_when_it_is_a_forge_repository() {
     );
 }
 
-#[test]
-fn crates_reads_the_version_document_too() {
-    let body = r#"{ "version": { "num": "1.0.0", "repository": "https://github.com/o/r", "homepage": null } }"#;
-
-    assert_eq!(
-        crates::found(body),
-        Ok(found("https://github.com/o/r", None))
-    );
-}
-
 fn pypi_with(project_urls: &str, home_page: &str) -> String {
     format!(
         r#"{{ "info": {{ "name": "x", "project_urls": {project_urls}, "home_page": {home_page} }} }}"#

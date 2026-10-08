@@ -1,5 +1,5 @@
-//! npm: `GET https://registry.npmjs.org/{name}/latest` (or `/{name}/{version}`), whose
-//! document has `repository` as an object or a string.
+//! npm: `GET https://registry.npmjs.org/{name}/latest` whose document
+//! has `repository` as an object or a string.
 
 use serde::Deserialize;
 
