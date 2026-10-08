@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # `add` learns `packages` from the registry or from the new Checkout
@@ -25,5 +25,5 @@ status: proposed
 - `Packages` in the glossary is no longer "as imported in code". A crate `foo-bar` imports as `foo_bar`, and `Pillow` imports as `PIL`; inference gives the manifest name and the person can correct it. `Manifest` becomes a glossary term.
 - A sparse Checkout only has the Manifests under its Paths (and, in cone mode, those at the root), so `paths = ["docs"]` finds nothing. That is a normal miss, not a failure.
 - `edit` gains a way to set `packages` on an existing Repo, cut by text as in ADR 0007.
-- The registry lookup needs an HTTP client. `reqwest` is already in the tree through `axoupdater`; its features need checking before relying on it.
+- The registry lookup needs an HTTP client. `reqwest` is already in the tree through `axoupdater`; enabling `blocking`, `rustls` and `json` (with default features off) adds two tiny crates and no measurable binary growth.
 - Version detection from a project's lockfiles (to pick a Ref), tag mapping, and linter/formatter coverage are not decided here.
