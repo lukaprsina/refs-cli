@@ -89,15 +89,14 @@ pub fn fill_add(
         asked = true;
         repo.description = ask_optional(prompter, "Description (one line on what the repo is)")?;
     }
-    let packages_asked = packages == Packages::Now;
-    let any_list_empty = repo.paths.is_empty()
-        || (packages_asked && repo.packages.is_empty())
-        || repo.start.is_empty();
+    let packages_asked = packages == Packages::Now && repo.packages.is_empty();
+    let any_list_empty = repo.paths.is_empty() || packages_asked || repo.start.is_empty();
     if any_list_empty {
         asked = true;
-        let question = match packages {
-            Packages::Later => "Customize paths and start?",
-            Packages::Now => "Customize paths, packages and start?",
+        let question = if packages_asked {
+            "Customize paths, packages and start?"
+        } else {
+            "Customize paths and start?"
         };
         if prompter.confirm(question)? {
             for (list, message, wanted) in [

@@ -207,6 +207,34 @@ fn a_value_given_as_a_flag_is_not_asked_again() {
 }
 
 #[test]
+fn packages_already_given_are_left_out_of_the_confirm() {
+    let dir = project();
+    let mut script = Script::new([Answer::Text(""), Answer::Yes(false), Answer::Yes(false)]);
+
+    let run = refs(
+        dir.path(),
+        &[
+            "add",
+            "https://github.com/o/lib",
+            "--ref",
+            "v2",
+            "--description",
+            "A lib",
+            "--packages",
+            "lib",
+            "--no-sync",
+        ],
+        Some(&mut script),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(
+        script.asked,
+        ["Id", "Link to a group?", "Customize paths and start?"]
+    );
+}
+
+#[test]
 fn a_bad_answer_is_asked_again() {
     let dir = project();
     let mut script = Script::new([
