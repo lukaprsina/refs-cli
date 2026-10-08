@@ -238,6 +238,32 @@ pub fn disable(text: &str, target: Target) -> Result<String, EditError> {
     Ok(out)
 }
 
+/// Give the repo `id` the `packages` `names`, after its last key.
+pub fn set_packages(text: &str, id: &str, names: &[String]) -> Result<String, EditError> {
+    let target = Target::Repo(id);
+    check_exists(text, target)?;
+    let doc = parse(text)?;
+    let table = table_of(&doc, target)?;
+    let array = value(names.iter().collect::<Array>())
+        .into_value()
+        .expect("an array is a value");
+    let mut out = text.to_owned();
+    if let Some(span) = table.get("packages").and_then(Item::span) {
+        out.replace_range(span, &array.to_string());
+    } else {
+        let at = line_end(text, body_end(table));
+        let eol = line_ending::of(text);
+        let line = format!("packages = {array}");
+        if text[..at].ends_with('\n') {
+            out.insert_str(at, &format!("{line}{eol}"));
+        } else {
+            out.insert_str(at, &format!("{eol}{line}"));
+        }
+    }
+    config::parse(&out)?;
+    Ok(out)
+}
+
 /// Remove the `enabled` key of the repo or group (spec §6.4: absent means enabled).
 pub fn enable(text: &str, target: Target) -> Result<String, EditError> {
     check_exists(text, target)?;
