@@ -4,4 +4,4 @@
 2. #62, npm:/cargo:/pypi: shorthand through a Registry seam. This is the biggest piece. It adds reqwest, the Registry glossary term, and the opensrc credit in the README and NOTICE.
 3. #63, then #64. Pin the tag for a known version, then pick the Used version from the Package lockfile. Both depend on #62, in that order.
 4. #65, the Tooling gap advisory on sync. It's independent and can run in parallel with the others.
-
+5. `gh:`/`github:` shorthand on add (an item in #24), and later `gl:`. Input sugar like the registry prefixes: `refs.toml` stores the expanded URL, never a bare `owner/repo`. It fits next to `Ecosystem::prefix` and `parse_shorthand`.
