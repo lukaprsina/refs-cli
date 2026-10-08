@@ -125,3 +125,23 @@ fn private_unnamed_and_malformed_manifests_give_nothing() {
     );
     assert_eq!(infer_packages(dir.path()), ["public"]);
 }
+
+#[test]
+fn a_sparse_checkout_gives_the_manifests_it_has() {
+    let dir = tempfile::tempdir().unwrap();
+    // `paths = ["packages/web"]`: the root's files, and only that path below it.
+    write(
+        dir.path(),
+        "package.json",
+        r#"{ "name": "solid-monorepo-docs" }"#,
+    );
+    write(
+        dir.path(),
+        "packages/web/package.json",
+        r#"{ "name": "@solidjs/web" }"#,
+    );
+    assert_eq!(
+        infer_packages(dir.path()),
+        ["@solidjs/web", "solid-monorepo-docs"]
+    );
+}

@@ -23,6 +23,7 @@ enum Answer {
     Text(&'static str),
     Yes(bool),
     Cancel,
+    Fail(&'static str),
 }
 
 impl Script {
@@ -53,6 +54,7 @@ impl Prompter for Script {
             Answer::Text("") => Ok(default.unwrap_or("").to_owned()),
             Answer::Text(text) => Ok(text.to_owned()),
             Answer::Cancel => Err(Abort::Cancelled),
+            Answer::Fail(why) => Err(Abort::Failed(why.to_owned())),
             Answer::Yes(_) => panic!("{message:?} is a text question"),
         }
     }
@@ -70,7 +72,7 @@ impl Prompter for Script {
         match self.next(message, None) {
             Answer::Yes(yes) => Ok(yes),
             Answer::Cancel => Err(Abort::Cancelled),
-            Answer::Text(_) => panic!("{message:?} is a confirm question"),
+            Answer::Text(_) | Answer::Fail(_) => panic!("{message:?} is a confirm question"),
         }
     }
 }
@@ -196,6 +198,29 @@ fn a_miss_asks_with_no_default_and_an_empty_answer_writes_nothing() {
 
     assert_eq!(run.code, 0, "{}", run.err);
     assert_eq!(script.asked.last().unwrap().1, None);
+    assert!(!config_text(dir.path()).contains("packages"));
+    assert!(
+        run.err.contains("added `foo` without packages"),
+        "{}",
+        run.err
+    );
+}
+
+#[test]
+fn a_failing_terminal_is_reported_as_such_and_the_repo_stays_added() {
+    let dir = project_with_checkout_of_foo("package.json", r#"{ "name": "foo-js" }"#);
+    let source = FakeSource::new();
+    let mut script = Script::new([Answer::Yes(false), Answer::Fail("no tty")]);
+
+    let run = add_foo(dir.path(), &source, &[], Some(&mut script));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(run.err.contains("cannot prompt: no tty"), "{}", run.err);
+    assert!(
+        run.err.contains("added `foo` without packages"),
+        "{}",
+        run.err
+    );
     assert!(!config_text(dir.path()).contains("packages"));
 }
 

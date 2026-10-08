@@ -7,7 +7,7 @@ use std::path::Path;
 use crate::config::Config;
 use crate::edit::{AddRepo, Edit};
 use crate::packages::infer_packages;
-use crate::prompt::{self, Prompter};
+use crate::prompt::{self, Abort, Prompter};
 use crate::source::Source;
 use crate::sync::{self, Outcome, Report, SyncFlags};
 
@@ -16,8 +16,17 @@ use crate::sync::{self, Outcome, Report, SyncFlags};
 pub struct Added {
     /// The add and its sync, then the sync that wrote `packages` if there was one.
     pub reports: Vec<Report>,
-    /// The person gave up the `packages` question, so the repo has none.
-    pub packages_skipped: bool,
+    /// Why the repo was left without the `packages` it was asked for, if it was.
+    pub skipped: Option<Skipped>,
+}
+
+/// Why `add` left a repo without `packages` after asking for them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Skipped {
+    /// The person gave up the question or answered it with nothing.
+    Declined,
+    /// The terminal failed.
+    PromptFailed(String),
 }
 
 /// Add `repo` to the project at `root` and sync it. Unless `repo` names its `packages`, they
@@ -33,7 +42,7 @@ pub fn run(
     let first = sync::edit(source, root, &Edit::Add(repo), &SyncFlags::default());
     let mut added = Added {
         reports: Vec::new(),
-        packages_skipped: false,
+        skipped: None,
     };
     let infer = repo.packages.is_empty() && first.outcome == Outcome::InSync;
     added.reports.push(first);
@@ -43,16 +52,18 @@ pub fn run(
     let id = repo.resolved_id();
     let checkout = root.join(config.settings.references_dir()).join(&id);
     let inferred = infer_packages(&checkout);
+    let prompted = prompter.is_some();
     let names = match prompter {
         Some(prompter) => match prompt::ask_packages(&inferred, prompter) {
             Ok(names) => names,
-            Err(_) => {
-                added.packages_skipped = true;
-                return added;
-            }
+            Err(Abort::Cancelled) => return added.skip(Skipped::Declined),
+            Err(Abort::Failed(why)) => return added.skip(Skipped::PromptFailed(why)),
         },
         None => inferred,
     };
+    if names.is_empty() && prompted {
+        return added.skip(Skipped::Declined);
+    }
     if !names.is_empty() {
         let flags = SyncFlags {
             offline: true,
@@ -65,4 +76,11 @@ pub fn run(
         added.reports.push(sync::edit(source, root, &edit, &flags));
     }
     added
+}
+
+impl Added {
+    fn skip(mut self, why: Skipped) -> Added {
+        self.skipped = Some(why);
+        self
+    }
 }

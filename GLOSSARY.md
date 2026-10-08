@@ -31,7 +31,7 @@ The names of the packages a Repo documents or implements, in any language: read 
 _Avoid_: Exports, libraries, modules
 
 **Manifest**:
-A file inside a Repo that names the package it defines, such as `package.json` or `Cargo.toml`. Only the Manifests within a Repo's Paths exist in its Checkout.
+A file inside a Repo that names the package it defines, such as `package.json` or `Cargo.toml`. Only the Manifests within a Repo's Paths, and the files at the root and along the way to each path, exist in its Checkout.
 _Avoid_: Package file, metadata file
 
 **Start**:

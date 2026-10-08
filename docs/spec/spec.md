@@ -86,7 +86,7 @@ Caveat: one vendor, one framework that models already know changes often. Vercel
 
 Ranked:
 
-1. Registry shorthand (`npm:`, `cargo:`, `pypi:`), tag matching and the Used version from the Package lockfile (ADR 0009 and the ecosystem work). `add` already infers `packages` from the new Checkout's Manifests; `--packages` skips that.
+1. `add` infers `packages` from the Manifests in the new Checkout (ADR 0009; implemented). This is the default way `packages` gets filled; `--packages` (and the other `add` metadata flags) only override it.
 2. An optional inline tree as an add-on to the header lines (Vercel favoured one; revisit if evals show a gap).
 3. Per-file hints (titles, export names), if evals show a need. Markdown/MDX via a real parser (`pulldown-cmark` or `markdown`), never regex scraping.
 4. Linter/formatter exclusion: generating ignore entries for common tools. In the MVP this is the user's job; `init` says so.

@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 
+use crate::add::Skipped;
 use crate::config::Config;
 use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit, Target};
@@ -460,7 +461,10 @@ fn add(
             code = reported;
         }
     }
-    if added.packages_skipped {
+    if let Some(why) = &added.skipped {
+        if let Skipped::PromptFailed(why) = why {
+            console.problem(format_args!("cannot prompt: {why}"));
+        }
         console.status(format_args!(
             "added `{}` without packages; set them in {}",
             repo.resolved_id(),

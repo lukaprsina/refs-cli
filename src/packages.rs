@@ -16,12 +16,12 @@ fn walk(dir: &Path, names: &mut BTreeSet<String>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
         match entry.file_type() {
-            Ok(kind) if kind.is_dir() && !skipped(&entry.file_name().to_string_lossy()) => {
-                walk(&path, names);
-            }
+            Ok(kind) if kind.is_dir() && !skipped(&file_name) => walk(&path, names),
             Ok(kind) if kind.is_file() => {
-                if let Some(read) = reader(&entry.file_name().to_string_lossy()) {
+                if let Some(read) = reader(&file_name) {
                     names.extend(std::fs::read_to_string(&path).ok().and_then(|t| read(&t)));
                 }
             }
@@ -31,7 +31,8 @@ fn walk(dir: &Path, names: &mut BTreeSet<String>) {
 }
 
 /// Directories that hold dependencies, build output, examples or test fixtures, and dot
-/// directories: their Manifests are not packages the Repo documents.
+/// directories: their Manifests are not packages the Repo documents. (Private npm Manifests
+/// are skipped by `package_json`.)
 fn skipped(dir: &str) -> bool {
     const SKIPPED: [&str; 8] = [
         "node_modules",
@@ -57,6 +58,7 @@ fn reader(file: &str) -> Option<fn(&str) -> Option<String>> {
     }
 }
 
+/// The `name` of a package that can be published: a `"private": true` one is never imported.
 fn package_json(text: &str) -> Option<String> {
     let json: serde_json::Value = serde_json::from_str(text).ok()?;
     if json["private"].as_bool() == Some(true) {
@@ -66,19 +68,17 @@ fn package_json(text: &str) -> Option<String> {
 }
 
 fn cargo_toml(text: &str) -> Option<String> {
-    let toml: toml::Table = text.parse().ok()?;
-    toml.get("package")?
-        .get("name")?
-        .as_str()
-        .map(str::to_owned)
+    toml_name(text, "package")
 }
 
 fn pyproject_toml(text: &str) -> Option<String> {
+    toml_name(text, "project")
+}
+
+/// The `name` in the `[<table>]` of a TOML Manifest.
+fn toml_name(text: &str, table: &str) -> Option<String> {
     let toml: toml::Table = text.parse().ok()?;
-    toml.get("project")?
-        .get("name")?
-        .as_str()
-        .map(str::to_owned)
+    toml.get(table)?.get("name")?.as_str().map(str::to_owned)
 }
 
 /// The path on the `module` line, which may be quoted and followed by a `//` comment.
