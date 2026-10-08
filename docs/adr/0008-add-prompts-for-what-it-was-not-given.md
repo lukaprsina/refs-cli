@@ -18,7 +18,7 @@ ADR 0005 has `refs` follow uv, and uv never prompts. `refs add` departs from tha
 
 ## Why
 
-- A bare `refs add <url>` asks for what the person would otherwise have to look up flag by flag, and `package.json` inference (spec §3.2, rank 1) will later fill `packages` and `start` by default, so those prompts become confirmations of inferred values.
+- A bare `refs add <url>` asks for what the person would otherwise have to look up flag by flag, and `package.json` inference (spec §3.2, rank 1) will later fill `packages` by default (`start` is not inferred), so that prompt becomes a confirmation of inferred values.
 - Gating on a terminal keeps the commands scriptable and agent-safe without a mode flag, which is what the uv-style CLI promises.
 
 ## Consequences
