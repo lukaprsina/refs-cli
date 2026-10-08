@@ -38,6 +38,15 @@ pub trait Prompter {
     fn confirm(&mut self, message: &str) -> Result<bool, Abort>;
 }
 
+/// When `add` learns the `packages` of a repo that was not given any.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Packages {
+    /// Among the other questions, as no sync follows to make a Checkout to read.
+    Now,
+    /// After the sync, from the new Checkout (ADR 0009).
+    Later,
+}
+
 /// What `fill_add` found out: whether it asked anything at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Filled {
@@ -48,13 +57,13 @@ pub struct Filled {
 /// line is never asked for again; an empty answer leaves a value absent, as omitting its flag
 /// would.
 ///
-/// With `packages_later` the packages are not asked here: `add` reads them from the new
+/// With `Packages::Later` the packages are not asked here: `add` reads them from the new
 /// Checkout and asks then (ADR 0009), see `ask_packages`.
 pub fn fill_add(
     repo: &mut AddRepo,
     config: &Config,
     prompter: &mut dyn Prompter,
-    packages_later: bool,
+    packages: Packages,
 ) -> Result<Filled, Abort> {
     let mut asked = false;
     if repo.url.is_empty() {
@@ -80,17 +89,17 @@ pub fn fill_add(
         asked = true;
         repo.description = ask_optional(prompter, "Description (one line on what the repo is)")?;
     }
-    let packages_now = !packages_later && repo.packages.is_empty();
-    let any_list_empty = repo.paths.is_empty() || packages_now || repo.start.is_empty();
+    let packages_asked = packages == Packages::Now;
+    let any_list_empty = repo.paths.is_empty()
+        || (packages_asked && repo.packages.is_empty())
+        || repo.start.is_empty();
     if any_list_empty {
         asked = true;
-        let question = if packages_later {
-            "Customize paths and start?"
-        } else {
-            "Customize paths, packages and start?"
+        let question = match packages {
+            Packages::Later => "Customize paths and start?",
+            Packages::Now => "Customize paths, packages and start?",
         };
         if prompter.confirm(question)? {
-            let packages_asked = !packages_later;
             for (list, message, wanted) in [
                 (
                     &mut repo.paths,

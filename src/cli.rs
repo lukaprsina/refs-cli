@@ -20,7 +20,7 @@ use crate::edit::{AddRepo, Edit, Target};
 use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
-use crate::prompt::{self, Prompter};
+use crate::prompt::{self, Packages, Prompter};
 use crate::registry::{self, Registry};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
@@ -401,7 +401,11 @@ fn run_config<'a>(
             return 0;
         }
         ConfigCommand::Add { repo, flags } => {
-            let packages_later = !flags.no_sync;
+            let packages = if flags.no_sync {
+                Packages::Now
+            } else {
+                Packages::Later
+            };
             let repo = match registry::expand(repo, asking.registry, asking.offline) {
                 Ok(expanded) => expanded,
                 Err(e) => return fail(e, console),
@@ -410,14 +414,14 @@ fn run_config<'a>(
                 &repo,
                 config,
                 asking.prompter.as_deref_mut(),
-                packages_later,
+                packages,
                 console,
             ) {
                 Ok(completed) => completed,
                 Err(code) => return code,
             };
             let repo = asked_repo.insert(repo);
-            if packages_later {
+            if packages == Packages::Later {
                 return with_source(make_source, root, config, console, |source, console| {
                     let job = AddJob {
                         repo,
@@ -445,13 +449,13 @@ fn run_config<'a>(
 
 /// `repo` with what the command line left out, and whether anything was asked: asked for when
 /// there is a prompter, otherwise only a missing URL is a problem (usage, exit 2). On a cancel
-/// nothing has been edited. The `equivalent:` line is printed here unless `packages_later`,
+/// nothing has been edited. The `equivalent:` line is printed here unless `Packages::Later`,
 /// when `add` prints it once the packages are known.
 fn complete_add(
     repo: &AddRepo,
     config: &Config,
     prompter: Option<&mut (dyn Prompter + '_)>,
-    packages_later: bool,
+    packages: Packages,
     console: &mut Console,
 ) -> Result<(AddRepo, bool), u8> {
     let mut repo = repo.clone();
@@ -462,9 +466,9 @@ fn complete_add(
         }
         return Ok((repo, false));
     };
-    match prompt::fill_add(&mut repo, config, prompter, packages_later) {
+    match prompt::fill_add(&mut repo, config, prompter, packages) {
         Ok(filled) => {
-            if filled.asked && !packages_later {
+            if filled.asked && packages == Packages::Now {
                 equivalent(&repo, console);
             }
             Ok((repo, filled.asked))
@@ -514,11 +518,7 @@ fn add(
         }
     }
     if asked {
-        let mut repo = repo.clone();
-        if !added.packages.is_empty() {
-            repo.packages = added.packages.clone();
-        }
-        equivalent(&repo, console);
+        equivalent(&added.repo, console);
     }
     if let Some(why) = &added.skipped {
         if let Skipped::PromptFailed(why) = why {
