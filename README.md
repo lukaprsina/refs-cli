@@ -53,6 +53,10 @@ Flags skip the questions. Without a terminal, or with `--no-input`, nothing is a
 The result is in `refs.toml`, which you can also write by hand:
 
 ```toml
+[settings]  # optional; these are the defaults
+references_dir = ".references"
+agents_files = ["AGENTS.md"]
+
 [groups.solidjs-2]
 name = "SolidJS 2.0"
 description = "Solid 2.0 release candidates, router and docs. Newer than your training data; many APIs differ from Solid 1.x."
@@ -96,7 +100,7 @@ Commit `refs.toml`, `refs.lock` and `AGENTS.md`. `.references/` is excluded thro
 | Command | Does |
 |---|---|
 | `refs init` | Create `refs.toml` and the git exclude rule |
-| `refs add [url]` | Add a repo, lock it, sync. `url` can be `npm:<name>`, `cargo:<name>` or `pypi:<name>`: the registry says where the package lives. Asks for what is missing in a terminal; `--no-input` turns that off, `--no-sync` only edits |
+| `refs add [url]` | Add a repo, lock it, sync. `url` can be `npm:<name>`, `cargo:<name>` or `pypi:<name>`, each with an optional `@<version>`: the registry says where the package lives. With no version, `npm:` and `cargo:` read the one your lockfile uses and pin its tag. Asks for what is missing in a terminal; `--no-input` turns that off, `--no-sync` only edits |
 | `refs remove <id>` | Remove a repo |
 | `refs disable` / `enable` | Switch a repo or group (`--group`) off or on without removing it |
 | `refs list` | Show the repos; `--status` adds the lock and checkout state |
@@ -104,13 +108,14 @@ Commit `refs.toml`, `refs.lock` and `AGENTS.md`. `.references/` is excluded thro
 | `refs sync` | Make checkouts and the block match `refs.lock`; `--check` exits 3 when out of date, for CI |
 | `refs update` | Replace this program with the latest release |
 
-Flags: `refs <command> --help`. `--offline` (any command) never contacts the network.
+Flags: `refs <command> --help`. `--offline` (any command) never contacts the network. Exit codes: 0 ok, 1 error, 2 usage, 3 out of date (`--check`).
 
 ## Notes
 
-- Linters, formatters and type checkers may scan `.references/`. `refs sync` and `refs add` say which of Prettier, ESLint, Oxlint and tsc do not exclude it and what to add; refs never edits their files. Silence one with `tooling_ignore = ["tsc"]` at the top of `refs.toml`.
-- Not detected: Ruff, Biome, Stylelint, and editors and language servers (`files.exclude`, `search.exclude` in `.vscode/settings.json`). Exclude `.references/` there yourself.
-- Claude Code reads `AGENTS.md` only when there is no `CLAUDE.md`; if you have one, have it import `@AGENTS.md`.
+- Linters, formatters and type checkers may scan `.references/`. `refs sync` and `refs add` say which of Prettier, ESLint, Oxlint and tsc do not exclude it and what to add; refs never edits their files. Not detected: Ruff, Biome, Stylelint, and editors (`files.exclude`, `search.exclude`); exclude `.references/` there yourself. Silence one with `tooling_ignore = ["tsc"]` at the top of `refs.toml`.
+- `rg` skips `.references/` by default; pass the path (`rg foo .references/solid`).
+- Checkouts are read-only. `sync` refuses to touch one with local changes; `--force` discards them.
+- Claude Code ignores `AGENTS.md` if a `CLAUDE.md` exists; add `CLAUDE.md` to `agents_files`.
 
 ## Thanks
 
