@@ -46,7 +46,10 @@ impl Project {
     fn run(&self, args: &[&str]) -> u8 {
         let sub = self.dir.path().join("sub");
         fs::create_dir_all(&sub).unwrap();
-        let args = std::iter::once("refs").chain(args.iter().copied());
+        // `cli::run` asks in a real terminal; a test must never wait on someone typing.
+        let args = std::iter::once("refs")
+            .chain(args.iter().copied())
+            .chain(["--no-input"]);
         run(args.map(Into::into), &sub, |_, _| {
             Ok(Box::new(&self.source))
         })

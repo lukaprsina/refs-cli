@@ -26,7 +26,10 @@ fn project(config: &str) -> TempDir {
 }
 
 fn refs(dir: &Path, args: &[&str]) -> u8 {
-    let args = std::iter::once("refs").chain(args.iter().copied());
+    // `cli::run` asks in a real terminal; a test must never wait on someone typing.
+    let args = std::iter::once("refs")
+        .chain(args.iter().copied())
+        .chain(["--no-input"]);
     run(
         args.map(Into::into),
         dir,
