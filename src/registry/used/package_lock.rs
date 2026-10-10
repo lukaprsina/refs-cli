@@ -27,14 +27,18 @@ struct Entry {
 }
 
 impl Entry {
-    /// The version, if this install came from the registry.
+    /// The version, if this install came from the registry. Version 1 has no `resolved` for a
+    /// git or file install and puts its spec in `version` (`github:me/x#abc`), which no
+    /// registry version contains a `:` of.
     fn registry_version(&self) -> Option<&str> {
         let from_registry = !self.link
             && self
                 .resolved
                 .as_deref()
                 .is_none_or(|url| url.starts_with("https://") || url.starts_with("http://"));
-        self.version.as_deref().filter(|_| from_registry)
+        self.version
+            .as_deref()
+            .filter(|version| from_registry && !version.contains(':'))
     }
 }
 

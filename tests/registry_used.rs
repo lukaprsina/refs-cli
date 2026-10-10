@@ -234,6 +234,46 @@ mod package_lock {
     }
 
     #[test]
+    fn version_1_git_and_file_entries_are_not_registry_versions() {
+        let text = r#"{
+  "lockfileVersion": 1,
+  "dependencies": {
+    "fromgit": { "version": "github:me/fromgit#abc" },
+    "fromfile": { "version": "file:../fromfile" },
+    "fromurl": { "version": "git+ssh://git@github.com/me/fromurl.git#abc" }
+  }
+}"#;
+        for name in ["fromgit", "fromfile", "fromurl"] {
+            assert_eq!(used_versions(Format::PackageLock, name, text).unwrap(), []);
+        }
+    }
+
+    #[test]
+    fn a_package_not_in_the_lockfile_has_no_version() {
+        assert_eq!(of3("left-pad"), []);
+        assert_eq!(
+            used_versions(Format::PackageLock, "left-pad", V1).unwrap(),
+            []
+        );
+    }
+
+    #[test]
+    fn of_several_versions_only_the_one_the_project_names_is_direct() {
+        let text = r#"{
+  "lockfileVersion": 3,
+  "packages": {
+    "": { "dependencies": { "ms": "^2.1.0" } },
+    "node_modules/ms": { "version": "2.1.3", "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz" },
+    "node_modules/debug/node_modules/ms": { "version": "2.0.0", "resolved": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz" }
+  }
+}"#;
+        assert_eq!(
+            used_versions(Format::PackageLock, "ms", text).unwrap(),
+            [used("2.0.0", false), used("2.1.3", true)]
+        );
+    }
+
+    #[test]
     fn a_lockfile_that_is_not_json_is_an_error() {
         assert!(used_versions(Format::PackageLock, "react", "nope").is_err());
     }
@@ -289,6 +329,24 @@ packages:
     resolution: {}
 "#;
         assert_eq!(pnpm(text, "zod"), ["3.22.0"]);
+    }
+
+    #[test]
+    fn pnpm_v9_alias_is_not_found_under_its_alias() {
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      foo:
+        specifier: npm:bar@^1.0.0
+        version: bar@1.0.0
+
+packages:
+  bar@1.0.0:
+    resolution: {}
+"#;
+        assert!(pnpm(text, "foo").is_empty());
     }
 
     #[test]

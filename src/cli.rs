@@ -453,6 +453,8 @@ fn prepare_add(
         Ok(expanded) => expanded,
         Err(e) => return Err(fail(e, console)),
     };
+    // A registry add has chosen its Ref (a tag, or the default branch), so it is not asked.
+    let ref_settled = expanded.release.is_some();
     let mut repo = expanded.repo;
     // An explicit `ref` wins over any version.
     if let (None, Some(release)) = (&repo.git_ref, &expanded.release) {
@@ -481,6 +483,7 @@ fn prepare_add(
         config,
         asking.prompter.as_deref_mut(),
         packages,
+        ref_settled,
         console,
     )
 }
@@ -621,6 +624,7 @@ fn complete_add(
     config: &Config,
     prompter: Option<&mut (dyn Prompter + '_)>,
     packages: Packages,
+    ref_settled: bool,
     console: &mut Console,
 ) -> Result<(AddRepo, bool), u8> {
     let mut repo = repo.clone();
@@ -631,7 +635,7 @@ fn complete_add(
         }
         return Ok((repo, false));
     };
-    match prompt::fill_add(&mut repo, config, prompter, packages) {
+    match prompt::fill_add(&mut repo, config, prompter, packages, ref_settled) {
         Ok(filled) => {
             if filled.asked && packages == Packages::Now {
                 equivalent(&repo, console);

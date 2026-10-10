@@ -311,6 +311,7 @@ fn tags_asked(source: &FakeSource) -> usize {
 struct Confirms {
     yes: bool,
     asked: Vec<String>,
+    texts: Vec<String>,
 }
 
 impl Prompter for Confirms {
@@ -320,6 +321,7 @@ impl Prompter for Confirms {
         default: Option<&str>,
         validate: &dyn Fn(&str) -> Result<(), String>,
     ) -> Result<String, Abort> {
+        self.texts.push(message.to_owned());
         Defaults.text(message, default, validate)
     }
 
@@ -445,6 +447,7 @@ fn a_version_with_no_tag_asks_and_continues_on_yes() {
     let mut prompter = Confirms {
         yes: true,
         asked: vec![],
+        texts: vec![],
     };
 
     let run = add_asking(
@@ -473,6 +476,46 @@ fn a_version_with_no_tag_asks_and_continues_on_yes() {
         prompter.asked
     );
     assert!(dir.path().join("refs.lock").exists());
+    // The person just said to follow the default branch: the Ref is not asked again.
+    assert!(
+        !prompter.texts.iter().any(|q| q.starts_with("Ref")),
+        "{:?}",
+        prompter.texts
+    );
+}
+
+#[test]
+fn a_bare_registry_add_does_not_ask_for_the_ref() {
+    let dir = project();
+    let source = FakeSource::new();
+    let mut prompter = Confirms {
+        yes: true,
+        asked: vec![],
+        texts: vec![],
+    };
+
+    let run = add_asking(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &[
+            "npm:foo-js",
+            "--id",
+            "foo",
+            "--group",
+            "g",
+            "--description",
+            "d",
+        ],
+        Some(&mut prompter),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        !prompter.texts.iter().any(|q| q.starts_with("Ref")),
+        "{:?}",
+        prompter.texts
+    );
 }
 
 #[test]
@@ -482,6 +525,7 @@ fn a_version_with_no_tag_cancels_on_no_and_changes_nothing() {
     let mut prompter = Confirms {
         yes: false,
         asked: vec![],
+        texts: vec![],
     };
 
     let run = add_asking(

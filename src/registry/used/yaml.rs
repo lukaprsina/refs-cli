@@ -16,7 +16,8 @@
 //! both are read line by line.
 //!
 //! Derived from the helpers in opensrc's `version.rs` (`packages/opensrc/cli/src/core/`,
-//! Apache-2.0, see NOTICE). Unchanged apart from visibility.
+//! Apache-2.0, see NOTICE). Unchanged apart from visibility, and `is_registry_version`, which
+//! also refuses a version with an `@` (a pnpm v9 alias).
 
 /// Strip a pnpm peer-dependency suffix like `(react@18.0.0)` from a version string, so
 /// `18.2.0(react@17.0.0)` becomes `18.2.0`. Cuts at the first `(` so nested peer suffixes like
@@ -67,7 +68,8 @@ pub(super) fn split_pkg_spec(spec: &str) -> Option<(&str, &str)> {
 /// Berry workspace root has `version: 0.0.0-use.local`. Real npm versions never contain `:`, so
 /// treating a colon as disqualifying catches every known protocol prefix (`link:`, `file:`,
 /// `workspace:`, `portal:`, `git:`, `git+ssh://`, `github:`, `http:`, `https:`, `npm:`, etc.)
-/// without having to enumerate them.
+/// without having to enumerate them. Nor do they contain an `@`: pnpm v9 writes an alias's
+/// version as `bar@1.0.0`, and the install is not the package under the alias's name.
 pub(super) fn is_registry_version(v: &str) -> bool {
-    !v.is_empty() && v != "0.0.0-use.local" && !v.contains(':')
+    !v.is_empty() && v != "0.0.0-use.local" && !v.contains([':', '@'])
 }

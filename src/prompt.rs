@@ -58,12 +58,14 @@ pub struct Filled {
 /// would.
 ///
 /// With `Packages::Later` the packages are not asked here: `add` reads them from the new
-/// Checkout and asks then (ADR 0009), see `ask_packages`.
+/// Checkout and asks then (ADR 0009), see `ask_packages`. With `ref_settled` the `ref` is not
+/// asked either: a registry add has chosen it (a tag, or the default branch).
 pub fn fill_add(
     repo: &mut AddRepo,
     config: &Config,
     prompter: &mut dyn Prompter,
     packages: Packages,
+    ref_settled: bool,
 ) -> Result<Filled, Abort> {
     let mut asked = false;
     if repo.url.is_empty() {
@@ -81,7 +83,7 @@ pub fn fill_add(
         asked = true;
         repo.group = ask_group(config, prompter)?;
     }
-    if repo.git_ref.is_none() {
+    if repo.git_ref.is_none() && !ref_settled {
         asked = true;
         repo.git_ref = ask_optional(prompter, "Ref (empty: the remote's default branch)")?;
     }
