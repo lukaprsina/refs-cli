@@ -4,6 +4,7 @@
 
 pub mod crates;
 pub mod fake;
+pub mod lockfile;
 pub mod npm;
 pub mod pypi;
 pub mod tag;

@@ -28,6 +28,7 @@ indexmap = { version = "2.14.2", features = ["serde"] }
 inquire = "0.9.4"
 miette = { version = "7.6.0", features = ["fancy"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "json"] }
+semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"

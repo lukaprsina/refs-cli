@@ -1433,6 +1433,7 @@ dependencies = [
  "miette",
  "refs-cli",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
