@@ -1,6 +1,8 @@
 use miette::{Diagnostic, NamedSource, SourceSpan};
 use thiserror::Error;
 
+use crate::tooling::{Gap, Tool};
+
 /// Every problem found in a `refs.toml`, reported together.
 #[derive(Debug, Error, Diagnostic)]
 #[error("invalid refs.toml")]
@@ -57,6 +59,19 @@ pub enum ConfigError {
         #[source_code]
         src: NamedSource<String>,
         #[label("not a refs.toml key")]
+        span: SourceSpan,
+    },
+
+    #[error("`{name}` is not a tool refs knows")]
+    #[diagnostic(
+        code(refs::config::unknown_tool),
+        help("use one of: {}", Tool::names().join(", "))
+    )]
+    UnknownTool {
+        name: String,
+        #[source_code]
+        src: NamedSource<String>,
+        #[label("unknown tool")]
         span: SourceSpan,
     },
 
@@ -433,6 +448,24 @@ pub enum Note {
     #[error("`{id}` had a broken checkout; recreated it, local files in it were discarded")]
     #[diagnostic(code(refs::sync::recreated))]
     Recreated { id: String },
+
+    #[error("{tool} does not exclude the references directory")]
+    #[diagnostic(code(refs::tooling::gap), help("add this to {config}: {snippet}"))]
+    ToolingGap {
+        tool: &'static str,
+        config: String,
+        snippet: String,
+    },
+}
+
+impl From<Gap> for Note {
+    fn from(gap: Gap) -> Note {
+        Note::ToolingGap {
+            tool: gap.tool.name(),
+            config: gap.config,
+            snippet: gap.snippet,
+        }
+    }
 }
 
 /// Why `refs init` stopped.

@@ -5,18 +5,32 @@ use toml::Spanned;
 use miette::{NamedSource, SourceSpan};
 
 use crate::diagnostic::{ConfigError, ConfigErrors};
+use crate::tooling::Tool;
 
 pub type Id = Spanned<String>;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    /// Tools to leave out of the tooling gap notes, by name (`Tool::names`).
+    #[serde(default)]
+    pub tooling_ignore: Vec<Spanned<String>>,
     #[serde(default)]
     pub settings: Settings,
     #[serde(default)]
     pub groups: IndexMap<Id, Group>,
     #[serde(default)]
     pub repos: IndexMap<Id, Repo>,
+}
+
+impl Config {
+    /// The tools named in `tooling_ignore`. Validation has refused any other name.
+    pub fn tooling_ignored(&self) -> Vec<Tool> {
+        self.tooling_ignore
+            .iter()
+            .filter_map(|name| Tool::from_name(name.get_ref()))
+            .collect()
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -141,6 +155,7 @@ fn validate(config: &Config, text: &str) -> Vec<ConfigError> {
         errors: Vec::new(),
     };
     v.settings(&config.settings);
+    v.tooling_ignore(&config.tooling_ignore);
     for (id, group) in &config.groups {
         v.group(id, group);
     }
@@ -176,6 +191,19 @@ impl Validator<'_> {
                 let bad = path.get_ref().clone();
                 self.report(path, |src, span| ConfigError::BadSettingsPath {
                     path: bad,
+                    src,
+                    span,
+                });
+            }
+        }
+    }
+
+    fn tooling_ignore(&mut self, names: &[Spanned<String>]) {
+        for name in names {
+            if Tool::from_name(name.get_ref()).is_none() {
+                let unknown = name.get_ref().clone();
+                self.report(name, |src, span| ConfigError::UnknownTool {
+                    name: unknown,
                     src,
                     span,
                 });

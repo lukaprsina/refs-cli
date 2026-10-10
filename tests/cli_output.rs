@@ -289,3 +289,100 @@ fn the_binary_init_reports_on_stderr_without_a_sync_hint_and_a_second_run_change
         second.stderr
     );
 }
+
+mod tooling_gap {
+    use super::*;
+
+    const ONE: &str = "[repos.a]\nurl = \"https://github.com/o/a\"\n";
+
+    fn with_eslint(config: &str) -> Project {
+        let p = Project::new(config);
+        fs::write(
+            p.dir.path().join("eslint.config.js"),
+            "export default [];\n",
+        )
+        .unwrap();
+        p
+    }
+
+    #[test]
+    fn sync_notes_a_tool_that_does_not_exclude_the_references_directory() {
+        let p = with_eslint(ONE);
+
+        let ran = p.run(&["sync"]);
+
+        assert_eq!(ran.code, 0, "{}", ran.stderr);
+        assert!(ran.stderr.contains("refs::tooling::gap"), "{}", ran.stderr);
+        assert!(ran.stderr.contains("eslint.config.js"), "{}", ran.stderr);
+        assert!(
+            ran.stderr.contains(r#"{ ignores: [".references/**"] }"#),
+            "{}",
+            ran.stderr
+        );
+    }
+
+    #[test]
+    fn add_notes_it_too() {
+        let p = with_eslint(ONE);
+
+        let ran = p.run(&["add", "https://github.com/o/b"]);
+
+        assert_eq!(ran.code, 0, "{}", ran.stderr);
+        assert!(ran.stderr.contains("refs::tooling::gap"), "{}", ran.stderr);
+    }
+
+    #[test]
+    fn check_says_nothing_about_it() {
+        let p = with_eslint(ONE);
+        p.run(&["sync", "--quiet"]);
+
+        let ran = p.run(&["sync", "--check"]);
+
+        assert_eq!(ran.code, 0, "{}", ran.stderr);
+        assert!(!ran.stderr.contains("eslint"), "{}", ran.stderr);
+    }
+
+    #[test]
+    fn q_silences_it() {
+        let p = with_eslint(ONE);
+
+        let ran = p.run(&["-q", "sync"]);
+
+        assert_eq!(ran.code, 0);
+        assert_eq!(ran.stderr, "");
+    }
+
+    #[test]
+    fn tooling_ignore_silences_it() {
+        let p = with_eslint(&format!("tooling_ignore = [\"eslint\"]\n{ONE}"));
+
+        let ran = p.run(&["sync"]);
+
+        assert!(!ran.stderr.contains("eslint"), "{}", ran.stderr);
+    }
+
+    #[test]
+    fn a_covered_tool_and_a_project_with_no_repos_say_nothing() {
+        let covered = Project::new(ONE);
+        fs::write(
+            covered.dir.path().join("eslint.config.js"),
+            "ignores: ['.references/**']",
+        )
+        .unwrap();
+        assert!(!covered.run(&["sync"]).stderr.contains("eslint"));
+
+        let empty = with_eslint("");
+        assert!(!empty.run(&["sync"]).stderr.contains("eslint"));
+    }
+
+    #[test]
+    fn a_failed_sync_does_not_add_it() {
+        let p = with_eslint(ONE);
+        p.source.fail("a", Method::Resolve, "remote gone");
+
+        let ran = p.run(&["-q", "sync"]);
+
+        assert_eq!(ran.code, 1);
+        assert!(!ran.stderr.contains("eslint"), "{}", ran.stderr);
+    }
+}

@@ -108,7 +108,8 @@ Flags: `refs <command> --help`. `--offline` (any command) never contacts the net
 
 ## Notes
 
-- Linters, formatters and type checkers may scan `.references/`; excluding it is up to you.
+- Linters, formatters and type checkers may scan `.references/`. `refs sync` and `refs add` say which of Prettier, ESLint, Oxlint and tsc do not exclude it and what to add; refs never edits their files. Silence one with `tooling_ignore = ["tsc"]` at the top of `refs.toml`.
+- Not detected: Ruff, Biome, Stylelint, and editors and language servers (`files.exclude`, `search.exclude` in `.vscode/settings.json`). Exclude `.references/` there yourself.
 - Claude Code reads `AGENTS.md` only when there is no `CLAUDE.md`; if you have one, have it import `@AGENTS.md`.
 
 ## Thanks

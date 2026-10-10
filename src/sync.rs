@@ -18,6 +18,7 @@ use crate::plan::{
 };
 use crate::project;
 use crate::source::{MaterialiseOpts, Source, VerifyOpts};
+use crate::tooling;
 
 #[derive(Debug, Default)]
 pub struct SyncFlags {
@@ -211,7 +212,15 @@ fn plan_and_apply(
         check(plan, !drift.is_empty())
     } else {
         let dir = config.settings.references_dir();
-        apply(source, root, dir, plan, flags)
+        let mut report = apply(source, root, dir, plan, flags);
+        // Only a run that got through: under `-q` a gap is hidden only then (`print_report`).
+        if report.outcome == Outcome::InSync && active.repos().next().is_some() {
+            let gaps = tooling::gaps(root, dir, &config.tooling_ignored());
+            report
+                .diagnostics
+                .extend(gaps.into_iter().map(Note::from).map(miette::Report::new));
+        }
+        report
     };
     finish(stage_one, drift, stage_two)
 }

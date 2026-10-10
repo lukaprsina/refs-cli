@@ -344,3 +344,24 @@ fn references_dir_defaults_and_loses_a_trailing_slash() {
     assert_eq!(dir("[settings]\nreferences_dir = \".refs/\"\n"), ".refs");
     assert_eq!(dir("[settings]\nreferences_dir = \"a/b\"\n"), "a/b");
 }
+
+#[test]
+fn tooling_ignore_names_the_tools_to_leave_out() {
+    use refs_cli::tooling::Tool;
+    let ignored = |text: &str| parse(text).unwrap().tooling_ignored();
+    assert_eq!(ignored(""), []);
+    assert_eq!(
+        ignored("tooling_ignore = [\"eslint\", \"tsc\"]\n"),
+        [Tool::Eslint, Tool::Tsc]
+    );
+}
+
+#[test]
+fn an_unknown_tool_in_tooling_ignore_is_an_error_on_its_name_that_lists_the_valid_ones() {
+    use miette::Diagnostic;
+    let text = "tooling_ignore = [\"eslint\", \"biome\"]\n";
+    code_and_span(text, "refs::config::unknown_tool", "\"biome\"");
+    let errors = parse(text).unwrap_err();
+    let help = errors.errors[0].help().unwrap().to_string();
+    assert_eq!(help, "use one of: prettier, eslint, oxlint, tsc");
+}

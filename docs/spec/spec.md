@@ -163,6 +163,8 @@ Config and lock live at the **project root**, like `pyproject.toml`/`uv.lock`. T
 ### 6.1 Schema
 
 ```toml
+tooling_ignore = ["tsc"]           # optional; tools to leave out of the tooling gap notes (§7.6): prettier, eslint, oxlint, tsc
+
 [settings]
 references_dir = ".references"     # project-relative; project config only
 agents_files = ["AGENTS.md"]       # project config only; files that receive the managed block
@@ -324,7 +326,12 @@ Before 2.36.0, `sparse-checkout set` in a worktree of a bare repo enabled `exten
 - `sync` and `init` ensure `/<references_dir>/` is a line in `<git-dir>/info/exclude` (the common git dir for linked worktrees of the project). Found with `git rev-parse --git-common-dir`, so a linked worktree writes to the main repository's file. A project below the repository top gets the rule anchored there, `/<path from the top>/<references_dir>/`. Per-clone, which is fine since every clone runs `sync`.
 - If the project isn't in a git repo, `plan` emits an info note and continues; it is not drift.
 - Consequence we rely on: default searches (ripgrep) skip `.references/`, so a grep for `useEffect` finds only the user's code. When a search path is passed explicitly (e.g. `.references/solid`), ripgrep searches it anyway. Hidden entries inside a checkout (e.g. `.github/`) stay skipped.
-- Linters, formatters and type checkers are **the user's responsibility** in the MVP. `init` prints a reminder (and the later `doctor` repeats it).
+- Linters, formatters and type checkers that follow only their own config are the user's to configure; refs never writes their files. `sync` (and so `add`) reports each one it detects that does not exclude `<references_dir>` as a **Tooling gap**: a note (`refs::tooling::gap`) with the file to edit and the lines to add. `init` prints a reminder (and the later `doctor` repeats it).
+  - Tools: Prettier (`.prettierignore`), ESLint (flat config, or `.eslintignore` for the legacy config), Oxlint (`.oxlintrc.json`) and tsc (`tsconfig.json`; variants such as `tsconfig.build.json` are not read). Not detected, and documented in the README only: Ruff, Biome, Stylelint, and editors and language servers (`files.exclude`, `search.exclude`). `.vscode/settings.json` is never touched.
+  - A tool is **in use** when a file of it is in the nearest directory that has one, from the Project directory up to the top of the git worktree (the Project directory only outside a worktree). Any of its files (config or ignore file) there that contains the text of `<references_dir>` covers it. Nothing is parsed, so a `tsconfig.json` whose `include` never reaches the directory is still reported; use `tooling_ignore`.
+  - The snippet gives the directory as seen from the file's directory (`apps/web/.references/**` for a config at the worktree top).
+  - Reported only when a `sync` or `add` that ran got through with no failure or refusal, and at least one Repo is active. `-q` silences it, it never changes the exit code, never makes a Project out of date, and `sync --check` reports nothing about it.
+  - `tooling_ignore` is a top-level list of tool names. An unknown name is a config error (`refs::config::unknown_tool`) that lists the valid ones.
 
 ---
 
@@ -414,7 +421,7 @@ Solid 2.0 release candidates, router and docs. Newer than your training data; ma
 Semantics follow `uv` (ADR 0005): config is intent, the lock is resolution, `sync` makes the disk match the lock. Nothing updates behind the user's back.
 
 Global flags: `--project <dir>`, `-q/--quiet`, `--no-color`.
-**Output** (uv's model, ADR 0005). Status lines go to stderr in one style: lowercase, a verb and what it acted on, no full stop (`updated refs.toml`, `created group \`name\``, `updated refs.lock`, `created|moved|removed checkout \`id\``, `updated AGENTS.md`). They appear in that order, one per thing changed. A command that changed nothing says `nothing changed`, and `sync --check` on a current project says `up to date`. `-q` silences status lines; problems (errors, refusals, notes, `out of date:` lines) are always printed. stdout carries data only (`list`), so it is empty for every other command. A hint to run `refs sync` appears only when the project is left incomplete: after a failed `sync` or edit (`... once the problem is fixed`, or for an edit that was written, `fix or remove the broken repo, then run \`refs sync\``) and after an edit with `--no-sync`; the hint is a problem line, so `-q` does not hide it. `init`'s reminders and the `refs.toml` template carry no such hint; the Preamble's line that tells the agent to ask for `refs sync` when `<references_dir>/` is missing stays (§9).
+**Output** (uv's model, ADR 0005). Status lines go to stderr in one style: lowercase, a verb and what it acted on, no full stop (`updated refs.toml`, `created group \`name\``, `updated refs.lock`, `created|moved|removed checkout \`id\``, `updated AGENTS.md`). They appear in that order, one per thing changed. A command that changed nothing says `nothing changed`, and `sync --check` on a current project says `up to date`. `-q` silences status lines; problems (errors, refusals, `out of date:` lines) are always printed, and notes are silenced on a run that got through. stdout carries data only (`list`), so it is empty for every other command. A hint to run `refs sync` appears only when the project is left incomplete: after a failed `sync` or edit (`... once the problem is fixed`, or for an edit that was written, `fix or remove the broken repo, then run \`refs sync\``) and after an edit with `--no-sync`; the hint is a problem line, so `-q` does not hide it. `init`'s reminders and the `refs.toml` template carry no such hint; the Preamble's line that tells the agent to ask for `refs sync` when `<references_dir>/` is missing stays (§9).
 
 Exit codes: `0` ok, `1` error, `2` usage error, `3` `--check` found something out of date (`sync --check`: the project; `update --check`: a newer release of `refs`). `--check` exits 1, not 3, for a refusal (a foreign or dirty checkout, malformed markers): `sync` would refuse it too. Exit 3 is a recorded divergence from uv (ADR 0005).
 
@@ -460,7 +467,7 @@ Not in the MVP. Kept as the design for the later command, which reads `Observed`
 - `CLAUDE.md` vs `AGENTS.md`:
   - `CLAUDE.md` exists, `AGENTS.md` holds the block, and `CLAUDE.md` neither imports (`@AGENTS.md`) nor symlinks to it: warn (Claude Code loads only `CLAUDE.md`).
   - `CLAUDE.md` in `agents_files` and also importing/symlinking `AGENTS.md`: warn (double load).
-- Reminder that linters/formatters/type checkers may scan `references_dir`.
+- Reminder that linters/formatters/type checkers may scan `references_dir` (`sync` already reports the ones it detects, §7.6).
 - Submodules or LFS pointers detected in a checkout: info.
 
 Each finding is `ok` / `warn` / `error` with a stable code and a one-line fix. These are miette diagnostics (ADR 0002): `warn` is `Severity::Warning`, `error` is the default severity, the fix is `help`. Exit 1 if any error.
