@@ -21,9 +21,9 @@ use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::prompt::{self, Packages, Prompter};
-use crate::registry::lockfile::{self, Lookup, Pick};
 use crate::registry::tag::tag_for;
-use crate::registry::{self, Ecosystem, Registry, Release};
+use crate::registry::used::{self, Lookup, Pick};
+use crate::registry::{self, Registry, Release};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
 use crate::update::{self, Updater};
@@ -496,11 +496,11 @@ fn used_version(
     console: &mut Console,
 ) -> Result<Option<String>, u8> {
     let name = &release.name;
-    if release.ecosystem == Ecosystem::Pypi {
+    if !used::reads(release.ecosystem) {
         return Ok(None);
     }
     let follows = "the repo follows the remote's default branch";
-    let found = match lockfile::find(release.ecosystem, name, root) {
+    let found = match used::find(release.ecosystem, name, root) {
         Lookup::Found(found) => found,
         Lookup::Missing => {
             console.status(format_args!(

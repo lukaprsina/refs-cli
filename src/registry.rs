@@ -4,11 +4,11 @@
 
 pub mod crates;
 pub mod fake;
-pub mod lockfile;
 pub mod npm;
 pub mod pypi;
 pub mod tag;
 mod url;
+pub mod used;
 
 mod http;
 pub use http::{Fetch, Http, Reply, Reqwest};
@@ -208,7 +208,7 @@ pub struct Expanded {
 /// Any other `repo` comes back as it is.
 /// With `offline` a shorthand is refused, as it needs the network.
 /// The `ref` is not set here: a shorthand says which `release` it names, and with a version
-/// (given, or found in a Package lockfile, see `lockfile::find`) `Source::tags` and
+/// (given, or found in a Package lockfile, see `used::find`) `Source::tags` and
 /// `tag::tag_for` turn that into a tag.
 pub fn expand(
     repo: &AddRepo,

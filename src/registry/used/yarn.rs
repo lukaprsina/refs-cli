@@ -18,12 +18,22 @@
 //!
 //! Derived from opensrc's `parse_yarn_lock` (`packages/opensrc/cli/src/core/version.rs`,
 //! Apache-2.0, see NOTICE). Changed: it returns the version of every block that names the
-//! package, not only the first, and the tests moved to `tests/registry_lockfile.rs`.
+//! package, not only the first, finds an alias by the package it stands for, and the tests
+//! moved to `tests/registry_used.rs`.
 
 use super::Used;
 use super::yaml::{
     clean_value, is_registry_version, split_pkg_spec, strip_peer_suffix, trim_quotes,
 };
+
+/// The package a spec asks for. For an alias (`short@npm:@scope/long@^2`, Berry) that is the
+/// package after `npm:`, not the name it is installed under.
+fn real_name<'a>(name: &'a str, range: &'a str) -> &'a str {
+    range
+        .strip_prefix("npm:")
+        .and_then(split_pkg_spec)
+        .map_or(name, |(real, _)| real)
+}
 
 pub(super) fn used(pkg: &str, text: &str) -> Vec<Used> {
     let mut blocks: Vec<Vec<&str>> = Vec::new();
@@ -73,7 +83,7 @@ pub(super) fn used(pkg: &str, text: &str) -> Vec<Used> {
         // trailing `"`; `trim_quotes` strips either form.
         let matched = header_body.split(", ").any(|s| {
             let spec = trim_quotes(s.trim());
-            split_pkg_spec(spec).is_some_and(|(name, _)| name == pkg)
+            split_pkg_spec(spec).is_some_and(|(name, range)| real_name(name, range) == pkg)
         });
         if !matched {
             continue;

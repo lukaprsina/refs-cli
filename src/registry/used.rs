@@ -78,6 +78,11 @@ impl Format {
     }
 }
 
+/// Whether refs reads a Package lockfile for `ecosystem` at all (`pypi:` has none yet).
+pub fn reads(ecosystem: Ecosystem) -> bool {
+    !Format::of(ecosystem).is_empty()
+}
+
 /// The Package lockfile a project uses and the versions of one package in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {

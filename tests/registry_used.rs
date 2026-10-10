@@ -12,13 +12,13 @@
 //
 // Modified for refs-cli: the `pnpm` and `yarn` modules are opensrc's tests of `parse_pnpm_lock`
 // and `parse_yarn_lock` (`packages/opensrc/cli/src/core/version.rs`). Their inputs and the
-// fixtures in `tests/fixtures/lockfiles/` are kept; the assertions were changed to the list of
+// fixtures in `tests/fixtures/used/` are kept; the assertions were changed to the list of
 // versions `used_versions` returns, and the tests of helpers that are private here were
 // dropped (the fixtures reach the same cases). The `cargo` and `package_lock` modules are new.
 
 //! The versions a Package lockfile says a project uses, from trimmed real lockfiles.
 
-use refs_cli::registry::lockfile::{Format, Used, used_versions};
+use refs_cli::registry::used::{Format, Used, used_versions};
 
 fn used(version: &str, direct: bool) -> Used {
     Used {
@@ -108,6 +108,38 @@ checksum = "ee"
     fn a_crate_from_git_or_the_project_itself_is_not_a_registry_version() {
         assert_eq!(of("mine"), []);
         assert_eq!(of("app"), []);
+    }
+
+    #[test]
+    fn in_a_workspace_what_any_member_asks_for_is_direct() {
+        let lock = r#"
+version = 4
+
+[[package]]
+name = "app"
+version = "0.1.0"
+dependencies = ["lib", "log"]
+
+[[package]]
+name = "lib"
+version = "0.1.0"
+dependencies = ["serde"]
+
+[[package]]
+name = "log"
+version = "0.4.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "serde"
+version = "1.0.200"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#;
+        let of = |name| used_versions(Format::CargoLock, name, lock).unwrap();
+        assert_eq!(of("serde"), [used("1.0.200", true)]);
+        assert_eq!(of("log"), [used("0.4.22", true)]);
+        // A member is not a registry version, whoever depends on it.
+        assert_eq!(of("lib"), []);
     }
 
     #[test]
@@ -220,7 +252,7 @@ fn versions(format: Format, text: &str, name: &str) -> Vec<String> {
 mod pnpm {
     use super::*;
 
-    const PNPM_V9: &str = include_str!("fixtures/lockfiles/pnpm-v9-workspace.yaml");
+    const PNPM_V9: &str = include_str!("fixtures/used/pnpm-v9-workspace.yaml");
 
     fn pnpm(text: &str, name: &str) -> Vec<String> {
         versions(Format::Pnpm, text, name)
@@ -667,8 +699,8 @@ snapshots:
 mod yarn {
     use super::*;
 
-    const YARN_V1: &str = include_str!("fixtures/lockfiles/yarn-v1.lock");
-    const YARN_BERRY: &str = include_str!("fixtures/lockfiles/yarn-berry.lock");
+    const YARN_V1: &str = include_str!("fixtures/used/yarn-v1.lock");
+    const YARN_BERRY: &str = include_str!("fixtures/used/yarn-berry.lock");
 
     fn yarn(text: &str, name: &str) -> Vec<String> {
         versions(Format::Yarn, text, name)
@@ -850,6 +882,14 @@ version \"file:../my-lib\"\n";
         assert_eq!(yarn(YARN_V1, "react"), ["18.2.0"]);
         assert_eq!(yarn(YARN_V1, "typescript"), ["5.3.3"]);
         assert_eq!(yarn(YARN_V1, "zod"), ["3.22.4"]);
+    }
+
+    #[test]
+    fn yarn_berry_alias_is_found_by_the_real_name_not_the_alias() {
+        let text = "__metadata:\n  version: 6\n\n\"short@npm:@scope/long@^2.0.0\":\n  version: 2.1.0\n  resolution: \"short@npm:@scope/long@2.1.0\"\n\n\"plain@npm:^1.0.0\":\n  version: 1.4.0\n";
+        assert_eq!(yarn(text, "@scope/long"), ["2.1.0"]);
+        assert_eq!(yarn(text, "short"), NONE);
+        assert_eq!(yarn(text, "plain"), ["1.4.0"]);
     }
 
     #[test]

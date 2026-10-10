@@ -20,7 +20,7 @@
 //! Apache-2.0, see NOTICE). Changed: it returns every version of the package, each marked
 //! direct or not, instead of the first by priority; the dependency graph and the
 //! breadth-first search over it are gone, as a version only reachable through another package
-//! is simply not direct; and the tests moved to `tests/registry_lockfile.rs`.
+//! is simply not direct; and the tests moved to `tests/registry_used.rs`.
 
 use super::Used;
 use super::yaml::{

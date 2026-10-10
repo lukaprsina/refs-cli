@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 mod common;
 
 use refs_cli::registry::Ecosystem;
-use refs_cli::registry::lockfile::{Format, Lookup, find};
+use refs_cli::registry::used::{Format, Lookup, find};
 use tempfile::TempDir;
 
 const CARGO_LOCK: &str = r#"
