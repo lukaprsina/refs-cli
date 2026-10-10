@@ -90,6 +90,30 @@ pub struct Found {
     pub ignored: Vec<PathBuf>,
 }
 
+/// Which version of a package to use, out of what a lockfile has.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pick<'a> {
+    /// The lockfile does not have the package.
+    Nothing,
+    /// One version, the only one or the only one the project asks for itself.
+    One(&'a str),
+    /// Several, lowest first, and nothing to choose between them.
+    Several(Vec<&'a str>),
+}
+
+impl Found {
+    /// The version to use: the only one, else the only one the format marks direct. Never a
+    /// guess between several.
+    pub fn pick(&self) -> Pick<'_> {
+        let mut direct = self.used.iter().filter(|used| used.direct);
+        match (&self.used[..], direct.next(), direct.next()) {
+            ([], ..) => Pick::Nothing,
+            ([only], ..) | (_, Some(only), None) => Pick::One(&only.version),
+            (all, ..) => Pick::Several(all.iter().map(|used| used.version.as_str()).collect()),
+        }
+    }
+}
+
 /// What looking for a package in a project's Package lockfile came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Lookup {

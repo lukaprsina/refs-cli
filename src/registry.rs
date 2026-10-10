@@ -185,15 +185,17 @@ fn exact_version(version: &str) -> Result<&str, &'static str> {
     }
 }
 
-/// The package and version a shorthand named, for finding the tag it was released as.
+/// The package a shorthand named, and its version if the shorthand gave one, for finding the
+/// tag it was released as.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
+    pub ecosystem: Ecosystem,
     pub name: String,
-    pub version: String,
+    pub version: Option<String>,
 }
 
-/// An `add` after `expand`: the repo to add, and the release its shorthand named, if it
-/// named a version.
+/// An `add` after `expand`: the repo to add, and the release its shorthand named, if it was a
+/// shorthand.
 #[derive(Debug, Clone)]
 pub struct Expanded {
     pub repo: AddRepo,
@@ -205,8 +207,9 @@ pub struct Expanded {
 /// line gave them (ADR 0009).
 /// Any other `repo` comes back as it is.
 /// With `offline` a shorthand is refused, as it needs the network.
-/// The `ref` is not set here: a shorthand with a version says which `release` it names, and
-/// `Source::tags` and `tag::tag_for` turn that into a tag.
+/// The `ref` is not set here: a shorthand says which `release` it names, and with a version
+/// (given, or found in a Package lockfile, see `lockfile::find`) `Source::tags` and
+/// `tag::tag_for` turn that into a tag.
 pub fn expand(
     repo: &AddRepo,
     registry: &dyn Registry,
@@ -251,9 +254,10 @@ pub fn expand(
     }
     Ok(Expanded {
         repo: expanded,
-        release: version.map(|version| Release {
+        release: Some(Release {
+            ecosystem,
             name: name.to_owned(),
-            version: version.to_owned(),
+            version: version.map(str::to_owned),
         }),
     })
 }

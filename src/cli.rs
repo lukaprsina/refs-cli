@@ -21,8 +21,9 @@ use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::prompt::{self, Packages, Prompter};
+use crate::registry::lockfile::{self, Lookup, Pick};
 use crate::registry::tag::tag_for;
-use crate::registry::{self, Registry, Release};
+use crate::registry::{self, Ecosystem, Registry, Release};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
 use crate::update::{self, Updater};
@@ -401,7 +402,7 @@ fn run_config<'a>(
             return 0;
         }
         ConfigCommand::Add { repo, flags } if flags.no_sync => {
-            let (repo, _) = match prepare_add(repo, None, config, &mut asking, console) {
+            let (repo, _) = match prepare_add(repo, None, root, config, &mut asking, console) {
                 Ok(prepared) => prepared,
                 Err(code) => return code,
             };
@@ -410,7 +411,7 @@ fn run_config<'a>(
         ConfigCommand::Add { repo, .. } => {
             return with_source(make_source, root, config, console, |source, console| {
                 let (repo, asked) =
-                    match prepare_add(repo, Some(source), config, &mut asking, console) {
+                    match prepare_add(repo, Some(source), root, config, &mut asking, console) {
                         Ok(prepared) => prepared,
                         Err(code) => return code,
                     };
@@ -437,11 +438,13 @@ fn run_config<'a>(
 }
 
 /// `repo` ready to add: a registry shorthand expanded and its version pinned to a tag, then
-/// completed (see `complete_add`). With a `source` a sync follows, so the `packages` are left
-/// to `add`; without one (`--no-sync`) nothing can be listed or read.
+/// completed (see `complete_add`). The version is the one given, else the one the project's
+/// Package lockfile at `root` says it uses. With a `source` a sync follows, so the `packages`
+/// are left to `add`; without one (`--no-sync`) nothing can be listed or read.
 fn prepare_add(
     repo: &AddRepo,
     source: Option<&dyn Source>,
+    root: &Path,
     config: &Config,
     asking: &mut Asking,
     console: &mut Console,
@@ -451,14 +454,22 @@ fn prepare_add(
         Err(e) => return Err(fail(e, console)),
     };
     let mut repo = expanded.repo;
-    if let Some(release) = &expanded.release {
-        pin_release(
-            &mut repo,
-            release,
-            source,
-            asking.prompter.as_deref_mut(),
-            console,
-        )?;
+    // An explicit `ref` wins over any version.
+    if let (None, Some(release)) = (&repo.git_ref, &expanded.release) {
+        let version = match &release.version {
+            Some(version) => Some(version.clone()),
+            None => used_version(release, root, asking.prompter.as_deref_mut(), console)?,
+        };
+        if let Some(version) = version {
+            pin_release(
+                &mut repo,
+                &release.name,
+                &version,
+                source,
+                asking.prompter.as_deref_mut(),
+                console,
+            )?;
+        }
     }
     let packages = if source.is_some() {
         Packages::Later
@@ -474,21 +485,104 @@ fn prepare_add(
     )
 }
 
-/// Set the `ref` of `repo` to the tag that `release` was released as. An explicit `ref` is
-/// left alone. A version with no tag is never pinned silently: with a prompter the person
-/// is asked whether to follow the remote's default branch instead, otherwise it is a warning
-/// and the repo follows it.
+/// The version of `release` that the Package lockfile of the project at `root` says it uses,
+/// and what was read is said. `None` when there is none to use: the repo then follows the
+/// remote's default branch, and the reason is said. Several versions with nothing to choose
+/// between them are asked about, or refused without a terminal. Never a guess.
+fn used_version(
+    release: &Release,
+    root: &Path,
+    prompter: Option<&mut (dyn Prompter + '_)>,
+    console: &mut Console,
+) -> Result<Option<String>, u8> {
+    let name = &release.name;
+    if release.ecosystem == Ecosystem::Pypi {
+        return Ok(None);
+    }
+    let follows = "the repo follows the remote's default branch";
+    let found = match lockfile::find(release.ecosystem, name, root) {
+        Lookup::Found(found) => found,
+        Lookup::Missing => {
+            console.status(format_args!(
+                "no Package lockfile found for `{name}`; {follows}"
+            ));
+            return Ok(None);
+        }
+        Lookup::Unreadable { file, why } => {
+            console.problem(format_args!(
+                "warning: cannot read {}: {why}; {follows}",
+                file_name(&file, root)
+            ));
+            return Ok(None);
+        }
+    };
+    let file = file_name(&found.file, root);
+    for ignored in &found.ignored {
+        console.status(format_args!(
+            "{} is also here and was not read; {file} was",
+            file_name(ignored, root)
+        ));
+    }
+    match found.pick() {
+        Pick::Nothing => {
+            console.status(format_args!("`{name}` is not in {file}; {follows}"));
+            Ok(None)
+        }
+        Pick::One(version) => {
+            console.status(format_args!("`{name}` is {version} in {file}"));
+            Ok(Some(version.to_owned()))
+        }
+        Pick::Several(versions) => {
+            let list = versions.join(", ");
+            let Some(prompter) = prompter else {
+                console.problem(format_args!(
+                    "error: {file} has several versions of `{name}` ({list}), and none is the \
+                     one the project asks for; give one as `{name}@version`"
+                ));
+                return Err(EXIT_ERROR);
+            };
+            let highest = versions.last().copied();
+            let one_of_them = |answer: &str| match versions.contains(&answer) {
+                true => Ok(()),
+                false => Err(format!("one of {list}")),
+            };
+            let message = format!("{file} has several versions of `{name}`: {list}. Which one?");
+            match prompter.text(&message, highest, &one_of_them) {
+                Ok(version) => Ok(Some(version)),
+                Err(abort) => Err(aborted(abort, console)),
+            }
+        }
+    }
+}
+
+/// `file` as it is named in a message: relative to the project `root` if it is below it.
+fn file_name(file: &Path, root: &Path) -> String {
+    file.strip_prefix(root)
+        .unwrap_or(file)
+        .display()
+        .to_string()
+}
+
+/// Say why a question ended without an answer, and give the exit code.
+fn aborted(abort: prompt::Abort, console: &mut Console) -> u8 {
+    match abort {
+        prompt::Abort::Cancelled => console.problem("cancelled"),
+        prompt::Abort::Failed(why) => console.problem(format_args!("cannot prompt: {why}")),
+    }
+    EXIT_ERROR
+}
+
+/// Set the `ref` of `repo` to the tag that `name` at `version` was released as. A version with
+/// no tag is never pinned silently: with a prompter the person is asked whether to follow the
+/// remote's default branch instead, otherwise it is a warning and the repo follows it.
 fn pin_release(
     repo: &mut AddRepo,
-    release: &Release,
+    name: &str,
+    version: &str,
     source: Option<&dyn Source>,
     prompter: Option<&mut (dyn Prompter + '_)>,
     console: &mut Console,
 ) -> Result<(), u8> {
-    if repo.git_ref.is_some() {
-        return Ok(());
-    }
-    let Release { name, version } = release;
     let Some(source) = source else {
         console.problem(format_args!(
             "warning: `{name}@{version}` is not pinned to a tag, as `--no-sync` lists no tags; \
@@ -513,14 +607,8 @@ fn pin_release(
         "{untagged}. Follow the remote's default branch instead?"
     )) {
         Ok(true) => Ok(()),
-        Ok(false) | Err(prompt::Abort::Cancelled) => {
-            console.problem("cancelled");
-            Err(EXIT_ERROR)
-        }
-        Err(prompt::Abort::Failed(why)) => {
-            console.problem(format_args!("cannot prompt: {why}"));
-            Err(EXIT_ERROR)
-        }
+        Ok(false) => Err(aborted(prompt::Abort::Cancelled, console)),
+        Err(abort) => Err(aborted(abort, console)),
     }
 }
 
@@ -550,14 +638,7 @@ fn complete_add(
             }
             Ok((repo, filled.asked))
         }
-        Err(prompt::Abort::Cancelled) => {
-            console.problem("cancelled");
-            Err(EXIT_ERROR)
-        }
-        Err(prompt::Abort::Failed(why)) => {
-            console.problem(format_args!("cannot prompt: {why}"));
-            Err(EXIT_ERROR)
-        }
+        Err(abort) => Err(aborted(abort, console)),
     }
 }
 
