@@ -51,7 +51,7 @@ A file written by a package manager (`Cargo.lock`, `package-lock.json`, `pnpm-lo
 _Avoid_: Lock, lockfile
 
 **Version tag**:
-The tag of a Repo that a package's version was released as, found by exact match on the names that package's releases use (`name@1.2.3`, `name-v1.2.3`, `v1.2.3`, ...). It becomes the Ref of a Repo added as `npm:name@1.2.3`. A version with no Version tag is never pinned silently.
+The tag of a Repo that a package's version was released as, found by exact match on the names that package's releases use (`name@1.2.3`, `name-v1.2.3`, `v1.2.3`, ...). It becomes the Ref of a Repo added as `npm:name@1.2.3`, or with a Used version found in the Package lockfile. A version with no Version tag is never pinned silently.
 _Avoid_: Release tag, version Ref
 
 **Used version**:

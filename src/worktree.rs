@@ -39,7 +39,7 @@ impl Worktree {
     }
 }
 
-/// The directories a tool's config or lockfile for the project at `project_dir` may sit in,
+/// The directories a tool's config or Package lockfile for the project at `project_dir` may sit in,
 /// nearest first: `project_dir`, then each parent up to the top of its git worktree. Outside a
 /// worktree it is `project_dir` alone.
 pub fn candidate_dirs(project_dir: &Path) -> Vec<PathBuf> {

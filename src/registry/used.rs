@@ -12,7 +12,7 @@ mod pnpm;
 mod yaml;
 mod yarn;
 
-/// The lockfile formats refs can read.
+/// The Package lockfile formats refs can read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     CargoLock,
@@ -21,7 +21,7 @@ pub enum Format {
     Yarn,
 }
 
-/// A version of a package that a lockfile resolved.
+/// A version of a package that a Package lockfile resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Used {
     pub version: String,
@@ -88,17 +88,17 @@ pub fn reads(ecosystem: Ecosystem) -> bool {
 pub struct Found {
     pub file: PathBuf,
     pub format: Format,
-    /// Empty when the lockfile does not have the package.
+    /// Empty when the Package lockfile does not have the package.
     pub used: Vec<Used>,
-    /// Lockfiles of the same ecosystem in the same directory that were not read, in order of
+    /// Package lockfiles of the same ecosystem in the same directory that were not read, in order of
     /// preference.
     pub ignored: Vec<PathBuf>,
 }
 
-/// Which version of a package to use, out of what a lockfile has.
+/// Which version of a package to use, out of what a Package lockfile has.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pick<'a> {
-    /// The lockfile does not have the package.
+    /// The Package lockfile does not have the package.
     Nothing,
     /// One version, the only one or the only one the project asks for itself.
     One(&'a str),
@@ -123,9 +123,9 @@ impl Found {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Lookup {
     Found(Found),
-    /// No lockfile of the ecosystem from the project directory up to the git worktree top.
+    /// No Package lockfile of the ecosystem from the project directory up to the git worktree top.
     Missing,
-    /// The nearest lockfile could not be read.
+    /// The nearest Package lockfile could not be read.
     Unreadable {
         file: PathBuf,
         why: String,
@@ -133,8 +133,8 @@ pub enum Lookup {
 }
 
 /// Look for `name` in the Package lockfile of the project at `project_dir`. The nearest
-/// directory (see `candidate_dirs`) with a lockfile of the ecosystem is the one that is read,
-/// whether or not it has the package; in it, the first of the ecosystem's lockfiles that
+/// directory (see `candidate_dirs`) with a Package lockfile of the ecosystem is the one that is read,
+/// whether or not it has the package; in it, the first of the ecosystem's Package lockfiles that
 /// exists.
 pub fn find(ecosystem: Ecosystem, name: &str, project_dir: &Path) -> Lookup {
     let formats = Format::of(ecosystem);

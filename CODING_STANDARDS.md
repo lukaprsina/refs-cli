@@ -25,6 +25,7 @@ Scripted stand-ins, each given to `cli::run_on`:
 - `refs update`: `update::fake::FakeUpdater` (`tests/cli_update.rs`). `cli::run_with` gets `update::Unmanaged`, so only `cli::run` reaches axoupdater.
 - Registry lookups: `registry::fake::FakeRegistry` (`tests/cli_registry.rs`). The adapters are tested through their pure `found(body)` functions against recorded response bodies (`tests/registry.rs`).
 - Prompts: a scripted `Prompter` (`tests/cli_prompt.rs`).
+- Packages inferred on `add`: `packages::infer_packages` over temp directories (`tests/packages.rs`); the add pipeline through `cli::run_with` with a scripted `Prompter` (`tests/cli_add_packages.rs`).
 - Package lockfiles: `registry::used::used_versions` is tested as data per format (`tests/registry_used.rs`), `registry::used::find` and `worktree::candidate_dirs` over temp directories (`tests/registry_used_find.rs`, `tests/worktree.rs`).
 - Tooling gaps: `tooling::gaps` over temp directories (`tests/tooling.rs`); the note on `sync`, `add` and `--check` through `cli::run_with` (`tests/cli_output.rs`).
 - Tags: `Source::tags` is a row of the `Source` contract (`tests/contract.rs`), run against the fake and git; `registry::tag::tag_for` is tested as data (`tests/registry_tag.rs`).
