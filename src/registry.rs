@@ -119,6 +119,15 @@ pub enum RegistryError {
     )]
     Offline { ecosystem: Ecosystem, name: String },
 
+    #[error("`{shorthand}` does not name a version: {why}")]
+    #[diagnostic(
+        code(refs::registry::bad_version),
+        help(
+            "give an exact version such as `1.2.3`, or leave it out to follow the default branch"
+        )
+    )]
+    BadVersion { shorthand: String, why: String },
+
     #[error(
         "{} gives `{url}` for `{}`, which cannot be used: {problem}",
         .ecosystem.registry(), .name
@@ -147,19 +156,32 @@ impl Registry for Unavailable {
 }
 
 /// The ecosystem, package name and version a shorthand such as `npm:@scope/name@1.2.3` asks
-/// for. The version is what follows the last `@` that does not start a scope.
+/// for. The version is what follows the last `@` that does not start a scope, and may be empty
+/// or not a version: `expand` refuses those.
 fn parse_shorthand(url: &str) -> Option<(Ecosystem, &str, Option<&str>)> {
     let (ecosystem, rest) = Ecosystem::ALL
         .into_iter()
         .find_map(|ecosystem| Some((ecosystem, url.strip_prefix(ecosystem.prefix())?)))?;
-    let version = rest
-        .rfind('@')
-        .filter(|&at| at > 0 && at + 1 < rest.len())
-        .map(|at| rest.split_at(at));
-    Some(match version {
-        Some((name, version)) => (ecosystem, name, Some(&version[1..])),
+    Some(match rest.rfind('@').filter(|&at| at > 0) {
+        Some(at) => (ecosystem, &rest[..at], Some(&rest[at + 1..])),
         None => (ecosystem, rest, None),
     })
+}
+
+/// `version` without a leading `v`, if it is an exact version: it starts with a digit and holds
+/// only letters, digits and `.-+_`. A dist-tag (`latest`) or a range (`^1.2`, `>=1`, `*`) is not
+/// one, and has no tag to map to.
+fn exact_version(version: &str) -> Result<&str, &'static str> {
+    let bare = version.strip_prefix('v').unwrap_or(version);
+    if bare.is_empty() {
+        return Err("the version is empty");
+    }
+    let plain = |c: char| c.is_ascii_alphanumeric() || ".-+_".contains(c);
+    if bare.starts_with(|c: char| c.is_ascii_digit()) && bare.chars().all(plain) {
+        Ok(bare)
+    } else {
+        Err("an exact version such as `1.2.3` is needed, not a tag or a range")
+    }
 }
 
 /// The package and version a shorthand named, for finding the tag it was released as.
@@ -195,6 +217,14 @@ pub fn expand(
             release: None,
         });
     };
+    let version = version
+        .map(|version| {
+            exact_version(version).map_err(|why| RegistryError::BadVersion {
+                shorthand: repo.url.clone(),
+                why: why.to_owned(),
+            })
+        })
+        .transpose()?;
     if offline {
         return Err(RegistryError::Offline {
             ecosystem,

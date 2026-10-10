@@ -519,3 +519,45 @@ fn no_sync_lists_no_tags_and_says_the_version_is_not_pinned() {
     assert!(!config_text(dir.path()).contains("ref ="));
     assert_eq!(tags_asked(&source), 0);
 }
+
+#[test]
+fn a_version_that_is_empty_or_not_a_version_is_refused_before_the_registry_is_asked() {
+    for shorthand in [
+        "npm:foo-js@",
+        "npm:foo-js@latest",
+        "npm:foo-js@^1.2.0",
+        "npm:foo-js@>=1",
+        "npm:foo-js@*",
+    ] {
+        let dir = project();
+        let registry = foo_registry();
+
+        let run = add(dir.path(), &registry, &FakeSource::new(), &[shorthand]);
+
+        assert_eq!(run.code, 1, "{shorthand}: {}", run.err);
+        assert!(
+            run.err.contains(shorthand) && run.err.contains("version"),
+            "{shorthand}: {}",
+            run.err
+        );
+        assert!(registry.calls().is_empty(), "{shorthand}");
+        assert_eq!(config_text(dir.path()), "", "{shorthand}");
+    }
+}
+
+#[test]
+fn a_leading_v_on_the_version_is_ignored() {
+    let dir = project();
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["foo-js-1.2.3"]);
+
+    let run = add(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &["npm:foo-js@v1.2.3", "--id", "foo"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(config_text(dir.path()).contains("ref = \"foo-js-1.2.3\""));
+}
