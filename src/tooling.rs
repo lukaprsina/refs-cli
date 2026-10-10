@@ -143,7 +143,7 @@ pub fn gaps(project_dir: &Path, references_dir: &str, ignored: &[Tool]) -> Vec<G
                 .copied()
                 .filter(|file| dir.join(file).is_file())
                 .collect();
-            (!present.is_empty()).then_some((up, dir, present))
+            (!present.is_empty()).then_some((up, dir, read_by_the_tool(row.tool, present)))
         }) else {
             continue;
         };
@@ -160,6 +160,16 @@ pub fn gaps(project_dir: &Path, references_dir: &str, ignored: &[Tool]) -> Vec<G
         }
     }
     found
+}
+
+/// What the tool reads out of `present`. ESLint reads the flat config alone when there is one:
+/// it ignores `.eslintignore` and the legacy `.eslintrc*` files then.
+fn read_by_the_tool(tool: Tool, present: Vec<&'static str>) -> Vec<&'static str> {
+    let is_flat = |file: &&str| file.starts_with("eslint.config.");
+    if tool == Tool::Eslint && present.iter().any(is_flat) {
+        return present.into_iter().filter(|file| is_flat(file)).collect();
+    }
+    present
 }
 
 /// `references_dir` of the project at `project_dir`, as a `/`-separated path from `dir`, an

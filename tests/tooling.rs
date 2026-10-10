@@ -89,6 +89,22 @@ fn legacy_eslint_is_covered_by_the_directory_in_eslintignore() {
 }
 
 #[test]
+fn a_flat_config_is_not_covered_by_eslintignore_which_eslint_then_ignores() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("eslint.config.js"), "export default [];").unwrap();
+    fs::write(dir.path().join(".eslintignore"), ".references/\n").unwrap();
+
+    assert_eq!(
+        gaps(dir.path(), DIR, &[]),
+        [gap(
+            Tool::Eslint,
+            "eslint.config.js",
+            r#"{ ignores: [".references/**"] }"#
+        )]
+    );
+}
+
+#[test]
 fn prettier_is_fixed_in_prettierignore_even_with_a_config() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join(".prettierrc"), "{}").unwrap();

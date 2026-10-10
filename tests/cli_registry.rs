@@ -572,6 +572,8 @@ fn a_version_that_is_empty_or_not_a_version_is_refused_before_the_registry_is_as
         "npm:foo-js@^1.2.0",
         "npm:foo-js@>=1",
         "npm:foo-js@*",
+        "npm:foo-js@1.x",
+        "npm:foo-js@1.2.X",
     ] {
         let dir = project();
         let registry = foo_registry();

@@ -170,15 +170,19 @@ fn parse_shorthand(url: &str) -> Option<(Ecosystem, &str, Option<&str>)> {
 }
 
 /// `version` without a leading `v`, if it is an exact version: it starts with a digit and holds
-/// only letters, digits and `.-+_`. A dist-tag (`latest`) or a range (`^1.2`, `>=1`, `*`) is not
-/// one, and has no tag to map to.
+/// only letters, digits and `.-+_`, and no `x` or `X` in its numbers. A dist-tag (`latest`) or a
+/// range (`^1.2`, `>=1`, `*`, `1.x`) is not one, and has no tag to map to.
 fn exact_version(version: &str) -> Result<&str, &'static str> {
     let bare = version.strip_prefix('v').unwrap_or(version);
     if bare.is_empty() {
         return Err("the version is empty");
     }
     let plain = |c: char| c.is_ascii_alphanumeric() || ".-+_".contains(c);
-    if bare.starts_with(|c: char| c.is_ascii_digit()) && bare.chars().all(plain) {
+    let numbers = bare.split(['-', '+']).next().unwrap_or(bare);
+    let wildcard = numbers
+        .split('.')
+        .any(|part| part.eq_ignore_ascii_case("x"));
+    if bare.starts_with(|c: char| c.is_ascii_digit()) && bare.chars().all(plain) && !wildcard {
         Ok(bare)
     } else {
         Err("an exact version such as `1.2.3` is needed, not a tag or a range")
