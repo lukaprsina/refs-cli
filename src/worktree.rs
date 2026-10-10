@@ -38,3 +38,19 @@ impl Worktree {
         })
     }
 }
+
+/// The directories a tool's config or lockfile for the project at `project_dir` may sit in,
+/// nearest first: `project_dir`, then each parent up to the top of its git worktree. Outside a
+/// worktree it is `project_dir` alone.
+pub fn candidate_dirs(project_dir: &Path) -> Vec<PathBuf> {
+    let top = Worktree::locate(project_dir).and_then(|tree| dunce::canonicalize(tree.top).ok());
+    let mut dirs = Vec::new();
+    for dir in project_dir.ancestors() {
+        dirs.push(dir.to_path_buf());
+        if top.as_deref().is_none_or(|top| dir == top) {
+            return dirs;
+        }
+    }
+    // The top is not above `project_dir` (a path git and the file system spell differently).
+    vec![project_dir.to_path_buf()]
+}
