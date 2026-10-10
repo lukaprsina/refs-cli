@@ -113,4 +113,4 @@ Flags: `refs <command> --help`. `--offline` (any command) never contacts the net
 
 ## Thanks
 
-The registry lookups and the cleaning of repository URLs build on [opensrc](https://github.com/vercel-labs/opensrc) by Vercel (Apache-2.0; see `NOTICE`).
+The registry lookups, the cleaning of repository URLs and the reading of `pnpm-lock.yaml` and `yarn.lock` build on [opensrc](https://github.com/vercel-labs/opensrc) by Vercel (Apache-2.0; see `NOTICE`).

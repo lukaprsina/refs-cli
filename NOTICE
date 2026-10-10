@@ -9,3 +9,8 @@ This product includes software developed by Vercel Inc.:
   Used in: src/registry/url.rs and tests/registry.rs (the cleaning of a repository URL from a
   package registry, and the test cases for it), derived from
   packages/opensrc/cli/src/core/registries/. Each file says what was changed.
+
+  Used in: src/registry/lockfile/pnpm.rs, yarn.rs and yaml.rs, tests/registry_lockfile.rs and
+  tests/fixtures/lockfiles/ (reading a pnpm-lock.yaml or yarn.lock, with its tests and fixtures),
+  derived from packages/opensrc/cli/src/core/version.rs and packages/opensrc/cli/tests/fixtures/.
+  Each file says what was changed.

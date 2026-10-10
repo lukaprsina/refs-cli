@@ -1,3 +1,21 @@
+// Copyright 2025 Vercel Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
+// except in compliance with the License. You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software distributed under the
+// License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+// either express or implied. See the License for the specific language governing permissions
+// and limitations under the License.
+//
+// Modified for refs-cli: the `pnpm` and `yarn` modules are opensrc's tests of `parse_pnpm_lock`
+// and `parse_yarn_lock` (`packages/opensrc/cli/src/core/version.rs`). Their inputs and the
+// fixtures in `tests/fixtures/lockfiles/` are kept; the assertions were changed to the list of
+// versions `used_versions` returns, and the tests of helpers that are private here were
+// dropped (the fixtures reach the same cases). The `cargo` and `package_lock` modules are new.
+
 //! The versions a Package lockfile says a project uses, from trimmed real lockfiles.
 
 use refs_cli::registry::lockfile::{Format, Used, used_versions};
@@ -186,5 +204,683 @@ mod package_lock {
     #[test]
     fn a_lockfile_that_is_not_json_is_an_error() {
         assert!(used_versions(Format::PackageLock, "react", "nope").is_err());
+    }
+}
+
+const NONE: [&str; 0] = [];
+
+fn versions(format: Format, text: &str, name: &str) -> Vec<String> {
+    used_versions(format, name, text)
+        .unwrap()
+        .into_iter()
+        .map(|used| used.version)
+        .collect()
+}
+
+mod pnpm {
+    use super::*;
+
+    const PNPM_V9: &str = include_str!("fixtures/lockfiles/pnpm-v9-workspace.yaml");
+
+    fn pnpm(text: &str, name: &str) -> Vec<String> {
+        versions(Format::Pnpm, text, name)
+    }
+
+    #[test]
+    fn pnpm_v5_top_level_string_form() {
+        let text = r#"lockfileVersion: '5.4'
+
+specifiers:
+  zod: ^3.22.0
+
+dependencies:
+  zod: 3.22.0
+
+packages:
+  /zod/3.22.0:
+    resolution: {}
+"#;
+        assert_eq!(pnpm(text, "zod"), ["3.22.0"]);
+    }
+
+    #[test]
+    fn pnpm_v6_top_level_object_form() {
+        let text = r#"lockfileVersion: '6.0'
+
+dependencies:
+  zod:
+    specifier: ^3.22.0
+    version: 3.22.0
+
+packages:
+  /zod@3.22.0:
+    resolution: {}
+"#;
+        assert_eq!(pnpm(text, "zod"), ["3.22.0"]);
+    }
+
+    #[test]
+    fn pnpm_v9_importer_with_peer_suffix() {
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      react-dom:
+        specifier: ^18.0.0
+        version: 18.2.0(react@18.0.0)
+
+packages:
+  react-dom@18.2.0:
+    resolution: {}
+"#;
+        assert_eq!(pnpm(text, "react-dom"), ["18.2.0"]);
+    }
+
+    #[test]
+    fn pnpm_scoped_package_importer() {
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      '@scope/pkg':
+        specifier: ^1.0.0
+        version: 1.2.3
+"#;
+        assert_eq!(pnpm(text, "@scope/pkg"), ["1.2.3"]);
+    }
+
+    #[test]
+    fn pnpm_fallback_to_packages_key() {
+        let text = r#"lockfileVersion: '9.0'
+
+packages:
+  zod@3.22.0:
+    resolution: {}
+"#;
+        assert_eq!(pnpm(text, "zod"), ["3.22.0"]);
+    }
+
+    #[test]
+    fn pnpm_scoped_fallback_to_packages_key() {
+        let text = r#"lockfileVersion: '9.0'
+
+packages:
+  '@scope/pkg@1.2.3':
+    resolution: {}
+"#;
+        assert_eq!(pnpm(text, "@scope/pkg"), ["1.2.3"]);
+    }
+
+    #[test]
+    fn pnpm_returns_none_when_absent() {
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      react:
+        specifier: ^18.0.0
+        version: 18.0.0
+"#;
+        assert_eq!(pnpm(text, "zod"), NONE);
+    }
+
+    #[test]
+    fn pnpm_ignores_peer_suffix_false_match() {
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      react-dom:
+        specifier: ^18.0.0
+        version: 18.2.0(react@17.0.0)
+"#;
+        assert_eq!(pnpm(text, "react"), NONE);
+    }
+
+    #[test]
+    fn pnpm_every_importers_version_is_listed() {
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      zod:
+        specifier: ^3.22.0
+        version: 3.22.0
+  apps/docs:
+    dependencies:
+      zod:
+        specifier: ^3.23.0
+        version: 3.23.0
+"#;
+        assert_eq!(pnpm(text, "zod"), ["3.22.0", "3.23.0"]);
+    }
+
+    #[test]
+    fn pnpm_devdependencies_in_importer() {
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    devDependencies:
+      typescript:
+        specifier: ^5.0.0
+        version: 5.4.5
+"#;
+        assert_eq!(pnpm(text, "typescript"), ["5.4.5"]);
+    }
+
+    #[test]
+    fn pnpm_optional_dependencies_in_importer() {
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    optionalDependencies:
+      fsevents:
+        specifier: ^2.3.0
+        version: 2.3.3
+"#;
+        assert_eq!(pnpm(text, "fsevents"), ["2.3.3"]);
+    }
+
+    #[test]
+    fn pnpm_crlf_line_endings() {
+        let text = "lockfileVersion: '9.0'\r\n\r\nimporters:\r\n  .:\r\n    dependencies:\r\n      zod:\r\n        specifier: ^3.22.0\r\n        version: 3.22.0\r\n";
+        assert_eq!(pnpm(text, "zod"), ["3.22.0"]);
+    }
+
+    #[test]
+    fn pnpm_empty_file() {
+        assert_eq!(pnpm("", "zod"), NONE);
+    }
+
+    #[test]
+    fn pnpm_only_comments() {
+        let text = "# just a comment\n# another one\n";
+        assert_eq!(pnpm(text, "zod"), NONE);
+    }
+
+    #[test]
+    fn pnpm_inline_comment_stripped() {
+        // pnpm doesn't actually emit inline comments, but hand-edited or
+        // future-format files shouldn't leak comment text into versions.
+        let text = r#"lockfileVersion: '9.0'
+
+dependencies:
+  zod: 3.22.0 # pinned
+"#;
+        assert_eq!(pnpm(text, "zod"), ["3.22.0"]);
+    }
+
+    #[test]
+    fn pnpm_skips_link_version_in_importer() {
+        // pnpm workspace dep pinned via `link:` must not be returned as a
+        // version — it would be passed verbatim to npm and fail.
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  apps/web:
+    dependencies:
+      my-ui-lib:
+        specifier: workspace:^
+        version: link:../../packages/ui
+"#;
+        assert_eq!(pnpm(text, "my-ui-lib"), NONE);
+    }
+
+    #[test]
+    fn pnpm_workspace_link_in_first_importer_does_not_block_later_real_version() {
+        // First importer has a `link:` version; second has a real one. The workspace link
+        // is skipped and the real version is found.
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  apps/web:
+    dependencies:
+      shared:
+        specifier: workspace:^
+        version: link:../../packages/shared
+  apps/docs:
+    dependencies:
+      shared:
+        specifier: ^1.2.3
+        version: 1.2.3
+"#;
+        assert_eq!(pnpm(text, "shared"), ["1.2.3"]);
+    }
+
+    #[test]
+    fn pnpm_skips_link_version_in_top_level_deps() {
+        let text = r#"lockfileVersion: '6.0'
+
+dependencies:
+  my-lib: link:../my-lib
+"#;
+        assert_eq!(pnpm(text, "my-lib"), NONE);
+    }
+
+    #[test]
+    fn pnpm_skips_file_protocol_in_importer() {
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      tarball-pkg:
+        specifier: file:./pkg.tgz
+        version: file:pkg.tgz
+"#;
+        assert_eq!(pnpm(text, "tarball-pkg"), NONE);
+    }
+
+    #[test]
+    fn pnpm_indent_relative_parses_4_space_indent() {
+        // Not how pnpm emits, but the stack-based parser shouldn't care.
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+    .:
+        dependencies:
+            zod:
+                specifier: ^3.22.0
+                version: 3.22.0
+"#;
+        assert_eq!(pnpm(text, "zod"), ["3.22.0"]);
+    }
+
+    #[test]
+    fn pnpm_transitive_via_snapshots() {
+        // foo is transitively reachable from root dep next via snapshots graph.
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      next:
+        specifier: ^14
+        version: 14.0.0(react@18.2.0)
+
+packages:
+
+  foo@1.0.0:
+    resolution: {}
+
+  next@14.0.0:
+    resolution: {}
+
+  react@18.2.0:
+    resolution: {}
+
+snapshots:
+
+  foo@1.0.0: {}
+
+  next@14.0.0(react@18.2.0):
+    dependencies:
+      foo: 1.0.0
+      react: 18.2.0
+
+  react@18.2.0: {}
+"#;
+        assert_eq!(pnpm(text, "foo"), ["1.0.0"]);
+    }
+
+    #[test]
+    fn pnpm_transitive_lists_every_version() {
+        // Two react versions exist in snapshots, and the root reaches only 18.2.0. Both are
+        // listed, as neither is a dependency of the project itself.
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      next:
+        specifier: ^14
+        version: 14.0.0(react@18.2.0)
+
+snapshots:
+
+  next@14.0.0(react@18.2.0):
+    dependencies:
+      react: 18.2.0
+
+  react@17.0.0: {}
+
+  react@18.2.0: {}
+"#;
+        assert_eq!(pnpm(text, "react"), ["17.0.0", "18.2.0"]);
+    }
+
+    #[test]
+    fn pnpm_transitive_falls_back_to_packages_when_unreachable() {
+        // `unused` isn't reachable from any root; should fall back to the
+        // first matching `packages:` key.
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      zod:
+        specifier: ^3
+        version: 3.22.0
+
+packages:
+
+  unused@9.9.9:
+    resolution: {}
+
+  zod@3.22.0:
+    resolution: {}
+
+snapshots:
+
+  zod@3.22.0: {}
+"#;
+        assert_eq!(pnpm(text, "unused"), ["9.9.9"]);
+    }
+
+    #[test]
+    fn pnpm_transitive_handles_cycles() {
+        // a → b → a cycle; looking up a non-cyclic pkg should still work.
+        let text = r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      a:
+        specifier: ^1
+        version: 1.0.0
+
+snapshots:
+
+  a@1.0.0:
+    dependencies:
+      b: 1.0.0
+
+  b@1.0.0:
+    dependencies:
+      a: 1.0.0
+      target: 2.0.0
+
+  target@2.0.0: {}
+"#;
+        assert_eq!(pnpm(text, "target"), ["2.0.0"]);
+    }
+
+    #[test]
+    fn pnpm_fixture_direct_importer_dep() {
+        assert_eq!(pnpm(PNPM_V9, "next"), ["14.0.0"]);
+    }
+
+    #[test]
+    fn pnpm_fixture_scoped_direct_dep() {
+        assert_eq!(pnpm(PNPM_V9, "@types/react"), ["18.2.45"]);
+    }
+
+    #[test]
+    fn pnpm_fixture_multi_importer_lists_both() {
+        // apps/web uses react@18.2.0 and apps/legacy react@17.0.2.
+        assert_eq!(pnpm(PNPM_V9, "react"), ["17.0.2", "18.2.0"]);
+    }
+
+    #[test]
+    fn pnpm_fixture_transitive_via_bfs() {
+        // js-tokens is only reachable via loose-envify; not a direct dep.
+        assert_eq!(pnpm(PNPM_V9, "js-tokens"), ["4.0.0"]);
+    }
+
+    #[test]
+    fn pnpm_fixture_transitive_lists_every_version() {
+        // scheduler@0.20.2 (via legacy) and scheduler@0.23.0 (via web) both exist.
+        assert_eq!(pnpm(PNPM_V9, "scheduler"), ["0.20.2", "0.23.0"]);
+    }
+
+    #[test]
+    fn pnpm_marks_what_an_importer_lists_as_direct() {
+        let used = |name| used_versions(Format::Pnpm, name, PNPM_V9).unwrap();
+        assert_eq!(
+            used("react"),
+            [super::used("17.0.2", true), super::used("18.2.0", true)]
+        );
+        assert_eq!(
+            used("scheduler"),
+            [super::used("0.20.2", false), super::used("0.23.0", false)]
+        );
+    }
+
+    #[test]
+    fn pnpm_fixture_absent() {
+        assert_eq!(pnpm(PNPM_V9, "definitely-not-here"), NONE);
+    }
+
+    #[test]
+    fn pnpm_fixture_top_level_typescript_dev_dep() {
+        assert_eq!(pnpm(PNPM_V9, "typescript"), ["5.3.3"]);
+    }
+}
+
+mod yarn {
+    use super::*;
+
+    const YARN_V1: &str = include_str!("fixtures/lockfiles/yarn-v1.lock");
+    const YARN_BERRY: &str = include_str!("fixtures/lockfiles/yarn-berry.lock");
+
+    fn yarn(text: &str, name: &str) -> Vec<String> {
+        versions(Format::Yarn, text, name)
+    }
+
+    #[test]
+    fn yarn_v1_single_specifier() {
+        let text = "# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT DIRECTLY.\n\
+# yarn lockfile v1\n\
+\n\
+\n\
+\"zod@^3.22.0\":\n  \
+version \"3.22.0\"\n  \
+resolved \"https://registry.yarnpkg.com/zod/-/zod-3.22.0.tgz\"\n";
+        assert_eq!(yarn(text, "zod"), ["3.22.0"]);
+    }
+
+    #[test]
+    fn yarn_v1_multi_specifier_match_not_first() {
+        let text = "# yarn lockfile v1\n\
+\n\
+\n\
+\"foo@^1.0.0\":\n  \
+version \"1.0.0\"\n\
+\n\
+\"bar@^1.0.0\", \"bar@~1.2.0\":\n  \
+version \"1.2.3\"\n";
+        assert_eq!(yarn(text, "bar"), ["1.2.3"]);
+    }
+
+    #[test]
+    fn yarn_v1_scoped_package() {
+        let text = "# yarn lockfile v1\n\
+\n\
+\n\
+\"@scope/pkg@^1.0.0\":\n  \
+version \"1.0.0\"\n";
+        assert_eq!(yarn(text, "@scope/pkg"), ["1.0.0"]);
+    }
+
+    #[test]
+    fn yarn_berry_npm_protocol() {
+        let text = "# This file is generated by running \"yarn install\".\n\
+\n\
+__metadata:\n  \
+version: 6\n  \
+cacheKey: 8\n\
+\n\
+\"zod@npm:^3.22.0\":\n  \
+version: 3.22.0\n  \
+resolution: \"zod@npm:3.22.0\"\n";
+        assert_eq!(yarn(text, "zod"), ["3.22.0"]);
+    }
+
+    #[test]
+    fn yarn_berry_comma_separated_specifiers() {
+        let text = "__metadata:\n  \
+version: 6\n\
+\n\
+\"foo@npm:^1.0.0, foo@workspace:*\":\n  \
+version: 1.2.3\n  \
+resolution: \"foo@npm:1.2.3\"\n";
+        assert_eq!(yarn(text, "foo"), ["1.2.3"]);
+    }
+
+    #[test]
+    fn yarn_berry_scoped_package() {
+        let text = "__metadata:\n  \
+version: 6\n\
+\n\
+\"@scope/pkg@npm:^1.0.0\":\n  \
+version: 1.2.3\n";
+        assert_eq!(yarn(text, "@scope/pkg"), ["1.2.3"]);
+    }
+
+    #[test]
+    fn yarn_returns_none_when_absent() {
+        let text = "# yarn lockfile v1\n\
+\n\
+\n\
+\"foo@^1.0.0\":\n  \
+version \"1.0.0\"\n";
+        assert_eq!(yarn(text, "zod"), NONE);
+    }
+
+    #[test]
+    fn yarn_skips_metadata_block() {
+        let text = "__metadata:\n  \
+version: 6\n";
+        assert_eq!(yarn(text, "__metadata"), NONE);
+    }
+
+    #[test]
+    fn yarn_crlf_line_endings() {
+        let text = "# yarn lockfile v1\r\n\r\n\r\n\"zod@^3.22.0\":\r\n  version \"3.22.0\"\r\n";
+        assert_eq!(yarn(text, "zod"), ["3.22.0"]);
+    }
+
+    #[test]
+    fn yarn_empty_file() {
+        assert_eq!(yarn("", "zod"), NONE);
+    }
+
+    #[test]
+    fn yarn_v1_inline_comment_stripped() {
+        let text = "# yarn lockfile v1\n\
+\n\
+\n\
+\"zod@^3.22.0\":\n  \
+version \"3.22.0\" # pinned\n";
+        assert_eq!(yarn(text, "zod"), ["3.22.0"]);
+    }
+
+    #[test]
+    fn yarn_berry_inline_comment_stripped() {
+        let text = "__metadata:\n  \
+version: 6\n\
+\n\
+\"zod@npm:^3.22.0\":\n  \
+version: 3.22.0 # pinned\n";
+        assert_eq!(yarn(text, "zod"), ["3.22.0"]);
+    }
+
+    #[test]
+    fn yarn_berry_skips_workspace_root_sentinel() {
+        // Yarn Berry gives the workspace root `version: 0.0.0-use.local`.
+        // Returning that would make the caller try to fetch it from npm.
+        let text = "__metadata:\n  \
+version: 6\n\
+\n\
+\"myproject@workspace:.\":\n  \
+version: 0.0.0-use.local\n  \
+resolution: \"myproject@workspace:.\"\n";
+        assert_eq!(yarn(text, "myproject"), NONE);
+    }
+
+    #[test]
+    fn yarn_berry_workspace_block_does_not_block_later_real_block() {
+        // A workspace self-reference should be skipped, but a real block for
+        // the same name later in the file should still be found.
+        let text = "__metadata:\n  \
+version: 6\n\
+\n\
+\"foo@workspace:packages/foo\":\n  \
+version: 0.0.0-use.local\n  \
+resolution: \"foo@workspace:packages/foo\"\n\
+\n\
+\"foo@npm:^1.0.0\":\n  \
+version: 1.2.3\n  \
+resolution: \"foo@npm:1.2.3\"\n";
+        assert_eq!(yarn(text, "foo"), ["1.2.3"]);
+    }
+
+    #[test]
+    fn yarn_v1_skips_link_protocol_version() {
+        // Yarn v1 can record a `file:` or linked dep with a protocol version.
+        let text = "# yarn lockfile v1\n\
+\n\
+\n\
+\"my-lib@file:../my-lib\":\n  \
+version \"file:../my-lib\"\n";
+        assert_eq!(yarn(text, "my-lib"), NONE);
+    }
+
+    #[test]
+    fn yarn_v1_fixture_scoped() {
+        assert_eq!(yarn(YARN_V1, "@babel/core"), ["7.23.0"]);
+        assert_eq!(yarn(YARN_V1, "@types/react"), ["18.2.45"]);
+    }
+
+    #[test]
+    fn yarn_v1_fixture_multi_specifier() {
+        // lodash@^4.17.21 is in a multi-specifier header, and lodash@^3 has a block of its own.
+        assert_eq!(yarn(YARN_V1, "lodash"), ["3.10.1", "4.17.21"]);
+    }
+
+    #[test]
+    fn yarn_v1_fixture_direct_deps() {
+        assert_eq!(yarn(YARN_V1, "react"), ["18.2.0"]);
+        assert_eq!(yarn(YARN_V1, "typescript"), ["5.3.3"]);
+        assert_eq!(yarn(YARN_V1, "zod"), ["3.22.4"]);
+    }
+
+    #[test]
+    fn yarn_cannot_say_what_is_direct() {
+        let found = used_versions(Format::Yarn, "react", YARN_V1).unwrap();
+        assert!(!found.is_empty() && found.iter().all(|used| !used.direct));
+    }
+
+    #[test]
+    fn yarn_v1_fixture_absent() {
+        assert_eq!(yarn(YARN_V1, "not-installed-anywhere"), NONE);
+    }
+
+    #[test]
+    fn yarn_berry_fixture_scoped_with_npm_protocol() {
+        assert_eq!(yarn(YARN_BERRY, "@types/react"), ["18.2.45"]);
+    }
+
+    #[test]
+    fn yarn_berry_fixture_comma_specifier() {
+        assert_eq!(yarn(YARN_BERRY, "lodash"), ["4.17.21"]);
+    }
+
+    #[test]
+    fn yarn_berry_fixture_direct_deps() {
+        assert_eq!(yarn(YARN_BERRY, "react"), ["18.2.0"]);
+        assert_eq!(yarn(YARN_BERRY, "typescript"), ["5.3.3"]);
+    }
+
+    #[test]
+    fn yarn_berry_fixture_absent() {
+        assert_eq!(yarn(YARN_BERRY, "not-installed-anywhere"), NONE);
     }
 }

@@ -3,12 +3,17 @@
 
 mod cargo;
 mod package_lock;
+mod pnpm;
+mod yaml;
+mod yarn;
 
 /// The lockfile formats refs can read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     CargoLock,
     PackageLock,
+    Pnpm,
+    Yarn,
 }
 
 /// A version of a package that a lockfile resolved.
@@ -28,6 +33,8 @@ pub fn used_versions(format: Format, name: &str, text: &str) -> Result<Vec<Used>
     let found = match format {
         Format::CargoLock => cargo::used(name, text)?,
         Format::PackageLock => package_lock::used(name, text)?,
+        Format::Pnpm => pnpm::used(name, text),
+        Format::Yarn => yarn::used(name, text),
     };
     Ok(distinct(found))
 }
