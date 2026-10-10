@@ -213,7 +213,8 @@ fn plan_and_apply(
     } else {
         let dir = config.settings.references_dir();
         let mut report = apply(source, root, dir, plan, flags);
-        // Only a run that got through: under `-q` a gap is hidden only then (`print_report`).
+        // Only a run that got through, as `-q` hides notes only then (`print_report`); with no
+        // active Repo there is no references directory to keep out.
         if report.outcome == Outcome::InSync && active.repos().next().is_some() {
             let gaps = tooling::gaps(root, dir, &config.tooling_ignored());
             report

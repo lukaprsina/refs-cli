@@ -24,10 +24,10 @@ fn worktree() -> (TempDir, PathBuf, PathBuf) {
     (repo, top, project)
 }
 
-fn gap(tool: Tool, config: &str, snippet: &str) -> Gap {
+fn gap(tool: Tool, file: &str, snippet: &str) -> Gap {
     Gap {
         tool,
-        config: config.into(),
+        file: file.into(),
         snippet: snippet.into(),
     }
 }
@@ -123,7 +123,7 @@ fn oxlint_and_tsc_name_their_own_key() {
     fs::write(dir.path().join("tsconfig.json"), "{}").unwrap();
 
     let mut found = gaps(dir.path(), DIR, &[]);
-    found.sort_by_key(|gap| gap.config.clone());
+    found.sort_by_key(|gap| gap.file.clone());
 
     assert_eq!(
         found,

@@ -450,10 +450,10 @@ pub enum Note {
     Recreated { id: String },
 
     #[error("{tool} does not exclude the references directory")]
-    #[diagnostic(code(refs::tooling::gap), help("add this to {config}: {snippet}"))]
+    #[diagnostic(code(refs::tooling::gap), help("add this to {file}: {snippet}"))]
     ToolingGap {
         tool: &'static str,
-        config: String,
+        file: String,
         snippet: String,
     },
 }
@@ -462,7 +462,7 @@ impl From<Gap> for Note {
     fn from(gap: Gap) -> Note {
         Note::ToolingGap {
             tool: gap.tool.name(),
-            config: gap.config,
+            file: gap.file,
             snippet: gap.snippet,
         }
     }
