@@ -50,6 +50,17 @@ pub fn select_ref(url: &str, git_ref: &str, ls_remote: &str) -> Result<String, S
         })
 }
 
+/// The tag names in `git ls-remote --tags --refs` output, sorted. `--refs` leaves out the
+/// `^{}` lines, so an annotated tag is listed once, by its own name.
+pub fn select_tags(ls_remote: &str) -> Vec<String> {
+    let mut tags: Vec<String> = lines(ls_remote)
+        .filter_map(|(_, name)| name.strip_prefix("refs/tags/"))
+        .map(Into::into)
+        .collect();
+    tags.sort();
+    tags
+}
+
 /// The remote's default branch and its commit, from `git ls-remote --symref <url> HEAD`.
 /// The branch is omitted when the remote's HEAD is detached (no `ref:` line).
 pub fn select_head(url: &str, ls_remote: &str) -> Result<(String, Option<String>), SourceError> {

@@ -127,6 +127,9 @@ pub trait Source {
         pin: &Pin,
         opts: MaterialiseOpts,
     ) -> Result<(), SourceError>;
+    /// The names of the remote's tags, sorted. Asks the remote (one round trip); never touches
+    /// the Cache or a Checkout. Takes a URL, as the Repo it is for is not in the config yet.
+    fn tags(&self, url: &str) -> Result<Vec<String>, SourceError>;
     fn remove(&self, id: &str) -> Result<(), SourceError>;
     fn inspect(&self, id: &str) -> Result<Observed, SourceError>;
     /// The names of the directories in the references directory, whatever made them.

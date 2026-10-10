@@ -32,6 +32,9 @@ trait Harness {
     /// Put `ID` into `state`. An `At` must use one of `pins()`.
     fn seed(&self, state: Observed);
     fn source(&self) -> &dyn Source;
+    /// Tag the remote's first commit with a lightweight tag for each of `lightweight` and an
+    /// annotated one for each of `annotated`.
+    fn tag(&self, lightweight: &[&str], annotated: &[&str]);
     /// The Repo `ID` on `url()`, as a user would write it, with the paths `PATHS`.
     fn repo(&self) -> Repo {
         repo_with(&self.url(), &PATHS)
@@ -62,6 +65,10 @@ impl Harness for FakeHarness {
     }
     fn source(&self) -> &dyn Source {
         &self.source
+    }
+    fn tag(&self, lightweight: &[&str], annotated: &[&str]) {
+        let names = lightweight.iter().chain(annotated);
+        self.source.set_tags(FAKE_URL, names.copied());
     }
 }
 
@@ -157,6 +164,17 @@ impl Harness for GitHarness {
     fn source(&self) -> &dyn Source {
         &self.source
     }
+    fn tag(&self, lightweight: &[&str], annotated: &[&str]) {
+        for name in lightweight {
+            git(&self.remote, &["tag", name, &self.shas[0]]);
+        }
+        for name in annotated {
+            git(
+                &self.remote,
+                &["tag", "-a", "-m", name, name, &self.shas[0]],
+            );
+        }
+    }
 }
 
 /// The Repo `ID` on `url` with `paths`, as a user would write it.
@@ -199,6 +217,24 @@ fn contract<H: Harness>(new: impl Fn() -> H) {
     inspect_rows(&new);
     remove_rows(&new);
     materialise_rows(&new);
+    tags_rows(&new);
+}
+
+/// `tags` lists the names of the remote's tags, sorted, with an annotated tag once and by its
+/// own name (not the `^{}` of its commit), and nothing for a remote with no tags.
+fn tags_rows<H: Harness>(new: &impl Fn() -> H) {
+    let h = new();
+    assert_eq!(
+        h.source().tags(&h.url()).unwrap(),
+        Vec::<String>::new(),
+        "tags: none"
+    );
+    h.tag(&["v1.0.0", "a-1.0.0"], &["v2.0.0"]);
+    assert_eq!(
+        h.source().tags(&h.url()).unwrap(),
+        ["a-1.0.0", "v1.0.0", "v2.0.0"],
+        "tags: lightweight and annotated"
+    );
 }
 
 /// `inspect` reports what was seeded, and looking changes nothing.

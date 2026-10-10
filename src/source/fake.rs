@@ -24,6 +24,7 @@ pub enum Call {
     Verify { id: String, offline: bool },
     Materialise { id: String, offline: bool },
     Remove(String),
+    Tags(String),
 }
 
 #[derive(Default)]
@@ -31,6 +32,7 @@ pub struct FakeSource {
     disk: RefCell<HashMap<String, Observed>>,
     failures: RefCell<HashMap<(String, Method), String>>,
     commits: RefCell<HashMap<String, String>>,
+    tags: RefCell<HashMap<String, Vec<String>>>,
     calls: RefCell<Vec<Call>>,
 }
 
@@ -61,7 +63,14 @@ impl FakeSource {
         self.commits.borrow_mut().insert(id.into(), sha.into());
     }
 
-    /// Every `resolve`, `verify`, `materialise` and `remove` received so far.
+    /// The tags `tags` returns for `url` from now on, sorted.
+    pub fn set_tags<'a>(&self, url: &str, names: impl IntoIterator<Item = &'a str>) {
+        let mut names: Vec<String> = names.into_iter().map(Into::into).collect();
+        names.sort();
+        self.tags.borrow_mut().insert(url.into(), names);
+    }
+
+    /// Every `resolve`, `verify`, `materialise`, `remove` and `tags` received so far.
     pub fn calls(&self) -> Vec<Call> {
         self.calls.borrow().clone()
     }
@@ -132,6 +141,11 @@ impl Source for FakeSource {
         Ok(())
     }
 
+    fn tags(&self, url: &str) -> Result<Vec<String>, SourceError> {
+        self.record(Call::Tags(url.into()));
+        Ok(self.tags.borrow().get(url).cloned().unwrap_or_default())
+    }
+
     fn remove(&self, id: &str) -> Result<(), SourceError> {
         self.record(Call::Remove(id.into()));
         self.check(id, Method::Remove)?;
@@ -184,6 +198,9 @@ impl Source for &FakeSource {
         opts: MaterialiseOpts,
     ) -> Result<(), SourceError> {
         (**self).materialise(repo, pin, opts)
+    }
+    fn tags(&self, url: &str) -> Result<Vec<String>, SourceError> {
+        (**self).tags(url)
     }
     fn remove(&self, id: &str) -> Result<(), SourceError> {
         (**self).remove(id)

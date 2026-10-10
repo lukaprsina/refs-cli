@@ -21,7 +21,8 @@ use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::prompt::{self, Packages, Prompter};
-use crate::registry::{self, Registry};
+use crate::registry::tag::tag_for;
+use crate::registry::{self, Registry, Release};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
 use crate::update::{self, Updater};
@@ -385,7 +386,6 @@ fn run_config<'a>(
     mut asking: Asking,
     console: &mut Console,
 ) -> u8 {
-    let mut asked_repo = None;
     let flags_for_sync = SyncFlags {
         offline: asking.offline,
         ..SyncFlags::default()
@@ -400,38 +400,27 @@ fn run_config<'a>(
             console.data(&list(config, color));
             return 0;
         }
-        ConfigCommand::Add { repo, flags } => {
-            let packages = if flags.no_sync {
-                Packages::Now
-            } else {
-                Packages::Later
-            };
-            let repo = match registry::expand(repo, asking.registry, asking.offline) {
-                Ok(expanded) => expanded,
-                Err(e) => return fail(e, console),
-            };
-            let (repo, asked) = match complete_add(
-                &repo,
-                config,
-                asking.prompter.as_deref_mut(),
-                packages,
-                console,
-            ) {
-                Ok(completed) => completed,
+        ConfigCommand::Add { repo, flags } if flags.no_sync => {
+            let (repo, _) = match prepare_add(repo, None, config, &mut asking, console) {
+                Ok(prepared) => prepared,
                 Err(code) => return code,
             };
-            let repo = asked_repo.insert(repo);
-            if packages == Packages::Later {
-                return with_source(make_source, root, config, console, |source, console| {
-                    let job = AddJob {
-                        repo,
-                        flags: &flags_for_sync,
-                        asked,
+            return print_report(&sync::edit_only(root, &Edit::Add(&repo)), false, console);
+        }
+        ConfigCommand::Add { repo, .. } => {
+            return with_source(make_source, root, config, console, |source, console| {
+                let (repo, asked) =
+                    match prepare_add(repo, Some(source), config, &mut asking, console) {
+                        Ok(prepared) => prepared,
+                        Err(code) => return code,
                     };
-                    add(source, root, config, &job, asking.prompter, console)
-                });
-            }
-            (flags, Edit::Add(repo))
+                let job = AddJob {
+                    repo: &repo,
+                    flags: &flags_for_sync,
+                    asked,
+                };
+                add(source, root, config, &job, asking.prompter, console)
+            });
         }
         ConfigCommand::Remove(args) => (&args.flags, Edit::Remove(&args.id)),
         ConfigCommand::Disable(args) => (&args.flags, Edit::Disable(args.target())),
@@ -444,6 +433,94 @@ fn run_config<'a>(
             let report = sync::edit(source, root, &edit, &flags_for_sync);
             print_report(&report, false, console)
         })
+    }
+}
+
+/// `repo` ready to add: a registry shorthand expanded and its version pinned to a tag, then
+/// completed (see `complete_add`). With a `source` a sync follows, so the `packages` are left
+/// to `add`; without one (`--no-sync`) nothing can be listed or read.
+fn prepare_add(
+    repo: &AddRepo,
+    source: Option<&dyn Source>,
+    config: &Config,
+    asking: &mut Asking,
+    console: &mut Console,
+) -> Result<(AddRepo, bool), u8> {
+    let expanded = match registry::expand(repo, asking.registry, asking.offline) {
+        Ok(expanded) => expanded,
+        Err(e) => return Err(fail(e, console)),
+    };
+    let mut repo = expanded.repo;
+    if let Some(release) = &expanded.release {
+        pin_release(
+            &mut repo,
+            release,
+            source,
+            asking.prompter.as_deref_mut(),
+            console,
+        )?;
+    }
+    let packages = if source.is_some() {
+        Packages::Later
+    } else {
+        Packages::Now
+    };
+    complete_add(
+        &repo,
+        config,
+        asking.prompter.as_deref_mut(),
+        packages,
+        console,
+    )
+}
+
+/// Set the `ref` of `repo` to the tag that `release` was released as. An explicit `ref` is
+/// left alone. A version with no tag is never pinned silently: with a prompter the person
+/// is asked whether to follow the remote's default branch instead, otherwise it is a warning
+/// and the repo follows it.
+fn pin_release(
+    repo: &mut AddRepo,
+    release: &Release,
+    source: Option<&dyn Source>,
+    prompter: Option<&mut (dyn Prompter + '_)>,
+    console: &mut Console,
+) -> Result<(), u8> {
+    if repo.git_ref.is_some() {
+        return Ok(());
+    }
+    let Release { name, version } = release;
+    let Some(source) = source else {
+        console.problem(format_args!(
+            "warning: `{name}@{version}` is not pinned to a tag, as `--no-sync` lists no tags; \
+             the repo follows the remote's default branch"
+        ));
+        return Ok(());
+    };
+    let tags = source.tags(&repo.url).map_err(|e| fail(e, console))?;
+    if let Some(tag) = tag_for(name, version, &tags) {
+        console.status(format_args!("pinned `{name}@{version}` to the tag `{tag}`"));
+        repo.git_ref = Some(tag.to_owned());
+        return Ok(());
+    }
+    let untagged = format!("{name}@{version} is not tagged in {}", repo.url);
+    let Some(prompter) = prompter else {
+        console.problem(format_args!(
+            "warning: {untagged}; the repo follows the remote's default branch"
+        ));
+        return Ok(());
+    };
+    match prompter.confirm(&format!(
+        "{untagged}. Follow the remote's default branch instead?"
+    )) {
+        Ok(true) => Ok(()),
+        Ok(false) | Err(prompt::Abort::Cancelled) => {
+            console.problem("cancelled");
+            Err(EXIT_ERROR)
+        }
+        Err(prompt::Abort::Failed(why)) => {
+            console.problem(format_args!("cannot prompt: {why}"));
+            Err(EXIT_ERROR)
+        }
     }
 }
 

@@ -83,6 +83,15 @@ impl Source for GitSource {
         Ok(Pin::git(url, git_ref, &sha, None))
     }
 
+    fn tags(&self, url: &str) -> Result<Vec<String>, SourceError> {
+        remote::check_input(url, "HEAD")?;
+        let out = Cmd::new()
+            .args(["ls-remote", "--tags", "--refs", "--"])
+            .arg(url)
+            .run()?;
+        Ok(remote::select_tags(&out))
+    }
+
     fn verify(&self, repo: RepoRef, pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError> {
         let (url, sha) = (pin.url(), pin.sha());
         remote::check_sha(sha)?;

@@ -6,7 +6,7 @@ use refs_cli::source::git::checkout::{lexical_path, parse_gitdir, worktree_entry
 use refs_cli::source::git::remote::{
     EntryKind, ancestor_dirs, cache_dir_name, check_input, check_version, commit_unavailable,
     dirty_files, entry_kind, missing_object, missing_oids, normalise_url, select_head, select_ref,
-    tree_blobs,
+    select_tags, tree_blobs,
 };
 use std::path::Path;
 
@@ -408,4 +408,12 @@ mod checkout_files {
         );
         assert!(dirty_files("").is_empty());
     }
+}
+
+#[test]
+fn select_tags_lists_the_tag_names_sorted() {
+    let out =
+        format!("{B}\trefs/tags/v2.0.0\n{A}\trefs/tags/@o/foo@1.0.0\n{A}\trefs/tags/v1.0.0\n");
+    assert_eq!(select_tags(&out), ["@o/foo@1.0.0", "v1.0.0", "v2.0.0"]);
+    assert!(select_tags("").is_empty());
 }

@@ -137,3 +137,13 @@ fn an_unreachable_remote_is_a_git_failure() {
     };
     assert_eq!(code(gone.resolve(None).unwrap_err()), "refs::git::failed");
 }
+
+#[test]
+fn tags_refuses_a_url_git_would_read_as_an_option() {
+    let source = GitSource::new(
+        PathBuf::from("/nonexistent/cache"),
+        PathBuf::from("/nonexistent/refs"),
+    );
+    let e = source.tags("--upload-pack=x").unwrap_err();
+    assert_eq!(e.code().unwrap().to_string(), "refs::git::unsafe_input");
+}

@@ -50,8 +50,12 @@ _Avoid_: Version, revision
 A file written by a package manager (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`) that records the versions a project resolved. refs only reads it, and it is not the Lock.
 _Avoid_: Lock, lockfile
 
+**Version tag**:
+The tag of a Repo that a package's version was released as, found by exact match on the names that package's releases use (`name@1.2.3`, `name-v1.2.3`, `v1.2.3`, ...). It becomes the Ref of a Repo added as `npm:name@1.2.3`. A version with no Version tag is never pinned silently.
+_Avoid_: Release tag, version Ref
+
 **Used version**:
-The version of a package that a project's Package lockfile says the project uses. It picks a Ref when a Repo is added from a registry.
+The version of a package that a project's Package lockfile says the project uses. It picks a Ref, through its Version tag, when a Repo is added from a registry.
 _Avoid_: Installed version, locked version, Ref
 
 ### Pinning

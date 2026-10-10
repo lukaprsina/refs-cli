@@ -6,6 +6,7 @@ pub mod crates;
 pub mod fake;
 pub mod npm;
 pub mod pypi;
+pub mod tag;
 mod url;
 
 mod http;
@@ -145,11 +146,35 @@ impl Registry for Unavailable {
     }
 }
 
-/// The ecosystem and package name a shorthand such as `npm:@scope/name` asks for.
-fn parse_shorthand(url: &str) -> Option<(Ecosystem, &str)> {
-    Ecosystem::ALL
+/// The ecosystem, package name and version a shorthand such as `npm:@scope/name@1.2.3` asks
+/// for. The version is what follows the last `@` that does not start a scope.
+fn parse_shorthand(url: &str) -> Option<(Ecosystem, &str, Option<&str>)> {
+    let (ecosystem, rest) = Ecosystem::ALL
         .into_iter()
-        .find_map(|ecosystem| Some((ecosystem, url.strip_prefix(ecosystem.prefix())?)))
+        .find_map(|ecosystem| Some((ecosystem, url.strip_prefix(ecosystem.prefix())?)))?;
+    let version = rest
+        .rfind('@')
+        .filter(|&at| at > 0 && at + 1 < rest.len())
+        .map(|at| rest.split_at(at));
+    Some(match version {
+        Some((name, version)) => (ecosystem, name, Some(&version[1..])),
+        None => (ecosystem, rest, None),
+    })
+}
+
+/// The package and version a shorthand named, for finding the tag it was released as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Release {
+    pub name: String,
+    pub version: String,
+}
+
+/// An `add` after `expand`: the repo to add, and the release its shorthand named, if it
+/// named a version.
+#[derive(Debug, Clone)]
+pub struct Expanded {
+    pub repo: AddRepo,
+    pub release: Option<Release>,
 }
 
 /// `repo` with a registry shorthand in its `url` replaced by what the registry says: the git
@@ -157,13 +182,18 @@ fn parse_shorthand(url: &str) -> Option<(Ecosystem, &str)> {
 /// line gave them (ADR 0009).
 /// Any other `repo` comes back as it is.
 /// With `offline` a shorthand is refused, as it needs the network.
+/// The `ref` is not set here: a shorthand with a version says which `release` it names, and
+/// `Source::tags` and `tag::tag_for` turn that into a tag.
 pub fn expand(
     repo: &AddRepo,
     registry: &dyn Registry,
     offline: bool,
-) -> Result<AddRepo, RegistryError> {
-    let Some((ecosystem, name)) = parse_shorthand(&repo.url) else {
-        return Ok(repo.clone());
+) -> Result<Expanded, RegistryError> {
+    let Some((ecosystem, name, version)) = parse_shorthand(&repo.url) else {
+        return Ok(Expanded {
+            repo: repo.clone(),
+            release: None,
+        });
     };
     if offline {
         return Err(RegistryError::Offline {
@@ -188,5 +218,11 @@ pub fn expand(
     if expanded.packages.is_empty() {
         expanded.packages.push(name.to_owned());
     }
-    Ok(expanded)
+    Ok(Expanded {
+        repo: expanded,
+        release: version.map(|version| Release {
+            name: name.to_owned(),
+            version: version.to_owned(),
+        }),
+    })
 }

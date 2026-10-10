@@ -8,7 +8,7 @@ use refs_cli::cli::{Outside, Terminal, run_on};
 use refs_cli::prompt::{Abort, Prompter};
 use refs_cli::registry::fake::FakeRegistry;
 use refs_cli::registry::{Ecosystem, Found};
-use refs_cli::source::fake::FakeSource;
+use refs_cli::source::fake::{Call, FakeSource};
 use refs_cli::update::Unmanaged;
 use tempfile::TempDir;
 
@@ -294,4 +294,228 @@ fn the_equivalent_command_has_the_expanded_url_and_the_registrys_packages() {
         "{}",
         run.err
     );
+}
+
+const FOO: &str = "https://github.com/o/foo";
+
+fn foo_registry() -> FakeRegistry {
+    FakeRegistry::new().with(Ecosystem::Npm, "foo-js", found(FOO, None))
+}
+
+fn tags_asked(source: &FakeSource) -> usize {
+    let calls = source.calls();
+    calls.iter().filter(|c| matches!(c, Call::Tags(_))).count()
+}
+
+/// Answers every yes-or-no question with `yes`, and remembers the questions.
+struct Confirms {
+    yes: bool,
+    asked: Vec<String>,
+}
+
+impl Prompter for Confirms {
+    fn text(
+        &mut self,
+        message: &str,
+        default: Option<&str>,
+        validate: &dyn Fn(&str) -> Result<(), String>,
+    ) -> Result<String, Abort> {
+        Defaults.text(message, default, validate)
+    }
+
+    fn suggest(
+        &mut self,
+        message: &str,
+        suggestions: &[String],
+        validate: &dyn Fn(&str) -> Result<(), String>,
+    ) -> Result<String, Abort> {
+        Defaults.suggest(message, suggestions, validate)
+    }
+
+    fn confirm(&mut self, message: &str) -> Result<bool, Abort> {
+        self.asked.push(message.to_owned());
+        Ok(self.yes)
+    }
+}
+
+#[test]
+fn a_version_pins_the_tag_it_maps_to() {
+    let dir = project();
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["foo-js-1.1.0", "foo-js-1.2.3", "v1.2.3"]);
+
+    let run = add(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &["npm:foo-js@1.2.3", "--id", "foo"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    let config = config_text(dir.path());
+    assert!(config.contains("ref = \"foo-js-1.2.3\""), "{config}");
+    assert!(!config.contains("@1.2.3"), "{config}");
+    assert!(config.contains("packages = [\"foo-js\"]"), "{config}");
+}
+
+#[test]
+fn a_scoped_name_and_its_version_are_split_at_the_last_at() {
+    let dir = project();
+    let registry = FakeRegistry::new().with(Ecosystem::Npm, "@o/foo", found(FOO, None));
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["@o/foo@2.0.0"]);
+
+    let run = add(
+        dir.path(),
+        &registry,
+        &source,
+        &["npm:@o/foo@2.0.0", "--id", "foo"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        config_text(dir.path()).contains("ref = \"@o/foo@2.0.0\""),
+        "{}",
+        config_text(dir.path())
+    );
+}
+
+#[test]
+fn a_registry_add_with_no_version_pins_no_tag_and_lists_none() {
+    let dir = project();
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["v1.2.3"]);
+
+    let run = add(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &["npm:foo-js", "--id", "foo"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(!config_text(dir.path()).contains("ref ="));
+    assert_eq!(tags_asked(&source), 0);
+}
+
+#[test]
+fn an_explicit_ref_wins_over_the_version() {
+    let dir = project();
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["v1.2.3"]);
+
+    let run = add(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &["npm:foo-js@1.2.3", "--id", "foo", "--ref", "main"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(config_text(dir.path()).contains("ref = \"main\""));
+    assert_eq!(tags_asked(&source), 0);
+}
+
+#[test]
+fn a_version_with_no_tag_without_a_terminal_warns_and_follows_head() {
+    let dir = project();
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["v1.0.0"]);
+
+    let run = add(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &["npm:foo-js@1.2.3", "--id", "foo"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        run.err.contains("warning") && run.err.contains("1.2.3") && run.err.contains("not tagged"),
+        "{}",
+        run.err
+    );
+    assert!(!config_text(dir.path()).contains("ref ="));
+}
+
+#[test]
+fn a_version_with_no_tag_asks_and_continues_on_yes() {
+    let dir = project();
+    let source = FakeSource::new();
+    let mut prompter = Confirms {
+        yes: true,
+        asked: vec![],
+    };
+
+    let run = add_asking(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &[
+            "npm:foo-js@1.2.3",
+            "--id",
+            "foo",
+            "--group",
+            "g",
+            "--description",
+            "d",
+        ],
+        Some(&mut prompter),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        prompter
+            .asked
+            .iter()
+            .any(|q| q.contains("1.2.3") && q.contains("not tagged")),
+        "{:?}",
+        prompter.asked
+    );
+    assert!(dir.path().join("refs.lock").exists());
+}
+
+#[test]
+fn a_version_with_no_tag_cancels_on_no_and_changes_nothing() {
+    let dir = project();
+    let source = FakeSource::new();
+    let mut prompter = Confirms {
+        yes: false,
+        asked: vec![],
+    };
+
+    let run = add_asking(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &["npm:foo-js@1.2.3", "--id", "foo"],
+        Some(&mut prompter),
+    );
+
+    assert_eq!(run.code, 1);
+    assert!(run.err.contains("cancelled"), "{}", run.err);
+    assert_eq!(config_text(dir.path()), "");
+}
+
+#[test]
+fn no_sync_lists_no_tags_and_says_the_version_is_not_pinned() {
+    let dir = project();
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["v1.2.3"]);
+
+    let run = add(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &["npm:foo-js@1.2.3", "--id", "foo", "--no-sync"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        run.err.contains("warning") && run.err.contains("--no-sync"),
+        "{}",
+        run.err
+    );
+    assert!(!config_text(dir.path()).contains("ref ="));
+    assert_eq!(tags_asked(&source), 0);
 }
