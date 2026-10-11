@@ -81,8 +81,7 @@ Caveat: one vendor, one framework that models already know changes often. Vercel
 
 ### 3.2 Deferred (rough priority order)
 
-- **Next, not ranked:** `refs doctor` (§10.1) and everything that mentions it. It is designed to reuse the `Observed` state and the `plan` that `sync --check` already computes, so it adds no new inspection code. Until it exists, `lock`/`sync` check the git version themselves (§7.5) and `init` prints the reminders.
-- Also: peeling an unpeeled annotated tag locally (fetch the tag object, `rev-parse <sha>^{commit}`); listing every missing object for `sync --offline` (`GIT_NO_LAZY_FETCH=1 git cat-file --batch-check`; never `rev-list --missing=print`); the `REFS_GIT_ALLOW_PROTOCOL` override; `sync --locked` and verbose `--check` diffs (`-v`, `similar`). `--check` already reports a stale lock for CI.
+- Peeling an unpeeled annotated tag locally (fetch the tag object, `rev-parse <sha>^{commit}`); listing every missing object for `sync --offline` (`GIT_NO_LAZY_FETCH=1 git cat-file --batch-check`; never `rev-list --missing=print`); the `REFS_GIT_ALLOW_PROTOCOL` override; `sync --locked` and verbose `--check` diffs (`-v`, `similar`). `--check` already reports a stale lock for CI.
 
 Ranked:
 
@@ -246,7 +245,7 @@ A disabled repo behaves as if it were commented out of the config, but stays vis
 - **Checkout:** `sync` removes the checkout of a disabled repo like any repo no longer in the config (§7.3).
 - **Block:** a disabled repo has no Entry. A group with no active repos renders no heading (this holds for enabled groups that simply have no repos too).
 - **Re-enabling** re-resolves the ref, exactly as uncommenting would. A floating ref may land on a newer commit than before; the old pin isn't kept.
-- **Validation still applies** to disabled entries (id, dangling group, `paths`, `start` syntax), but nothing is resolved or fetched for them. `list` shows them marked `disabled`; the later `doctor` reports how many are disabled (info).
+- **Validation still applies** to disabled entries (id, dangling group, `paths`, `start` syntax), but nothing is resolved or fetched for them. `list` shows them marked `disabled`.
 - Disabling and groups stay despite having no `uv` counterpart (ADR 0005): Repos and Groups are not colocated in the TOML, so a switch on either is not the same as editing a line.
 - `refs disable <id>` / `refs enable <id>` set `enabled` on a repo; `--group` targets a group id instead. Both edit via `toml_edit`, then lock and sync like `add` (§10). `enable` removes the key rather than writing `enabled = true`.
 
@@ -295,14 +294,14 @@ For each locked repo:
 Also:
 
 - Remove worktrees for repos no longer active (removed from the config or disabled, §6.4): `git worktree remove --force` (generated, read-only copies). **Unless the checkout is dirty**: if `git status --porcelain` in it shows any modified or untracked file, `sync` refuses to remove it or move it to another SHA and reports `refs::sync::dirty_checkout` naming the files, so the "never delete a directory refs didn't create" rule of step 4 also holds for edits an agent made despite the block. Untracked files count (a `node_modules` created by running a tool inside a checkout blocks `sync` too); the diagnostic says so and names `sync --force`, which discards them.
-- Run `git worktree prune` on each touched cache repo. Prune forgets registrations whose directory is missing, including projects on a currently unmounted drive; their checkouts are recreated by the next `sync`. Accepted; the later `doctor` reports such registrations as info (§10.1).
+- Run `git worktree prune` on each touched cache repo. Prune forgets registrations whose directory is missing, including projects on a currently unmounted drive; their checkouts are recreated by the next `sync`. Accepted.
 - Moving a project directory breaks worktree links; `GitSource` repairs the links with `git worktree repair` (silently) or, if that cannot work, `inspect` reports the checkout as dangling and `sync` recreates it.
 - **Recreating is announced.** When `sync` recreates a dangling checkout it prints an info-level diagnostic (`refs::sync::recreated`). `-q` silences it. Repairing a moved project and pruning stale registrations (`git worktree repair`, `git worktree prune`) happen silently inside `GitSource`; announcing them (`refs::sync::repaired`, `refs::sync::pruned`) is deferred.
-- Ignore submodules and Git LFS content in the MVP; the later `doctor` mentions them if detected.
+- Ignore submodules and Git LFS content in the MVP.
 
 ### 7.4 Server prerequisites
 
-`--filter=blob:none` needs `uploadpack.allowFilter` on the server; fetch-by-SHA needs protocol v2 (default since git 2.26) or `uploadpack.allowReachableSHA1InWant`. GitHub and GitLab satisfy both; a self-hosted `git-http-backend` may not. When the server ignores the filter, the later `doctor` reports it as info (§10.1).
+`--filter=blob:none` needs `uploadpack.allowFilter` on the server; fetch-by-SHA needs protocol v2 (default since git 2.26) or `uploadpack.allowReachableSHA1InWant`. GitHub and GitLab satisfy both; a self-hosted `git-http-backend` may not.
 
 ### 7.5 Minimum git version: 2.36.0
 
@@ -319,7 +318,7 @@ Before 2.36.0, `sparse-checkout set` in a worktree of a bare repo enabled `exten
 
 2.36.0 is April 2022 and fine on every current distro, but excludes **Ubuntu 22.04 (git 2.34.1)**. Document the exclusion; do not hand-roll a workaround (moving `core.bare` into `config.worktree` after `worktree add`) for a release past standard support.
 
-`GitSource` runs `git --version` once, before its first git command, and fails with `refs::git::too_old` below 2.36.0. Until `doctor` exists this is the only version check.
+`GitSource` runs `git --version` once, before its first git command, and fails with `refs::git::too_old` below 2.36.0. This is the only version check.
 
 ### 7.6 Exclusion
 
@@ -380,8 +379,7 @@ The fixed prose changes between `refs` releases, so a teammate or CI on a differ
 
 - Only content between the markers is ever touched. If the markers are missing, `sync` appends the block at the end of the file (creating it if needed). Unbalanced, nested or duplicated markers: error, don't write.
 - Written to each file in `settings.agents_files` (default `AGENTS.md`). Write only if the content changed.
-- Claude Code loads `AGENTS.md` only when `CLAUDE.md` doesn't exist. the later `doctor` checks the relationship (§10.1) but `sync` never creates or modifies `CLAUDE.md` unless it's in `agents_files`.
-- If `CLAUDE.md` is in `agents_files` **and** also imports `AGENTS.md` (`@AGENTS.md`) or is a symlink to it, the block loads twice: the later `doctor` flags it.
+- Claude Code loads `AGENTS.md` only when `CLAUDE.md` doesn't exist, so add `CLAUDE.md` to `agents_files` (the README says the same). `sync` never creates or modifies `CLAUDE.md` unless it's listed there.
 
 ### 9.2 Content template
 
@@ -442,15 +440,15 @@ Exit codes: `0` ok, `1` error, `2` usage error, `3` `--check` found something ou
 
 0. Compute the active set from the config (§6.4). Everything below operates on active repos, except removals (repos no longer active) and the agent file and exclude rule (the project).
 1. **Stage 1, lock** (`plan_lock`; ADR 0006). Determine whether the lock is current. A normal sync locks if it is missing or stale: resolve the repos that need it, reuse the other pins, and verify `paths` and `start` of every active repo at its pin against the cache (§7.2), fetching commits and trees only on a miss. Collect all errors; write `refs.lock` only if there are none. With `--offline`, a missing or stale lock is an error and nothing is fetched. With `--check`, skip this stage: a missing or stale lock is out of date (exit 3); do not resolve refs, verify or write the lock.
-2. Read the project state: the `Observed` state of every active checkout, the agent files, the exclude rule (present, missing, or no git repo), and the directory names in `references_dir`; each name that is not active is inspected, and an `At` one is removed. A `Foreign` or absent non-active name is ignored (the later `doctor` reports orphans). The old Lock is not consulted.
+2. Read the project state: the `Observed` state of every active checkout, the agent files, the exclude rule (present, missing, or no git repo), and the directory names in `references_dir`; each name that is not active is inspected, and an `At` one is removed. A `Foreign` or absent non-active name is ignored. The old Lock is not consulted.
 3. **Stage 2, plan** (`plan_checkouts`) against the lock: an ordered list of actions (removals, materialisations, agent file writes, the exclude rule) plus refusals (`foreign_dir`, `dirty_checkout`, malformed markers) and an info note for a recreated checkout (§7.3). A refusal suppresses the Agent file write (not the exclude rule), so the block never lists a Repo with no checkout. With `--force` the plan replaces the `dirty_checkout` refusal by a removal and materialisation, so `Source` carries no force option.
 4. With `--offline`, `materialise` errors, naming an object (§7.3 step 1b), for the repo it cannot serve; other repos proceed as in any failure. There is no all-or-nothing pre-check.
 5. Apply the plan in order: ensure the required objects are in the bare blobless cache (§7.3 steps 1 and 1b, no fetching with `--offline`), update the sparse worktrees, prune removed repos, render the block and write it only if it changed, ensure the exclude rule. A failure for one repo does not stop the others; failures are collected. An Agent file is rewritten only if every repo it lists got its checkout (a failed removal of a repo that is no longer active does not hold it back), and each file is written on its own. Exit 1 with all diagnostics.
 6. With `--check`, do not apply: exit 3 if the plan holds any action other than an info note (drift), exit 1 if it holds a refusal.
 
-### 10.1 `doctor` checks (deferred, §3.2)
+### 10.1 Checks considered, not planned
 
-`refs doctor` (#5) is ruled out: a check on this list that is wanted becomes an advisory on `sync`, as the Tooling gap did (§7.6). The list stays as the inventory of what could be checked. Not in the MVP. Kept as the design for the later command, which reads `Observed` state and the `sync --check` plan rather than re-inspecting.
+There is no `refs doctor` (#5 is `wontfix`). A check on this list that is wanted becomes an advisory on `sync`, as the Tooling gap did (§7.6). The list stays as the inventory of what could be checked.
 
 - git present and at least 2.36.0 (§7.5).
 - Project config parse and validate: unknown keys, bad ids, dangling group refs.
@@ -462,11 +460,8 @@ Exit codes: `0` ok, `1` error, `2` usage error, `3` `--check` found something ou
 - Orphan directories in `references_dir` not matching any repo.
 - Cache worktree registrations whose directory is missing: info (the next `sync` prunes them and recreates this project's; §7.3).
 - Exclude rule present.
-- Server ignored the blob filter (cache clone is a full clone; detection method to be settled in milestone 4): info (§7.4).
+- Server ignored the blob filter (cache clone is a full clone): info (§7.4).
 - Managed markers present and well-formed in each `agents_files` entry.
-- `CLAUDE.md` vs `AGENTS.md`:
-  - `CLAUDE.md` exists, `AGENTS.md` holds the block, and `CLAUDE.md` neither imports (`@AGENTS.md`) nor symlinks to it: warn (Claude Code loads only `CLAUDE.md`).
-  - `CLAUDE.md` in `agents_files` and also importing/symlinking `AGENTS.md`: warn (double load).
 - Reminder that linters/formatters/type checkers may scan `references_dir` (`sync` already reports the ones it detects, §7.6).
 - Submodules or LFS pointers detected in a checkout: info.
 
@@ -500,7 +495,7 @@ The lock is **stale** when its entries differ from the active set: an id added o
 
 - **Crates (suggested):** `clap` (derive), `serde` + `toml` with the `preserve_order` feature (read; keeps config order, §6.1), `indexmap` with `serde` (ordered `groups`/`repos` maps), `toml_edit` (write), `thiserror` + `miette` (diagnostics, ADR 0002; no `anyhow`), `fd-lock`, `sha2`, `etcetera` or `directories` (XDG paths).
 - **Git:** shell out via `std::process::Command`; no libgit2 or gix in the MVP. One module with a thin, testable wrapper. Set `GIT_TERMINAL_PROMPT=0` for non-interactive commands so CI fails fast.
-- **Diagnostics:** library errors are `thiserror` enums deriving `miette::Diagnostic` with codes named `refs::<area>::<name>` (e.g. `refs::config::bad_id`; areas `config`, `lock`, `git`, `sync`, `block`, `doctor`). Only `refs.toml` validation errors carry spans, and all of them are collected and reported together (`#[related]` on a wrapper error, one `NamedSource` per child). Config checks for untrusted input get codes too (`refs::config::bad_url` for option-like values and passwords in URLs, `refs::config::bad_ref`, `refs::config::path_not_dir`). Git failures the spec treats specially get their own code (ref not found, ambiguous ref, path missing at SHA, `start` missing or a root directory that is not checked out, foreign directory in `.references/`, dirty checkout, generator mismatch under `--check`, git too old, server refuses fetch-by-SHA); everything else is `refs::git::failed` with the trimmed stderr. Don't parse stderr to detect auth failures. Only the binary enables miette's `fancy` feature.
+- **Diagnostics:** library errors are `thiserror` enums deriving `miette::Diagnostic` with codes named `refs::<area>::<name>` (e.g. `refs::config::bad_id`; areas `config`, `lock`, `git`, `sync`, `block`). Only `refs.toml` validation errors carry spans, and all of them are collected and reported together (`#[related]` on a wrapper error, one `NamedSource` per child). Config checks for untrusted input get codes too (`refs::config::bad_url` for option-like values and passwords in URLs, `refs::config::bad_ref`, `refs::config::path_not_dir`). Git failures the spec treats specially get their own code (ref not found, ambiguous ref, path missing at SHA, `start` missing or a root directory that is not checked out, foreign directory in `.references/`, dirty checkout, generator mismatch under `--check`, git too old, server refuses fetch-by-SHA); everything else is `refs::git::failed` with the trimmed stderr. Don't parse stderr to detect auth failures. Only the binary enables miette's `fancy` feature.
 - **Atomic writes** for `refs.lock` and AGENTS.md: temp file in the same directory, then rename.
 - **Paths:** `camino` or careful `Path` handling; forward slashes in rendered output.
 - **Windows:** supported, and CI runs on it. Atomic writes retry a rename Windows refuses while another process holds the file; avoid Unix-only assumptions.
@@ -510,7 +505,6 @@ The lock is **stale** when its entries differ from the active set: an id added o
 1. **Git layer:** cache, `lock`, sparse worktrees, exclude rule. Spikes are done (§7). Acceptance: the git lifecycle test (§12) passes.
 2. **Block renderer plus `sync`**, with golden tests, including formatter stability.
 3. **`init`, `add`, `remove`, `list`** via `toml_edit`.
-4. *(Deferred, §3.2)* **`doctor`.**
 
 ---
 
@@ -551,4 +545,4 @@ Out of scope for building the CLI; recorded so the evals can resume.
 
 1. Final wording of the block, to be settled by evals.
 
-Resolved: the lock records the default branch for `HEAD` refs and the block shows it (§8.1, §10.2); a `paths` edit never moves a pin (§10); blobs are prefetched so `--offline` is checkable (§7.3); group text renders inside the fence (§8.1); `url`/`ref` are validated and git runs with a protocol allowlist (§6.1, §7.7). Minimum git is 2.36.0 (§7.5). A package listed under several repos is rendered as written (each repo's line lists it) and `doctor` reports it as info. A repo has exactly one group; there is no multi-group membership (a group is only a block heading plus a "when to look here" description, and lookup goes through `Packages:`).
+Resolved: the lock records the default branch for `HEAD` refs and the block shows it (§8.1, §10.2); a `paths` edit never moves a pin (§10); blobs are prefetched so `--offline` is checkable (§7.3); group text renders inside the fence (§8.1); `url`/`ref` are validated and git runs with a protocol allowlist (§6.1, §7.7). Minimum git is 2.36.0 (§7.5). A package listed under several repos is rendered as written (each repo's line lists it). A repo has exactly one group; there is no multi-group membership (a group is only a block heading plus a "when to look here" description, and lookup goes through `Packages:`).

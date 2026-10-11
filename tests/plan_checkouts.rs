@@ -496,7 +496,7 @@ fn a_refusal_is_drift() {
 }
 
 #[test]
-fn a_dangling_non_active_name_is_left_for_doctor() {
+fn a_dangling_non_active_name_is_left_alone() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
     let source = in_sync_source();

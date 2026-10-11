@@ -276,7 +276,7 @@ pub fn plan_checkouts<'a>(
         }
     }
     // Names refs no longer manages. Only a checkout refs made (`At`) is touched; anything
-    // else is for `doctor` to report.
+    // else is left alone.
     for (name, observed) in checkouts.unmanaged(active) {
         match observed {
             Observed::At { dirty_files, .. } if !dirty_files.is_empty() && !force => {

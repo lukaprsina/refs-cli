@@ -75,5 +75,5 @@ With no active Repo the Plan removes the Managed block, markers included, from e
 
 - The fake `Source` is stateful and in-memory: seedable with any `Observed`, able to inject failures per Repo and method, and mutated by `materialise` and `remove`. The failure policy is tested as Plan data; the executor tests only check that it does what the Plan says.
 - The idempotence test is "apply a plan, re-plan, expect it empty".
-- `doctor` reads `Checkouts`, `ProjectObserved` and the stage 2 Plan, and sees "this Repo will be replaced" instead of a sequence to interpret.
+- `sync --check` and any advisory read `Checkouts`, `ProjectObserved` and the stage 2 Plan, and see "this Repo will be replaced" instead of a sequence to interpret.
 - Considered and rejected: a flat `Vec<Action>` with explicit `after` edges. It would have described the dependencies instead of removing them, and the only dependency that existed was remove-then-materialise.
