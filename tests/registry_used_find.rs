@@ -35,6 +35,10 @@ version = "2.32.0"
 source = { registry = "https://pypi.org/simple" }
 "#;
 
+const BUN_LOCK: &str = r#"{"lockfileVersion":1,
+  "workspaces":{"":{"name":"app","dependencies":{"react":"^18",},},},
+  "packages":{"react":["react@18.3.1","",{},"sha512-x"],},}"#;
+
 const POETRY_LOCK: &str = "[[package]]\nname = \"requests\"\nversion = \"2.31.0\"\n";
 
 fn canonical(path: &Path) -> PathBuf {
@@ -160,6 +164,25 @@ fn of_uv_lock_and_poetry_lock_in_one_directory_uv_lock_is_read() {
     assert_eq!(found.format, Format::UvLock);
     assert_eq!(found.used[0].version, "2.32.0");
     assert_eq!(found.ignored, [project.join("poetry.lock")]);
+}
+
+#[test]
+fn bun_lock_is_read_and_comes_after_the_other_npm_lockfiles() {
+    let (_repo, _top, project) = worktree();
+    fs::write(project.join("bun.lock"), BUN_LOCK).unwrap();
+    let lookup = find(Ecosystem::Npm, "react", &project);
+    assert_eq!(versions(&lookup), ["18.3.1"]);
+    let Lookup::Found(found) = lookup else {
+        panic!("expected a lockfile");
+    };
+    assert_eq!(found.format, Format::BunLock);
+
+    fs::write(project.join("package-lock.json"), PACKAGE_LOCK).unwrap();
+    let Lookup::Found(found) = find(Ecosystem::Npm, "react", &project) else {
+        panic!("expected a lockfile");
+    };
+    assert_eq!(found.format, Format::PackageLock);
+    assert_eq!(found.ignored, [project.join("bun.lock")]);
 }
 
 #[test]

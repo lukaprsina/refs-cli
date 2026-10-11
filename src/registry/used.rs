@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use super::Ecosystem;
 use crate::worktree::candidate_dirs;
 
+mod bun;
 mod cargo;
 mod package_lock;
 mod pnpm;
@@ -24,6 +25,7 @@ pub enum Format {
     Yarn,
     UvLock,
     PoetryLock,
+    BunLock,
 }
 
 /// A version of a package that a Package lockfile resolved.
@@ -47,6 +49,7 @@ pub fn used_versions(format: Format, name: &str, text: &str) -> Result<Vec<Used>
         Format::Yarn => yarn::used(name, text),
         Format::UvLock => uv::used(name, text)?,
         Format::PoetryLock => poetry::used(name, text)?,
+        Format::BunLock => bun::used(name, text)?,
     };
     Ok(distinct(found))
 }
@@ -78,6 +81,7 @@ impl Format {
                 ("pnpm-lock.yaml", Format::Pnpm),
                 ("yarn.lock", Format::Yarn),
                 ("package-lock.json", Format::PackageLock),
+                ("bun.lock", Format::BunLock),
             ],
             Ecosystem::Pypi => &[
                 ("uv.lock", Format::UvLock),

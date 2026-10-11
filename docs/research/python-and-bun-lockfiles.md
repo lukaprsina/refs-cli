@@ -53,7 +53,7 @@ Text lockfile (bun 1.2 and later). It is JSONC: trailing commas and (by the form
 
 ## 6. Work
 
-Done: the Python change (section 6's first paragraph), in `used/uv.rs`, `used/poetry.rs` and `used/pypi.rs`, fixtures `tests/fixtures/used/uv.lock` and `poetry.lock`. `Format::of(Pypi)` is non-empty, so the `reads` gate was removed. Left: `bun.lock`.
+Done: the Python change (section 6's first paragraph), in `used/uv.rs`, `used/poetry.rs` and `used/pypi.rs`, fixtures `tests/fixtures/used/uv.lock` and `poetry.lock`. `Format::of(Pypi)` is non-empty, so the `reads` gate was removed. Then `bun.lock` (`used/bun.rs`, fixture `tests/fixtures/used/bun.lock`, generated with bun 1.3.11: `lockfileVersion` 2, a github dependency, an alias, a workspace member and `ms` at three versions; the 4,898-line v1 file from section 5 was also read). Only trailing commas are handled, not comments: bun writes none. A copy nested under a workspace is keyed `<workspace name>/<alias>`, which is how a nested version is told to be direct.
 
 Python change (turns `pypi:` on): `Format::{UvLock, PoetryLock}`, `used/uv.rs`, `used/poetry.rs`, a shared name comparison, `Format::of(Pypi)`, the fixtures, the changed `pypi:` test and a new pin test, then docs (spec §7.2 and the lines that list lockfiles, ADR 0009, README `add` row, glossary, `TODO.md`, the comments in `used.rs`). Bun change: `Format::BunLock`, `used/bun.rs` with the JSONC pass, a fixture trimmed from the real file, a find-order test, the same docs.
 

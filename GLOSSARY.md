@@ -51,7 +51,7 @@ A branch, tag or full commit SHA naming what to follow in a Repo.
 _Avoid_: Version, revision
 
 **Package lockfile**:
-A file written by a package manager (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`, `poetry.lock`) that records the versions a project resolved. refs only reads it, and it is not the Lock.
+A file written by a package manager (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `uv.lock`, `poetry.lock`) that records the versions a project resolved. refs only reads it, and it is not the Lock.
 _Avoid_: Lock, lockfile
 
 **Version tag**:

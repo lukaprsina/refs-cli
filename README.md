@@ -100,7 +100,7 @@ Commit `refs.toml`, `refs.lock` and `AGENTS.md`. `.references/` is excluded thro
 | Command | Does |
 |---|---|
 | `refs init` | Create `refs.toml` and the git exclude rule |
-| `refs add [url]` | Add a repo, lock it, sync. `url` can be `gh:owner/repo` or `gl:group/sub/repo` (also `github:`, `gitlab:`; a path after the repository is ignored with a note), or `npm:<name>`, `cargo:<name>` or `pypi:<name>`, each with an optional `@<version>`: the registry says where the package lives. With no version, `add` reads the one your lockfile uses (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`, `poetry.lock`) and pins its tag. Asks for what is missing in a terminal; `--no-input` turns that off, `--no-sync` only edits |
+| `refs add [url]` | Add a repo, lock it, sync. `url` can be `gh:owner/repo` or `gl:group/sub/repo` (also `github:`, `gitlab:`; a path after the repository is ignored with a note), or `npm:<name>`, `cargo:<name>` or `pypi:<name>`, each with an optional `@<version>`: the registry says where the package lives. With no version, `add` reads the one your lockfile uses (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `uv.lock`, `poetry.lock`) and pins its tag. Asks for what is missing in a terminal; `--no-input` turns that off, `--no-sync` only edits |
 | `refs remove <id>` | Remove a repo |
 | `refs disable` / `enable` | Switch a repo or group (`--group`) off or on without removing it |
 | `refs list` | Show the repos; `--status` adds the lock and checkout state |

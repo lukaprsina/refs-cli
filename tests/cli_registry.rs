@@ -935,6 +935,29 @@ fn a_given_version_or_ref_skips_the_lockfile() {
 }
 
 #[test]
+fn an_npm_shorthand_reads_bun_lock() {
+    let dir = project();
+    write(
+        dir.path(),
+        "bun.lock",
+        "{\"lockfileVersion\":1,\"workspaces\":{\"\":{\"dependencies\":{\"foo-js\":\"^1\",},},},\"packages\":{\"foo-js\":[\"foo-js@1.2.3\",\"\",{},\"sha512-x\"],},}",
+    );
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["foo-js-1.1.0", "foo-js-1.2.3"]);
+
+    let run = add(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &["npm:foo-js", "--id", "foo"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(config_text(dir.path()).contains("ref = \"foo-js-1.2.3\""));
+    assert!(run.err.contains("bun.lock"), "{}", run.err);
+}
+
+#[test]
 fn a_pypi_shorthand_reads_uv_lock() {
     let dir = project();
     write(

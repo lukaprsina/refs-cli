@@ -1128,3 +1128,65 @@ mod poetry {
         assert!(used_versions(Format::PoetryLock, "click", "[[package]\n").is_err());
     }
 }
+
+mod bun {
+    use super::*;
+
+    const LOCK: &str = include_str!("fixtures/used/bun.lock");
+
+    fn of(name: &str) -> Vec<Used> {
+        used_versions(Format::BunLock, name, LOCK).unwrap()
+    }
+
+    #[test]
+    fn a_dependency_of_a_workspace_is_direct() {
+        assert_eq!(of("debug"), [used("4.3.4", true)]);
+    }
+
+    #[test]
+    fn a_dependency_of_a_dependency_is_not() {
+        assert_eq!(of("ansi-regex"), [used("5.0.1", false)]);
+    }
+
+    #[test]
+    fn of_several_versions_each_one_a_workspace_names_is_direct() {
+        assert_eq!(
+            of("ms"),
+            [
+                used("2.0.0", true),
+                used("2.1.2", false),
+                used("2.1.3", true)
+            ]
+        );
+    }
+
+    #[test]
+    fn an_alias_is_found_by_the_package_it_stands_for() {
+        assert_eq!(of("strip-ansi"), [used("6.0.1", true)]);
+        assert_eq!(of("cjs-ansi"), []);
+    }
+
+    #[test]
+    fn a_package_from_git_or_a_workspace_is_not_a_registry_version() {
+        assert_eq!(of("ini"), []);
+        assert_eq!(of("iniparser"), []);
+        assert_eq!(of("lib"), []);
+    }
+
+    #[test]
+    fn trailing_commas_are_allowed_but_not_inside_strings() {
+        let lock = r#"{
+  "workspaces": { "": { "dependencies": { "x,}": "1.0.0", }, }, },
+  "packages": { "x,}": ["x,}@1.0.0", "", {}, "sha512-a,]",], },
+}"#;
+        assert_eq!(
+            used_versions(Format::BunLock, "x,}", lock).unwrap(),
+            [used("1.0.0", true)]
+        );
+    }
+
+    #[test]
+    fn a_text_that_is_not_a_bun_lock_is_an_error() {
+        assert!(used_versions(Format::BunLock, "ms", "{ \"packages\": ").is_err());
+    }
+}
