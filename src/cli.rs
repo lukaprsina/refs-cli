@@ -21,9 +21,8 @@ use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::prompt::{self, Packages, Prompter};
-use crate::registry::tag::tag_for;
-use crate::registry::used::{self, Lookup, Pick};
-use crate::registry::{self, Package, Registry};
+use crate::registry::pin::{Choice, NoTags, Read, Tags, Why, pin};
+use crate::registry::{self, Registry, Requested};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
 use crate::update::{self, Updater};
@@ -402,7 +401,15 @@ fn run_config<'a>(
             return 0;
         }
         ConfigCommand::Add { repo, flags } if flags.no_sync => {
-            let (repo, _) = match prepare_add(repo, None, root, config, &mut asking, console) {
+            let (repo, _) = match prepare_add(
+                repo,
+                &NoTags,
+                Packages::Now,
+                root,
+                config,
+                &mut asking,
+                console,
+            ) {
                 Ok(prepared) => prepared,
                 Err(code) => return code,
             };
@@ -410,11 +417,18 @@ fn run_config<'a>(
         }
         ConfigCommand::Add { repo, .. } => {
             return with_source(make_source, root, config, console, |source, console| {
-                let (repo, asked) =
-                    match prepare_add(repo, Some(source), root, config, &mut asking, console) {
-                        Ok(prepared) => prepared,
-                        Err(code) => return code,
-                    };
+                let (repo, asked) = match prepare_add(
+                    repo,
+                    source,
+                    Packages::Later,
+                    root,
+                    config,
+                    &mut asking,
+                    console,
+                ) {
+                    Ok(prepared) => prepared,
+                    Err(code) => return code,
+                };
                 let job = AddJob {
                     repo: &repo,
                     flags: &flags_for_sync,
@@ -439,11 +453,13 @@ fn run_config<'a>(
 
 /// `repo` ready to add: a registry shorthand expanded and its version pinned to a tag, then
 /// completed (see `complete_add`). The version is the one given, else the one the project's
-/// Package lockfile at `root` says it uses. With a `source` a sync follows, so the `packages`
-/// are left to `add`; without one (`--no-sync`) nothing can be listed or read.
-fn prepare_add(
+/// Package lockfile at `root` says it uses. The tags come from `tags`; `NoTags` (`--no-sync`)
+/// lists none. With `Packages::Later` a sync follows and `add` reads the `packages` from the
+/// new Checkout; with `Packages::Now` they are asked here.
+fn prepare_add<T: Tags + ?Sized>(
     repo: &AddRepo,
-    source: Option<&dyn Source>,
+    tags: &T,
+    packages: Packages,
     root: &Path,
     config: &Config,
     asking: &mut Asking,
@@ -473,31 +489,15 @@ fn prepare_add(
     let mut repo = expanded.repo;
     // An explicit `ref` wins over any version.
     if let (None, Some(requested)) = (&repo.git_ref, &expanded.requested) {
-        let version = match &requested.version {
-            Some(version) => Some(version.clone()),
-            None => used_version(
-                &requested.package,
-                root,
-                asking.prompter.as_deref_mut(),
-                console,
-            )?,
-        };
-        if let Some(version) = version {
-            pin_release(
-                &mut repo,
-                &requested.package.name,
-                &version,
-                source,
-                asking.prompter.as_deref_mut(),
-                console,
-            )?;
-        }
+        pin_requested(
+            &mut repo,
+            requested,
+            root,
+            tags,
+            asking.prompter.as_deref_mut(),
+            console,
+        )?;
     }
-    let packages = if source.is_some() {
-        Packages::Later
-    } else {
-        Packages::Now
-    };
     complete_add(
         &repo,
         config,
@@ -509,71 +509,135 @@ fn prepare_add(
     )
 }
 
-/// The version of `package` that the Package lockfile of the project at `root` says it uses,
-/// and what was read is said. `None` when there is none to use: the repo then follows the
-/// remote's default branch, and the reason is said. Several versions with nothing to choose
-/// between them are asked about, or refused without a terminal. Never a guess.
-fn used_version(
-    package: &Package,
+/// Set the `ref` of `repo` to the tag that `requested` was released as (`registry::pin`), and
+/// say what was read and decided. Several versions with nothing to choose between them are
+/// asked about, or refused without a terminal. A version with no tag is never pinned silently:
+/// with a prompter the person is asked whether to follow the remote's default branch instead,
+/// otherwise it is a warning and the repo follows it. Never a guess.
+fn pin_requested<T: Tags + ?Sized>(
+    repo: &mut AddRepo,
+    requested: &Requested,
     root: &Path,
+    tags: &T,
     prompter: Option<&mut (dyn Prompter + '_)>,
     console: &mut Console,
-) -> Result<Option<String>, u8> {
+) -> Result<(), u8> {
+    let package = &requested.package;
     let name = &package.name;
-    let follows = "the repo follows the remote's default branch";
-    let found = match used::find(package, root) {
-        Lookup::Found(found) => found,
-        Lookup::Missing => {
-            console.status(format_args!(
-                "no Package lockfile found for `{name}`; {follows}"
-            ));
-            return Ok(None);
+    let version = requested.version.as_deref();
+    let mut pinned = pin(package, version, &repo.url, root, tags).map_err(|e| fail(e, console))?;
+    if let Some(read) = &pinned.read {
+        say_read(read, name, root, console);
+    }
+    let mut prompter = prompter;
+    if let Choice::Several(versions) = &pinned.choice {
+        let file = pinned.read.as_ref().map(|read| file_name(&read.file, root));
+        let file = file.unwrap_or_default();
+        let version = choose_version(versions, &file, name, prompter.as_deref_mut(), console)?;
+        pinned =
+            pin(package, Some(&version), &repo.url, root, tags).map_err(|e| fail(e, console))?;
+    }
+    match pinned.choice {
+        Choice::Tag { version, tag } => {
+            console.status(format_args!("pinned `{name}@{version}` to the tag `{tag}`"));
+            repo.git_ref = Some(tag);
+            Ok(())
         }
-        Lookup::Unreadable { file, why } => {
-            console.problem(format_args!(
-                "warning: cannot read {}: {why}; {follows}",
-                file_name(&file, root)
-            ));
-            return Ok(None);
+        Choice::DefaultBranch(why) => {
+            let read = pinned.read.as_ref();
+            follow_default_branch(&why, read, name, &repo.url, root, prompter, console)
         }
-    };
-    let file = file_name(&found.file, root);
-    for ignored in &found.ignored {
+        Choice::Several(_) => unreachable!("a chosen version is one version"),
+    }
+}
+
+/// Say which Package lockfile was read, the others that were not, and the version it has.
+fn say_read(read: &Read, name: &str, root: &Path, console: &mut Console) {
+    let file = file_name(&read.file, root);
+    for ignored in &read.ignored {
         console.status(format_args!(
             "{} is also here and was not read; {file} was",
             file_name(ignored, root)
         ));
     }
-    match found.pick() {
-        Pick::Nothing => {
-            console.status(format_args!("`{name}` is not in {file}; {follows}"));
-            Ok(None)
+    if let Some(version) = &read.version {
+        console.status(format_args!("`{name}` is {version} in {file}"));
+    }
+}
+
+/// Which of `versions` to use: asked, with the highest as the default, or refused without a
+/// terminal.
+fn choose_version(
+    versions: &[String],
+    file: &str,
+    name: &str,
+    prompter: Option<&mut (dyn Prompter + '_)>,
+    console: &mut Console,
+) -> Result<String, u8> {
+    let list = versions.join(", ");
+    let Some(prompter) = prompter else {
+        console.problem(format_args!(
+            "error: {file} has several versions of `{name}` ({list}), and none is the \
+             one the project asks for; give one as `{name}@version`"
+        ));
+        return Err(EXIT_ERROR);
+    };
+    let one_of_them = |answer: &str| match versions.iter().any(|v| v == answer) {
+        true => Ok(()),
+        false => Err(format!("one of {list}")),
+    };
+    let message = format!("{file} has several versions of `{name}`: {list}. Which one?");
+    prompter
+        .text(&message, versions.last().map(String::as_str), &one_of_them)
+        .map_err(|abort| aborted(abort, console))
+}
+
+/// Say why the repo follows the remote's default branch, and with a prompter and a version
+/// that has no tag, ask whether that is wanted (no cancels the add).
+fn follow_default_branch(
+    why: &Why,
+    read: Option<&Read>,
+    name: &str,
+    url: &str,
+    root: &Path,
+    prompter: Option<&mut (dyn Prompter + '_)>,
+    console: &mut Console,
+) -> Result<(), u8> {
+    let follows = "the repo follows the remote's default branch";
+    match why {
+        Why::NoLockfile => console.status(format_args!(
+            "no Package lockfile found for `{name}`; {follows}"
+        )),
+        Why::Unreadable { file, why } => console.problem(format_args!(
+            "warning: cannot read {}: {why}; {follows}",
+            file_name(file, root)
+        )),
+        Why::NotInLockfile => {
+            let file = read
+                .map(|read| file_name(&read.file, root))
+                .unwrap_or_default();
+            console.status(format_args!("`{name}` is not in {file}; {follows}"))
         }
-        Pick::One(version) => {
-            console.status(format_args!("`{name}` is {version} in {file}"));
-            Ok(Some(version.to_owned()))
-        }
-        Pick::Several(versions) => {
-            let list = versions.join(", ");
+        Why::Unlisted { version } => console.problem(format_args!(
+            "warning: `{name}@{version}` is not pinned to a tag, as `--no-sync` lists no tags; \
+             {follows}"
+        )),
+        Why::Untagged { version } => {
+            let untagged = format!("{name}@{version} is not tagged in {url}");
             let Some(prompter) = prompter else {
-                console.problem(format_args!(
-                    "error: {file} has several versions of `{name}` ({list}), and none is the \
-                     one the project asks for; give one as `{name}@version`"
-                ));
-                return Err(EXIT_ERROR);
+                console.problem(format_args!("warning: {untagged}; {follows}"));
+                return Ok(());
             };
-            let highest = versions.last().copied();
-            let one_of_them = |answer: &str| match versions.contains(&answer) {
-                true => Ok(()),
-                false => Err(format!("one of {list}")),
-            };
-            let message = format!("{file} has several versions of `{name}`: {list}. Which one?");
-            match prompter.text(&message, highest, &one_of_them) {
-                Ok(version) => Ok(Some(version)),
+            return match prompter.confirm(&format!(
+                "{untagged}. Follow the remote's default branch instead?"
+            )) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(aborted(prompt::Abort::Cancelled, console)),
                 Err(abort) => Err(aborted(abort, console)),
-            }
+            };
         }
     }
+    Ok(())
 }
 
 /// `file` as it is named in a message: relative to the project `root` if it is below it.
@@ -591,46 +655,6 @@ fn aborted(abort: prompt::Abort, console: &mut Console) -> u8 {
         prompt::Abort::Failed(why) => console.problem(format_args!("cannot prompt: {why}")),
     }
     EXIT_ERROR
-}
-
-/// Set the `ref` of `repo` to the tag that `name` at `version` was released as. A version with
-/// no tag is never pinned silently: with a prompter the person is asked whether to follow the
-/// remote's default branch instead, otherwise it is a warning and the repo follows it.
-fn pin_release(
-    repo: &mut AddRepo,
-    name: &str,
-    version: &str,
-    source: Option<&dyn Source>,
-    prompter: Option<&mut (dyn Prompter + '_)>,
-    console: &mut Console,
-) -> Result<(), u8> {
-    let Some(source) = source else {
-        console.problem(format_args!(
-            "warning: `{name}@{version}` is not pinned to a tag, as `--no-sync` lists no tags; \
-             the repo follows the remote's default branch"
-        ));
-        return Ok(());
-    };
-    let tags = source.tags(&repo.url).map_err(|e| fail(e, console))?;
-    if let Some(tag) = tag_for(name, version, &tags) {
-        console.status(format_args!("pinned `{name}@{version}` to the tag `{tag}`"));
-        repo.git_ref = Some(tag.to_owned());
-        return Ok(());
-    }
-    let untagged = format!("{name}@{version} is not tagged in {}", repo.url);
-    let Some(prompter) = prompter else {
-        console.problem(format_args!(
-            "warning: {untagged}; the repo follows the remote's default branch"
-        ));
-        return Ok(());
-    };
-    match prompter.confirm(&format!(
-        "{untagged}. Follow the remote's default branch instead?"
-    )) {
-        Ok(true) => Ok(()),
-        Ok(false) => Err(aborted(prompt::Abort::Cancelled, console)),
-        Err(abort) => Err(aborted(abort, console)),
-    }
 }
 
 /// `repo` with what the command line left out, and whether anything was asked: asked for when

@@ -6,6 +6,7 @@ pub mod crates;
 pub mod fake;
 pub mod forge;
 pub mod npm;
+pub mod pin;
 pub mod pypi;
 pub mod tag;
 mod url;
