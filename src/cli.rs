@@ -515,9 +515,6 @@ fn used_version(
     console: &mut Console,
 ) -> Result<Option<String>, u8> {
     let name = &release.name;
-    if !used::reads(release.ecosystem) {
-        return Ok(None);
-    }
     let follows = "the repo follows the remote's default branch";
     let found = match used::find(release.ecosystem, name, root) {
         Lookup::Found(found) => found,

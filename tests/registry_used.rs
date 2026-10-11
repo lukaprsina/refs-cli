@@ -982,3 +982,126 @@ version \"file:../my-lib\"\n";
         assert_eq!(yarn(YARN_BERRY, "not-installed-anywhere"), NONE);
     }
 }
+
+mod uv {
+    use super::*;
+
+    const LOCK: &str = include_str!("fixtures/used/uv.lock");
+
+    fn of(name: &str) -> Vec<Used> {
+        used_versions(Format::UvLock, name, LOCK).unwrap()
+    }
+
+    #[test]
+    fn a_dependency_of_the_project_is_direct() {
+        assert_eq!(of("click"), [used("8.5.0", true)]);
+    }
+
+    #[test]
+    fn a_dev_dependency_of_the_project_is_direct() {
+        assert_eq!(of("pytest"), [used("9.1.1", true)]);
+    }
+
+    #[test]
+    fn a_dependency_of_a_dependency_is_not() {
+        assert_eq!(of("pluggy"), [used("1.6.0", false)]);
+    }
+
+    #[test]
+    fn a_name_is_found_however_it_is_cased_or_separated() {
+        assert_eq!(of("Click"), [used("8.5.0", true)]);
+    }
+
+    #[test]
+    fn a_package_from_git_a_path_or_the_project_itself_is_not_a_registry_version() {
+        assert_eq!(of("iniconfig"), []);
+        assert_eq!(of("local-lib"), []);
+        assert_eq!(of("demo"), []);
+    }
+
+    #[test]
+    fn a_package_from_another_index_is_not_a_pypi_version() {
+        assert_eq!(of("numpy"), []);
+    }
+
+    #[test]
+    fn in_a_workspace_what_any_member_or_extra_asks_for_is_direct() {
+        let lock = include_str!("fixtures/used/uv-workspace.lock");
+        let of = |name| used_versions(Format::UvLock, name, lock).unwrap();
+        assert_eq!(of("six"), [used("1.17.0", true)]);
+        assert_eq!(of("zope-interface"), [used("8.6", true)]);
+    }
+
+    #[test]
+    fn a_dot_a_dash_and_an_underscore_are_the_same_in_a_project_name() {
+        let lock = include_str!("fixtures/used/uv-workspace.lock");
+        let of = |name| used_versions(Format::UvLock, name, lock).unwrap();
+        assert_eq!(of("Typing_Extensions"), [used("4.16.0", true)]);
+        assert_eq!(of("Zope.Interface"), [used("8.6", true)]);
+    }
+
+    #[test]
+    fn of_several_versions_the_one_the_project_names_is_direct() {
+        let lock = r#"
+version = 1
+
+[[package]]
+name = "app"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "six", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+
+[[package]]
+name = "six"
+version = "1.16.0"
+source = { registry = "https://pypi.org/simple/" }
+
+[[package]]
+name = "six"
+version = "1.17.0"
+source = { registry = "https://pypi.org/simple" }
+"#;
+        assert_eq!(
+            used_versions(Format::UvLock, "six", lock).unwrap(),
+            [used("1.16.0", false), used("1.17.0", true)]
+        );
+    }
+
+    #[test]
+    fn a_text_that_is_not_a_uv_lock_is_an_error() {
+        assert!(used_versions(Format::UvLock, "click", "[[package]\n").is_err());
+    }
+}
+
+mod poetry {
+    use super::*;
+
+    const LOCK: &str = include_str!("fixtures/used/poetry.lock");
+
+    fn of(name: &str) -> Vec<Used> {
+        used_versions(Format::PoetryLock, name, LOCK).unwrap()
+    }
+
+    #[test]
+    fn a_package_without_a_source_is_a_pypi_version_and_never_direct() {
+        assert_eq!(of("click"), [used("8.5.0", false)]);
+    }
+
+    #[test]
+    fn a_name_is_found_however_it_is_cased() {
+        assert_eq!(of("Click"), [used("8.5.0", false)]);
+    }
+
+    #[test]
+    fn a_package_from_git_or_another_index_is_not_a_pypi_version() {
+        assert_eq!(of("iniconfig"), []);
+        assert_eq!(of("numpy"), []);
+    }
+
+    #[test]
+    fn a_text_that_is_not_a_poetry_lock_is_an_error() {
+        assert!(used_versions(Format::PoetryLock, "click", "[[package]\n").is_err());
+    }
+}

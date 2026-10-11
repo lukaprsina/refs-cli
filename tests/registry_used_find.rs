@@ -26,6 +26,17 @@ const PNPM_LOCK: &str = "lockfileVersion: '9.0'\n\nimporters:\n  .:\n    depende
 
 const YARN_LOCK: &str = "# yarn lockfile v1\n\n\"react@^18\":\n  version \"18.1.0\"\n";
 
+const UV_LOCK: &str = r#"
+version = 1
+
+[[package]]
+name = "requests"
+version = "2.32.0"
+source = { registry = "https://pypi.org/simple" }
+"#;
+
+const POETRY_LOCK: &str = "[[package]]\nname = \"requests\"\nversion = \"2.31.0\"\n";
+
 fn canonical(path: &Path) -> PathBuf {
     dunce::canonicalize(path).unwrap()
 }
@@ -136,6 +147,19 @@ fn an_ecosystem_reads_only_its_own_lockfiles() {
         versions(&find(Ecosystem::Npm, "react", &project)),
         ["18.2.0"]
     );
+}
+
+#[test]
+fn of_uv_lock_and_poetry_lock_in_one_directory_uv_lock_is_read() {
+    let (_repo, _top, project) = worktree();
+    fs::write(project.join("poetry.lock"), POETRY_LOCK).unwrap();
+    fs::write(project.join("uv.lock"), UV_LOCK).unwrap();
+    let Lookup::Found(found) = find(Ecosystem::Pypi, "requests", &project) else {
+        panic!("expected a lockfile");
+    };
+    assert_eq!(found.format, Format::UvLock);
+    assert_eq!(found.used[0].version, "2.32.0");
+    assert_eq!(found.ignored, [project.join("poetry.lock")]);
 }
 
 #[test]

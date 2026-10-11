@@ -9,6 +9,9 @@ use crate::worktree::candidate_dirs;
 mod cargo;
 mod package_lock;
 mod pnpm;
+mod poetry;
+mod pypi;
+mod uv;
 mod yaml;
 mod yarn;
 
@@ -19,6 +22,8 @@ pub enum Format {
     PackageLock,
     Pnpm,
     Yarn,
+    UvLock,
+    PoetryLock,
 }
 
 /// A version of a package that a Package lockfile resolved.
@@ -40,6 +45,8 @@ pub fn used_versions(format: Format, name: &str, text: &str) -> Result<Vec<Used>
         Format::PackageLock => package_lock::used(name, text)?,
         Format::Pnpm => pnpm::used(name, text),
         Format::Yarn => yarn::used(name, text),
+        Format::UvLock => uv::used(name, text)?,
+        Format::PoetryLock => poetry::used(name, text)?,
     };
     Ok(distinct(found))
 }
@@ -72,15 +79,12 @@ impl Format {
                 ("yarn.lock", Format::Yarn),
                 ("package-lock.json", Format::PackageLock),
             ],
-            // `uv.lock` and `poetry.lock` are not read yet.
-            Ecosystem::Pypi => &[],
+            Ecosystem::Pypi => &[
+                ("uv.lock", Format::UvLock),
+                ("poetry.lock", Format::PoetryLock),
+            ],
         }
     }
-}
-
-/// Whether refs reads a Package lockfile for `ecosystem` at all (`pypi:` has none yet).
-pub fn reads(ecosystem: Ecosystem) -> bool {
-    !Format::of(ecosystem).is_empty()
 }
 
 /// The Package lockfile a project uses and the versions of one package in it.

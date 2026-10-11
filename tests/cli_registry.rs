@@ -935,7 +935,55 @@ fn a_given_version_or_ref_skips_the_lockfile() {
 }
 
 #[test]
-fn a_pypi_shorthand_reads_no_lockfile() {
+fn a_pypi_shorthand_reads_uv_lock() {
+    let dir = project();
+    write(
+        dir.path(),
+        "uv.lock",
+        "version = 1\n\n[[package]]\nname = \"foo-py\"\nversion = \"0.4.1\"\nsource = { registry = \"https://pypi.org/simple\" }\n",
+    );
+    let registry = FakeRegistry::new().with(Ecosystem::Pypi, "Foo_Py", found(FOO, None));
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["v0.4.0", "v0.4.1"]);
+
+    let run = add(
+        dir.path(),
+        &registry,
+        &source,
+        &["pypi:Foo_Py", "--id", "foo"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(config_text(dir.path()).contains("ref = \"v0.4.1\""));
+    assert!(run.err.contains("uv.lock"), "{}", run.err);
+}
+
+#[test]
+fn a_pypi_shorthand_reads_poetry_lock_when_there_is_no_uv_lock() {
+    let dir = project();
+    write(
+        dir.path(),
+        "poetry.lock",
+        "[[package]]\nname = \"foo-py\"\nversion = \"0.4.1\"\n\n[metadata]\nlock-version = \"2.1\"\n",
+    );
+    let registry = FakeRegistry::new().with(Ecosystem::Pypi, "foo-py", found(FOO, None));
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["0.4.1"]);
+
+    let run = add(
+        dir.path(),
+        &registry,
+        &source,
+        &["pypi:foo-py", "--id", "foo"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(config_text(dir.path()).contains("ref = \"0.4.1\""));
+    assert!(run.err.contains("poetry.lock"), "{}", run.err);
+}
+
+#[test]
+fn a_pypi_shorthand_does_not_read_another_ecosystems_lockfile() {
     let dir = project();
     write(dir.path(), "package-lock.json", NPM_LOCK_ONE);
     let registry = FakeRegistry::new().with(Ecosystem::Pypi, "foo-js", found(FOO, None));
@@ -948,7 +996,7 @@ fn a_pypi_shorthand_reads_no_lockfile() {
     );
 
     assert_eq!(run.code, 0, "{}", run.err);
-    assert!(!run.err.contains("lockfile"), "{}", run.err);
+    assert!(run.err.contains("no Package lockfile found"), "{}", run.err);
     assert!(!config_text(dir.path()).contains("ref ="));
 }
 
