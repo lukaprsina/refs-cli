@@ -449,23 +449,9 @@ pub enum Note {
     #[diagnostic(code(refs::sync::recreated))]
     Recreated { id: String },
 
-    #[error("{tool} does not exclude the references directory")]
-    #[diagnostic(code(refs::tooling::gap), help("add this to {file}: {snippet}"))]
-    ToolingGap {
-        tool: &'static str,
-        file: String,
-        snippet: String,
-    },
-}
-
-impl From<Gap> for Note {
-    fn from(gap: Gap) -> Note {
-        Note::ToolingGap {
-            tool: gap.tool.name(),
-            file: gap.file,
-            snippet: gap.snippet,
-        }
-    }
+    #[error("{} does not exclude the references directory", .gap.tool.name())]
+    #[diagnostic(code(refs::tooling::gap), help("add this to {}: {}", .gap.file, .gap.snippet))]
+    ToolingGap { gap: Gap },
 }
 
 /// Why `refs init` stopped.

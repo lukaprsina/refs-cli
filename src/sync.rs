@@ -217,9 +217,11 @@ fn plan_and_apply(
         // active Repo there is no references directory to keep out.
         if report.outcome == Outcome::InSync && active.repos().next().is_some() {
             let gaps = tooling::gaps(root, dir, &config.tooling_ignored());
-            report
-                .diagnostics
-                .extend(gaps.into_iter().map(Note::from).map(miette::Report::new));
+            report.diagnostics.extend(
+                gaps.into_iter()
+                    .map(|gap| Note::ToolingGap { gap })
+                    .map(miette::Report::new),
+            );
         }
         report
     };

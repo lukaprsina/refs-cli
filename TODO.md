@@ -4,4 +4,4 @@
 - A per-version registry lookup (dropped in #64): only if a package turns up that moved directories between versions. Its own ticket then.
 - Re-pinning existing Repos to the Used version, and importing Repos from a project's dependency list. Both reuse `registry::used`.
 - Tooling gaps: an unreadable or non-UTF8 config is a false miss and is untested; `.oxlintrc.jsonc` is not detected (check Oxlint's docs first); a symlinked Project directory silently loses the walk-up in `worktree::candidate_dirs`.
-- Cleanups parked from review: `prompter` and `console` travel together through the `add` pipeline in `cli.rs`; `--ref` silently wins over a version; the `From<Gap>` copy into `Note`.
+- Cleanups considered and dropped: bundling `prompter` and `console` in `cli.rs`. `Asking` already holds the prompter, each use falls back differently without one, and `console` is used everywhere, so a bundle would only shorten parameter lists.
