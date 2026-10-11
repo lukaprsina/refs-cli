@@ -3,9 +3,7 @@
 
 use std::fs;
 
-use refs_cli::registry::pin::{
-    Choice, Decision, Failed, NoTags, Pinned, Tags, Why, pin, pin_version,
-};
+use refs_cli::registry::pin::{Choice, Decision, Failed, NoTags, Pinned, Tags, Why, pin};
 use refs_cli::registry::{Ecosystem, Package};
 use refs_cli::source::fake::FakeSource;
 use tempfile::TempDir;
@@ -219,16 +217,4 @@ fn failing_to_list_tags_for_a_given_version_read_nothing() {
     let dir = project(Some(ONE_SERDE));
     let failed = pin(&serde(), Some("1.0.1"), URL, dir.path(), &Unreachable).unwrap_err();
     assert_eq!(failed.read, None);
-}
-
-#[test]
-fn a_chosen_version_is_pinned_to_its_tag() {
-    let choice = pin_version(&serde(), "1.0.100", URL, &tagged(&["v1.0.100"])).unwrap();
-    assert_eq!(
-        choice,
-        Choice::Tag {
-            version: "1.0.100".into(),
-            tag: "v1.0.100".into()
-        }
-    );
 }

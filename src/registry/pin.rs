@@ -66,6 +66,7 @@ pub enum Choice {
     DefaultBranch(Why),
 }
 
+/// What `pin` came to: one version settled, or several left to choose from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     Settled(Choice),
