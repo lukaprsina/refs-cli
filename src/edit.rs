@@ -375,14 +375,16 @@ fn cut_table(text: &str, target: Target) -> Result<String, EditError> {
     Ok(out)
 }
 
-/// The last path segment of the URL, without a trailing `.git`.
+/// The last path segment of the URL, without a trailing `.git` or the dots and dashes an id
+/// cannot start with (`.github` gives `github`).
 pub(crate) fn id_from_url(url: &str) -> String {
     let last = url
         .trim_end_matches('/')
         .rsplit(['/', ':'])
         .next()
         .unwrap_or(url);
-    last.strip_suffix(".git").unwrap_or(last).to_string()
+    let name = last.strip_suffix(".git").unwrap_or(last);
+    name.trim_start_matches(['.', '_', '-']).to_string()
 }
 
 fn open(text: &str) -> Result<config::Config, EditError> {

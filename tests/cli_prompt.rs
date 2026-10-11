@@ -413,3 +413,46 @@ fn an_empty_or_case_only_different_group_name_is_asked_again() {
         script.rejected
     );
 }
+
+#[test]
+fn a_forge_shorthand_typed_at_the_url_question_is_expanded() {
+    let dir = project();
+    let mut script = Script::new([
+        Answer::Text("gh:owner"),
+        Answer::Text("gh:o/.github"),
+        Answer::Text(""),
+        Answer::Yes(false),
+        Answer::Text(""),
+        Answer::Text(""),
+        Answer::Yes(false),
+    ]);
+
+    let run = refs(dir.path(), &["add", "--no-sync"], Some(&mut script));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(script.rejected.len(), 1, "{:?}", script.rejected);
+    let config = config_text(dir.path());
+    assert!(
+        config.contains("[repos.github]")
+            && config.contains("url = \"https://github.com/o/.github\""),
+        "{config}"
+    );
+    assert!(
+        run.err
+            .contains("equivalent: refs add https://github.com/o/.github"),
+        "{}",
+        run.err
+    );
+}
+
+#[test]
+fn a_registry_shorthand_typed_at_the_url_question_is_looked_up() {
+    let dir = project();
+    let mut script = Script::new([Answer::Text("npm:left-pad")]);
+
+    let run = refs(dir.path(), &["add", "--no-sync"], Some(&mut script));
+
+    assert_eq!(run.code, 1);
+    assert!(script.rejected.is_empty(), "{:?}", script.rejected);
+    assert!(run.err.contains("no registry is available"), "{}", run.err);
+}

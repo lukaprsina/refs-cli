@@ -993,6 +993,7 @@ fn a_forge_shorthand_writes_the_full_url_without_the_network() {
         ("gh:o/r", "https://github.com/o/r"),
         ("github:o/r", "https://github.com/o/r"),
         ("gh:o/r.git", "https://github.com/o/r"),
+        ("gh:o/.github", "https://github.com/o/.github"),
     ] {
         let dir = project();
 

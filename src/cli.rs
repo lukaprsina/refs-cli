@@ -449,7 +449,15 @@ fn prepare_add(
     asking: &mut Asking,
     console: &mut Console,
 ) -> Result<(AddRepo, bool), u8> {
-    let expanded = match registry::expand(repo, asking.registry, asking.offline) {
+    let mut repo = repo.clone();
+    let mut url_asked = false;
+    if repo.url.is_empty()
+        && let Some(prompter) = asking.prompter.as_deref_mut()
+    {
+        repo.url = prompt::ask_url(prompter).map_err(|abort| aborted(abort, console))?;
+        url_asked = true;
+    }
+    let expanded = match registry::expand(&repo, asking.registry, asking.offline) {
         Ok(expanded) => expanded,
         Err(e) => return Err(fail(e, console)),
     };
@@ -491,6 +499,7 @@ fn prepare_add(
         asking.prompter.as_deref_mut(),
         packages,
         ref_settled,
+        url_asked,
         console,
     )
 }
@@ -624,7 +633,8 @@ fn pin_release(
 
 /// `repo` with what the command line left out, and whether anything was asked: asked for when
 /// there is a prompter, otherwise only a missing URL is a problem (usage, exit 2). On a cancel
-/// nothing has been edited. The `equivalent:` line is printed here unless `Packages::Later`,
+/// nothing has been edited. With `url_asked` the URL was typed at the prompt, which counts as
+/// asking. The `equivalent:` line is printed here unless `Packages::Later`,
 /// when `add` prints it once the packages are known.
 fn complete_add(
     repo: &AddRepo,
@@ -632,6 +642,7 @@ fn complete_add(
     prompter: Option<&mut (dyn Prompter + '_)>,
     packages: Packages,
     ref_settled: bool,
+    url_asked: bool,
     console: &mut Console,
 ) -> Result<(AddRepo, bool), u8> {
     let mut repo = repo.clone();
@@ -644,10 +655,11 @@ fn complete_add(
     };
     match prompt::fill_add(&mut repo, config, prompter, packages, ref_settled) {
         Ok(filled) => {
-            if filled.asked && packages == Packages::Now {
+            let asked = filled.asked || url_asked;
+            if asked && packages == Packages::Now {
                 equivalent(&repo, console);
             }
-            Ok((repo, filled.asked))
+            Ok((repo, asked))
         }
         Err(abort) => Err(aborted(abort, console)),
     }

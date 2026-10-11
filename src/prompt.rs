@@ -4,6 +4,7 @@
 
 use crate::config::{self, Config};
 use crate::edit::{AddRepo, id_from_url};
+use crate::registry;
 
 /// Why a question went unanswered. Nothing has been edited yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +54,8 @@ pub struct Filled {
     pub asked: bool,
 }
 
-/// Complete `repo` by asking for each value it does not have. A value given on the command
+/// Complete `repo` by asking for each value it does not have, except the URL, which `add` asks
+/// first (`ask_url`) so that a shorthand is expanded before the rest. A value given on the command
 /// line is never asked for again; an empty answer leaves a value absent, as omitting its flag
 /// would.
 ///
@@ -68,10 +70,6 @@ pub fn fill_add(
     ref_settled: bool,
 ) -> Result<Filled, Abort> {
     let mut asked = false;
-    if repo.url.is_empty() {
-        asked = true;
-        repo.url = prompter.text("Repository URL", None, &valid_url)?;
-    }
     if repo.id.is_none() {
         asked = true;
         let default = id_from_url(&repo.url).to_lowercase();
@@ -164,9 +162,21 @@ fn non_empty(answer: String) -> Option<String> {
     Some(answer).filter(|a| !a.is_empty())
 }
 
+/// The repository URL, or a shorthand for one (`gh:owner/repo`, `npm:name`), which `add`
+/// expands before `fill_add` asks the rest.
+pub fn ask_url(prompter: &mut dyn Prompter) -> Result<String, Abort> {
+    prompter.text("Repository URL", None, &valid_url)
+}
+
 fn valid_url(url: &str) -> Result<(), String> {
     if url.is_empty() {
         return Err("a URL is required".into());
+    }
+    match registry::forge::name(url) {
+        Some(Err(why)) => return Err(format!("`{url}` does not name a repository: {why}")),
+        Some(Ok(_)) => return Ok(()),
+        None if registry::is_shorthand(url) => return Ok(()),
+        None => {}
     }
     match config::url_problem(url) {
         Some((problem, _)) => Err(problem.into()),

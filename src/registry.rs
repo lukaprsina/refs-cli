@@ -164,6 +164,12 @@ impl Registry for Unavailable {
     }
 }
 
+/// Whether `url` is a shorthand `expand` would act on: a registry prefix and a name, or a forge
+/// prefix. The prompt accepts it as a URL (`prompt::ask_url`).
+pub fn is_shorthand(url: &str) -> bool {
+    forge::name(url).is_some() || parse_shorthand(url).is_some_and(|(_, name, _)| !name.is_empty())
+}
+
 /// The ecosystem, package name and version a shorthand such as `npm:@scope/name@1.2.3` asks
 /// for. The version is what follows the last `@` that does not start a scope, and may be empty
 /// or not a version: `expand` refuses those.
