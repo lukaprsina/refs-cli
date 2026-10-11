@@ -4,7 +4,7 @@ Research for the first `TODO.md` item: reading `uv.lock`, `poetry.lock` and `bun
 
 ## 1. Where it plugs in
 
-`src/registry/used.rs`: a `Format` enum, `Format::of(ecosystem)` (file name and format, in preference order), and one module per format with `used(name, text)`. `reads(Ecosystem::Pypi)` is false today because `Format::of(Pypi)` is empty, and `cli::used_version` returns early on it. Listing formats for Pypi turns the lookup on, with the existing messages for "no lockfile", "not in the lockfile" and "several versions". `tests/cli_registry.rs::a_pypi_shorthand_reads_no_lockfile` asserts the old behaviour and has to change.
+`src/registry/used.rs`: a `Format` enum, `Format::of(ecosystem)` (file name and format, in preference order), and one module per format with `used(name, text)`. Before this change `reads(Ecosystem::Pypi)` was false because `Format::of(Pypi)` was empty, and `cli::used_version` returned early on it. Listing formats for Pypi turned the lookup on, with the existing messages for "no lockfile", "not in the lockfile" and "several versions"; `reads` was then true for every ecosystem and was removed.
 
 ## 2. `uv.lock`
 
@@ -38,7 +38,7 @@ Both formats say where a version came from, so a private index is detectable.
 
 Recommendation: only PyPI counts as a registry version (uv: `registry` is `https://pypi.org/simple`, optionally with a trailing slash; Poetry: no source). Everything else is skipped like git and path sources. The known cost: a PyPI mirror (Artifactory and similar) is skipped, and the add ends with "not in the lockfile; follows the default branch". Two refinements, neither needed first: say in the message that the package is only in the lockfile from another index, and a setting to trust an index.
 
-Generated lockfile (uv, a custom index, a git dependency, a path dependency, a dev group, two numpy versions split by Python version) was kept at `/tmp/uv2.kk1f/uv.lock`; Poetry's with git and legacy sources at `/tmp/pl2.X3Fr/poetry.lock`. `/tmp` is not durable: trim them into `tests/fixtures/used/` when the work starts.
+The generated lockfiles (uv with a custom index, a git dependency, a path dependency, a dev group and two numpy versions split by Python version; Poetry with git and legacy sources) are trimmed into `tests/fixtures/used/uv.lock` and `poetry.lock`.
 
 ## 5. `bun.lock`
 

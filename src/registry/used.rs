@@ -10,7 +10,7 @@ mod cargo;
 mod package_lock;
 mod pnpm;
 mod poetry;
-mod pypi;
+mod python;
 mod uv;
 mod yaml;
 mod yarn;

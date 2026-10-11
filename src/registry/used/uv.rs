@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use super::Used;
-use super::pypi::{is_pypi_index, same_project};
+use super::python::{is_pypi_index, same_project};
 
 #[derive(Deserialize)]
 struct Lock {
@@ -19,7 +19,7 @@ struct Lock {
 #[derive(Deserialize)]
 struct Package {
     name: String,
-    /// Absent for a project whose version is dynamic.
+    /// Absent for a project that has none.
     version: Option<String>,
     source: Option<Source>,
     #[serde(default)]
@@ -37,11 +37,26 @@ struct Source {
     editable: Option<String>,
 }
 
-/// A dependency is `{ name }`, with the `version` too when the lockfile has several of it.
+/// A dependency is `{ name }`, with the `version` and `source` too when the lockfile has
+/// several versions of it.
 #[derive(Deserialize)]
 struct Dependency {
     name: String,
     version: Option<String>,
+    source: Option<Source>,
+}
+
+impl Dependency {
+    /// Whether this is the PyPI `version` of `name`: a dependency that names a source names the
+    /// package from that index.
+    fn is(&self, name: &str, version: &str) -> bool {
+        same_project(&self.name, name)
+            && self.version.as_deref().is_none_or(|v| v == version)
+            && self
+                .source
+                .as_ref()
+                .is_none_or(|source| source.registry.as_deref().is_some_and(is_pypi_index))
+    }
 }
 
 impl Package {
@@ -59,10 +74,7 @@ impl Package {
         std::iter::once(&self.dependencies)
             .chain(groups)
             .flatten()
-            .any(|dependency| {
-                same_project(&dependency.name, name)
-                    && dependency.version.as_deref().is_none_or(|v| v == version)
-            })
+            .any(|dependency| dependency.is(name, version))
     }
 }
 

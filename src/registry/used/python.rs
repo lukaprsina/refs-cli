@@ -17,6 +17,7 @@ fn normalized(name: &str) -> String {
     out
 }
 
+/// Whether `a` and `b` name the same project.
 pub(super) fn same_project(a: &str, b: &str) -> bool {
     normalized(a) == normalized(b)
 }

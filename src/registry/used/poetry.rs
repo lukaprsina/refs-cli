@@ -6,7 +6,7 @@
 use serde::Deserialize;
 
 use super::Used;
-use super::pypi::same_project;
+use super::python::same_project;
 
 #[derive(Deserialize)]
 struct Lock {

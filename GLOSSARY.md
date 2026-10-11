@@ -59,7 +59,7 @@ The tag of a Repo that a package's version was released as, found by exact match
 _Avoid_: Release tag, version Ref
 
 **Used version**:
-The version of a package that a project's Package lockfile says the project uses. It picks a Ref, through its Version tag, when a Repo is added from a registry.
+The version of a package that a project's Package lockfile says the project uses. For a Python package only a version from PyPI's own index counts. It picks a Ref, through its Version tag, when a Repo is added from a registry.
 _Avoid_: Installed version, locked version, Ref
 
 ### Pinning

@@ -1070,6 +1070,29 @@ source = { registry = "https://pypi.org/simple" }
     }
 
     #[test]
+    fn a_dependency_from_another_index_does_not_make_the_pypi_version_direct() {
+        let lock = r#"
+version = 1
+
+[[package]]
+name = "app"
+source = { virtual = "." }
+dependencies = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://download.pytorch.org/whl/cpu" } },
+]
+
+[[package]]
+name = "numpy"
+version = "2.4.6"
+source = { registry = "https://pypi.org/simple" }
+"#;
+        assert_eq!(
+            used_versions(Format::UvLock, "numpy", lock).unwrap(),
+            [used("2.4.6", false)]
+        );
+    }
+
+    #[test]
     fn a_text_that_is_not_a_uv_lock_is_an_error() {
         assert!(used_versions(Format::UvLock, "click", "[[package]\n").is_err());
     }
