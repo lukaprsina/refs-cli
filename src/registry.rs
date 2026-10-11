@@ -133,6 +133,13 @@ pub enum RegistryError {
     )]
     BadForge { shorthand: String, why: String },
 
+    #[error("`{shorthand}` names a version and `--ref` names a ref; they cannot both pin")]
+    #[diagnostic(
+        code(refs::registry::version_and_ref),
+        help("drop `--ref` to pin the version's tag, or drop the version to use the ref")
+    )]
+    VersionAndRef { shorthand: String },
+
     #[error("`{shorthand}` does not name a version: {why}")]
     #[diagnostic(
         code(refs::registry::bad_version),
@@ -230,6 +237,7 @@ pub struct Expanded {
 /// line gave them (ADR 0009).
 /// Any other `repo` comes back as it is.
 /// With `offline` a shorthand is refused, as it needs the network.
+/// A version and a `ref` both pin, so a shorthand with a version is refused when `repo` has a `ref`.
 /// The `ref` is not set here: a shorthand says which package it `requested`, and with a version
 /// (given, or found in a Package lockfile, see `used::find`) `Source::tags` and
 /// `tag::tag_for` turn that into a tag.
@@ -272,6 +280,11 @@ pub fn expand(
             })
         })
         .transpose()?;
+    if version.is_some() && repo.git_ref.is_some() {
+        return Err(RegistryError::VersionAndRef {
+            shorthand: repo.url.clone(),
+        });
+    }
     let package = Package::new(ecosystem, name);
     if offline {
         return Err(RegistryError::Offline { package });

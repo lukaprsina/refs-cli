@@ -490,7 +490,7 @@ fn prepare_add<T: Tags + ?Sized>(
         ref_settled: expanded.requested.is_some(),
     };
     let mut repo = expanded.repo;
-    // An explicit `ref` wins over any version.
+    // A `ref` given with a version was refused by `expand`; without one it is kept as it is.
     if let (None, Some(requested)) = (&repo.git_ref, &expanded.requested) {
         pin_requested(
             &mut repo,

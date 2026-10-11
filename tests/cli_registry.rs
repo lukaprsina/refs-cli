@@ -401,7 +401,32 @@ fn a_registry_add_with_no_version_pins_no_tag_and_lists_none() {
 }
 
 #[test]
-fn an_explicit_ref_wins_over_the_version() {
+fn a_version_and_a_ref_together_are_refused_before_the_registry_is_asked() {
+    let dir = project();
+    let registry = foo_registry();
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["v1.2.3"]);
+
+    let run = add(
+        dir.path(),
+        &registry,
+        &source,
+        &["npm:foo-js@1.2.3", "--id", "foo", "--ref", "main"],
+    );
+
+    assert_eq!(run.code, 1, "{}", run.err);
+    assert!(
+        run.err.contains("npm:foo-js@1.2.3") && run.err.contains("--ref"),
+        "{}",
+        run.err
+    );
+    assert!(registry.calls().is_empty());
+    assert_eq!(tags_asked(&source), 0);
+    assert_eq!(config_text(dir.path()), "");
+}
+
+#[test]
+fn an_explicit_ref_without_a_version_is_kept_and_lists_nothing() {
     let dir = project();
     let source = FakeSource::new();
     source.set_tags(FOO, ["v1.2.3"]);
@@ -410,7 +435,7 @@ fn an_explicit_ref_wins_over_the_version() {
         dir.path(),
         &foo_registry(),
         &source,
-        &["npm:foo-js@1.2.3", "--id", "foo", "--ref", "main"],
+        &["npm:foo-js", "--id", "foo", "--ref", "main"],
     );
 
     assert_eq!(run.code, 0, "{}", run.err);
