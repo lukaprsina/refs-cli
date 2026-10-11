@@ -135,7 +135,12 @@ fn a_package_the_lockfile_lacks_follows_the_default_branch() {
     let dir = project(Some(ONE_SERDE));
     let other = Package::new(Ecosystem::Cargo, "tokio");
     let pinned = pin(&other, None, URL, dir.path(), &tagged(&[])).unwrap();
-    assert_eq!(pinned.choice, Choice::DefaultBranch(Why::NotInLockfile));
+    assert_eq!(
+        pinned.choice,
+        Choice::DefaultBranch(Why::NotInLockfile {
+            file: dir.path().join("Cargo.lock")
+        })
+    );
     assert_eq!(pinned.read.unwrap().version, None);
 }
 
@@ -145,7 +150,10 @@ fn several_versions_with_nothing_to_choose_between_them_are_left_to_the_caller()
     let pinned = run(None, &dir, &tagged(&["v1.0.200"]));
     assert_eq!(
         pinned.choice,
-        Choice::Several(vec!["1.0.100".into(), "1.0.200".into()])
+        Choice::Several {
+            file: dir.path().join("Cargo.lock"),
+            versions: vec!["1.0.100".into(), "1.0.200".into()]
+        }
     );
 }
 
@@ -157,4 +165,20 @@ fn an_unreadable_lockfile_follows_the_default_branch_and_says_why() {
         panic!("expected an unreadable lockfile, got {:?}", pinned.choice);
     };
     assert_eq!(file, dir.path().join("Cargo.lock"));
+}
+
+#[test]
+fn another_lockfile_of_the_ecosystem_in_the_same_directory_is_named_as_not_read() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("pnpm-lock.yaml"),
+        "lockfileVersion: '9.0'\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("yarn.lock"), "# yarn lockfile v1\n").unwrap();
+    let react = Package::new(Ecosystem::Npm, "react");
+    let pinned = pin(&react, None, URL, dir.path(), &NoTags).unwrap();
+    let read = pinned.read.unwrap();
+    assert_eq!(read.file, dir.path().join("pnpm-lock.yaml"));
+    assert_eq!(read.ignored, [dir.path().join("yarn.lock")]);
 }

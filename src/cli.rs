@@ -532,9 +532,8 @@ fn pin_requested<T: Tags + ?Sized>(
         say_read(read, name, root, console);
     }
     let mut prompter = prompter;
-    if let Choice::Several(versions) = &pinned.choice {
-        let file = pinned.read.as_ref().map(|read| file_name(&read.file, root));
-        let file = file.unwrap_or_default();
+    if let Choice::Several { file, versions } = &pinned.choice {
+        let file = file_name(file, root);
         let version = choose_version(versions, &file, name, prompter.as_deref_mut(), console)?;
         pinned =
             pin(package, Some(&version), &repo.url, root, tags).map_err(|e| fail(e, console))?;
@@ -546,10 +545,9 @@ fn pin_requested<T: Tags + ?Sized>(
             Ok(())
         }
         Choice::DefaultBranch(why) => {
-            let read = pinned.read.as_ref();
-            follow_default_branch(&why, read, name, &repo.url, root, prompter, console)
+            follow_default_branch(&why, name, &repo.url, root, prompter, console)
         }
-        Choice::Several(_) => unreachable!("a chosen version is one version"),
+        Choice::Several { .. } => unreachable!("a chosen version is one version"),
     }
 }
 
@@ -598,7 +596,6 @@ fn choose_version(
 /// that has no tag, ask whether that is wanted (no cancels the add).
 fn follow_default_branch(
     why: &Why,
-    read: Option<&Read>,
     name: &str,
     url: &str,
     root: &Path,
@@ -614,12 +611,10 @@ fn follow_default_branch(
             "warning: cannot read {}: {why}; {follows}",
             file_name(file, root)
         )),
-        Why::NotInLockfile => {
-            let file = read
-                .map(|read| file_name(&read.file, root))
-                .unwrap_or_default();
-            console.status(format_args!("`{name}` is not in {file}; {follows}"))
-        }
+        Why::NotInLockfile { file } => console.status(format_args!(
+            "`{name}` is not in {}; {follows}",
+            file_name(file, root)
+        )),
         Why::Unlisted { version } => console.problem(format_args!(
             "warning: `{name}@{version}` is not pinned to a tag, as `--no-sync` lists no tags; \
              {follows}"

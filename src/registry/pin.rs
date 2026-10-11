@@ -14,12 +14,12 @@ use crate::source::Source;
 /// nothing can be listed (`--no-sync`).
 pub trait Tags {
     /// The remote's tag names, or `None` when this cannot list them.
-    fn tags(&self, url: &str) -> Result<Option<Vec<String>>, SourceError>;
+    fn remote_tags(&self, url: &str) -> Result<Option<Vec<String>>, SourceError>;
 }
 
 impl<S: Source + ?Sized> Tags for S {
-    fn tags(&self, url: &str) -> Result<Option<Vec<String>>, SourceError> {
-        Source::tags(self, url).map(Some)
+    fn remote_tags(&self, url: &str) -> Result<Option<Vec<String>>, SourceError> {
+        self.tags(url).map(Some)
     }
 }
 
@@ -27,7 +27,7 @@ impl<S: Source + ?Sized> Tags for S {
 pub struct NoTags;
 
 impl Tags for NoTags {
-    fn tags(&self, _: &str) -> Result<Option<Vec<String>>, SourceError> {
+    fn remote_tags(&self, _: &str) -> Result<Option<Vec<String>>, SourceError> {
         Ok(None)
     }
 }
@@ -49,8 +49,8 @@ pub enum Why {
     NoLockfile,
     /// The nearest Package lockfile could not be read.
     Unreadable { file: PathBuf, why: String },
-    /// The Package lockfile does not have the package.
-    NotInLockfile,
+    /// The Package lockfile `file` does not have the package.
+    NotInLockfile { file: PathBuf },
     /// `version` has no tag in the remote.
     Untagged { version: String },
     /// `version` could not be looked up, as no tags can be listed.
@@ -63,9 +63,12 @@ pub enum Choice {
     Tag { version: String, tag: String },
     /// Follow the remote's default branch.
     DefaultBranch(Why),
-    /// The Package lockfile has several versions, lowest first, and nothing to choose between
-    /// them: call `pin` again with the one chosen.
-    Several(Vec<String>),
+    /// The Package lockfile `file` has several versions, lowest first, and nothing to choose
+    /// between them: call `pin` again with the one chosen.
+    Several {
+        file: PathBuf,
+        versions: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,12 +105,18 @@ pub fn pin<T: Tags + ?Sized>(
         version: None,
     };
     match found.pick() {
-        Pick::Nothing => Ok(follows(Some(read), Why::NotInLockfile)),
+        Pick::Nothing => {
+            let why = Why::NotInLockfile { file: found.file };
+            Ok(follows(Some(read), why))
+        }
         Pick::Several(versions) => {
             let versions = versions.into_iter().map(str::to_owned).collect();
             Ok(Pinned {
                 read: Some(read),
-                choice: Choice::Several(versions),
+                choice: Choice::Several {
+                    file: found.file,
+                    versions,
+                },
             })
         }
         Pick::One(version) => {
@@ -135,7 +144,7 @@ fn tag_choice<T: Tags + ?Sized>(
     tags: &T,
 ) -> Result<Choice, SourceError> {
     let version = version.to_owned();
-    let Some(tags) = tags.tags(url)? else {
+    let Some(tags) = tags.remote_tags(url)? else {
         return Ok(Choice::DefaultBranch(Why::Unlisted { version }));
     };
     Ok(match tag_for(&package.name, &version, &tags) {
