@@ -48,6 +48,15 @@ pub enum Packages {
     Later,
 }
 
+/// What `add` has already decided before `fill_add` asks, and so is not asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Decided {
+    /// When the `packages` are learned.
+    pub packages: Packages,
+    /// Whether the `ref` is chosen: a registry add has picked a tag, or the default branch.
+    pub ref_settled: bool,
+}
+
 /// What `fill_add` found out: whether it asked anything at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Filled {
@@ -59,16 +68,19 @@ pub struct Filled {
 /// line is never asked for again; an empty answer leaves a value absent, as omitting its flag
 /// would.
 ///
-/// With `Packages::Later` the packages are not asked here: `add` reads them from the new
-/// Checkout and asks then (ADR 0009), see `ask_packages`. With `ref_settled` the `ref` is not
-/// asked either: a registry add has chosen it (a tag, or the default branch).
+/// With `Packages::Later` in `decided` the packages are not asked here: `add` reads them from
+/// the new Checkout and asks then (ADR 0009), see `ask_packages`. With `ref_settled` the `ref`
+/// is not asked either: a registry add has chosen it (a tag, or the default branch).
 pub fn fill_add(
     repo: &mut AddRepo,
     config: &Config,
     prompter: &mut dyn Prompter,
-    packages: Packages,
-    ref_settled: bool,
+    decided: Decided,
 ) -> Result<Filled, Abort> {
+    let Decided {
+        packages,
+        ref_settled,
+    } = decided;
     let mut asked = false;
     if repo.id.is_none() {
         asked = true;

@@ -20,7 +20,7 @@ use crate::edit::{AddRepo, Edit, Target};
 use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
-use crate::prompt::{self, Packages, Prompter};
+use crate::prompt::{self, Decided, Packages, Prompter};
 use crate::registry::pin::{Choice, NoTags, Read, Tags, Why, pin};
 use crate::registry::{self, Registry, Requested};
 use crate::source::Source;
@@ -485,7 +485,10 @@ fn prepare_add<T: Tags + ?Sized>(
         ));
     }
     // A registry add has chosen its Ref (a tag, or the default branch), so it is not asked.
-    let ref_settled = expanded.requested.is_some();
+    let decided = Decided {
+        packages,
+        ref_settled: expanded.requested.is_some(),
+    };
     let mut repo = expanded.repo;
     // An explicit `ref` wins over any version.
     if let (None, Some(requested)) = (&repo.git_ref, &expanded.requested) {
@@ -502,8 +505,7 @@ fn prepare_add<T: Tags + ?Sized>(
         &repo,
         config,
         asking.prompter.as_deref_mut(),
-        packages,
-        ref_settled,
+        decided,
         url_asked,
         console,
     )
@@ -666,8 +668,7 @@ fn complete_add(
     repo: &AddRepo,
     config: &Config,
     prompter: Option<&mut (dyn Prompter + '_)>,
-    packages: Packages,
-    ref_settled: bool,
+    decided: Decided,
     url_asked: bool,
     console: &mut Console,
 ) -> Result<(AddRepo, bool), u8> {
@@ -679,10 +680,10 @@ fn complete_add(
         }
         return Ok((repo, false));
     };
-    match prompt::fill_add(&mut repo, config, prompter, packages, ref_settled) {
+    match prompt::fill_add(&mut repo, config, prompter, decided) {
         Ok(filled) => {
             let asked = filled.asked || url_asked;
-            if asked && packages == Packages::Now {
+            if asked && decided.packages == Packages::Now {
                 equivalent(&repo, console);
             }
             Ok((repo, asked))
