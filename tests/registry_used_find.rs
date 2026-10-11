@@ -186,6 +186,17 @@ fn bun_lock_is_read_and_comes_after_the_other_npm_lockfiles() {
 }
 
 #[test]
+fn the_binary_bun_lockb_is_never_read() {
+    let (_repo, _top, project) = worktree();
+    fs::write(project.join("bun.lockb"), b"#!/usr/bin/env bun\n\0\0").unwrap();
+
+    assert!(matches!(
+        find(Ecosystem::Npm, "react", &project),
+        Lookup::Missing
+    ));
+}
+
+#[test]
 fn of_several_npm_lockfiles_in_one_directory_pnpm_then_yarn_then_npm_is_read() {
     let (_repo, _top, project) = worktree();
     fs::write(project.join("package-lock.json"), PACKAGE_LOCK).unwrap();

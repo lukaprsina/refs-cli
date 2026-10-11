@@ -16,6 +16,15 @@ mod uv;
 mod yaml;
 mod yarn;
 
+/// The dependency groups of a `package.json`, which the npm formats that record the project's own
+/// dependencies (`package-lock.json`, `bun.lock`) read to tell which versions it asks for.
+const DEPENDENCY_GROUPS: [&str; 4] = [
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+];
+
 /// The Package lockfile formats refs can read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {

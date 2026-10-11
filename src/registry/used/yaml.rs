@@ -13,7 +13,8 @@
 // Modified for refs-cli: see the module comment below.
 
 //! The small text helpers `pnpm-lock.yaml` and `yarn.lock` share: neither is parsed as YAML,
-//! both are read line by line.
+//! both are read line by line. `bun.lock` (JSON) uses `split_pkg_spec` and `is_registry_version`
+//! for the `name@version` of its entries.
 //!
 //! Derived from the helpers in opensrc's `version.rs` (`packages/opensrc/cli/src/core/`,
 //! Apache-2.0, see NOTICE). Unchanged apart from visibility, and `is_registry_version`, which

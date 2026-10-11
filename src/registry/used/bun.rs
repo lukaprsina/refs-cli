@@ -6,16 +6,8 @@
 
 use serde_json::Value;
 
-use super::Used;
 use super::yaml::{is_registry_version, split_pkg_spec};
-
-/// The dependency groups of a workspace's `package.json`.
-const GROUPS: [&str; 4] = [
-    "dependencies",
-    "devDependencies",
-    "optionalDependencies",
-    "peerDependencies",
-];
+use super::{DEPENDENCY_GROUPS, Used};
 
 /// `text` without the commas that precede a closing `}` or `]`, which `serde_json` refuses.
 /// Commas inside strings stay.
@@ -45,7 +37,7 @@ fn asked_for(doc: &Value) -> Vec<(&str, &str)> {
         .values()
         .flat_map(|workspace| {
             let owner = workspace.get("name").and_then(Value::as_str).unwrap_or("");
-            GROUPS
+            DEPENDENCY_GROUPS
                 .iter()
                 .filter_map(|group| workspace.get(group)?.as_object())
                 .flat_map(|deps| deps.keys())

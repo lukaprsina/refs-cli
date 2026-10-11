@@ -6,15 +6,7 @@
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::Used;
-
-/// The dependency groups of the project's own `package.json`.
-const GROUPS: [&str; 4] = [
-    "dependencies",
-    "devDependencies",
-    "optionalDependencies",
-    "peerDependencies",
-];
+use super::{DEPENDENCY_GROUPS, Used};
 
 #[derive(Deserialize)]
 struct Entry {
@@ -57,7 +49,7 @@ pub(super) fn used(name: &str, text: &str) -> Result<Vec<Used>, String> {
 fn from_packages(name: &str, packages: &Map<String, Value>) -> Vec<Used> {
     let asked_for = |alias: &str| {
         packages.get("").is_some_and(|root| {
-            GROUPS.iter().any(|group| {
+            DEPENDENCY_GROUPS.iter().any(|group| {
                 root.get(group)
                     .is_some_and(|deps| deps.get(alias).is_some())
             })

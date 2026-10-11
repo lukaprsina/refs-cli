@@ -1177,7 +1177,7 @@ mod bun {
     fn trailing_commas_are_allowed_but_not_inside_strings() {
         let lock = r#"{
   "workspaces": { "": { "dependencies": { "x,}": "1.0.0", }, }, },
-  "packages": { "x,}": ["x,}@1.0.0", "", {}, "sha512-a,]",], },
+  "packages": { "x,}": ["x,}@1.0.0", "", {}, "sha512-a\",]",], },
 }"#;
         assert_eq!(
             used_versions(Format::BunLock, "x,}", lock).unwrap(),
