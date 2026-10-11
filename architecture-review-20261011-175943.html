@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review for refs-cli</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { border-top: 2px dashed #64748b; }
+      .leak { stroke: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+      <header class="space-y-3">
+        <h1 class="font-serif text-4xl">refs-cli: architecture review</h1>
+        <p class="text-sm text-slate-500">2026-10-11 · hot spot: the <code>add</code> work of the last ~40 commits (<code>cli.rs</code>, <code>registry/*</code>, <code>prompt.rs</code>, <code>add.rs</code>), then <code>sync.rs</code></p>
+        <div class="flex flex-wrap gap-4 text-xs uppercase tracking-wider text-slate-600">
+          <span class="border border-slate-400 px-2 py-1">solid box = module</span>
+          <span class="border border-dashed border-slate-400 px-2 py-1">dashed = seam</span>
+          <span class="border border-red-500 text-red-600 px-2 py-1">red = leakage</span>
+          <span class="border-4 border-slate-900 px-2 py-1">thick dark = deep module</span>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-10">
+
+        <!-- 1 -->
+        <article id="add-flow" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5">
+          <h2 class="font-serif text-2xl">Deepen the Add module: one flow, five homes today</h2>
+          <div class="flex gap-2 text-xs uppercase tracking-wider">
+            <span class="rounded bg-emerald-100 text-emerald-800 px-2 py-1">Strong</span>
+            <span class="rounded bg-slate-100 text-slate-700 px-2 py-1">ports &amp; adapters (Prompter, Registry, Source)</span>
+          </div>
+          <ul class="font-mono text-sm text-slate-700">
+            <li>src/cli.rs <span class="text-slate-400">prepare_add, pin_requested, choose_version, follow_default_branch, complete_add, add</span></li>
+            <li>src/registry.rs <span class="text-slate-400">expand</span></li>
+            <li>src/registry/pin.rs <span class="text-slate-400">pin, pin_version, Tags, NoTags</span></li>
+            <li>src/prompt.rs <span class="text-slate-400">fill_add, Decided, Packages</span></li>
+            <li>src/add.rs <span class="text-slate-400">run</span></li>
+          </ul>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4 space-y-2">
+              <div class="text-xs uppercase tracking-wider text-slate-500">Before: one Add, threaded through five modules</div>
+              <pre class="mermaid">
+flowchart TD
+  C1[cli::prepare_add] --> E[registry::expand]
+  C1 --> P[cli::pin_requested]
+  P --> PIN[registry::pin]
+  P --> CH[cli::choose_version]
+  P --> FD[cli::follow_default_branch]
+  C1 --> CA[cli::complete_add]
+  CA --> FA[prompt::fill_add]
+  C1 -. url_asked, Decided, Packages::Now/Later .-> CA
+  CLI[cli::add] --> AR[add::run]
+  AR --> SE[sync::edit x2]
+  CLI -. asked flag .-> CLI
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class CA,FA,CLI leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 space-y-3">
+              <div class="text-xs uppercase tracking-wider text-slate-500">After: Add module, small interface</div>
+              <div class="deep text-white rounded-lg p-5 space-y-2">
+                <div class="text-xs uppercase tracking-wider text-slate-300">Add module</div>
+                <div class="text-sm">shorthand expand · version → tag · lockfile read · which questions · edit · sync · infer packages</div>
+                <div class="grid grid-cols-3 gap-2 text-[10px] uppercase tracking-wider text-slate-400 pt-2">
+                  <span class="border border-slate-600 px-1 py-0.5 opacity-60">expand</span>
+                  <span class="border border-slate-600 px-1 py-0.5 opacity-60">pin</span>
+                  <span class="border border-slate-600 px-1 py-0.5 opacity-60">fill_add</span>
+                  <span class="border border-slate-600 px-1 py-0.5 opacity-60">choose</span>
+                  <span class="border border-slate-600 px-1 py-0.5 opacity-60">follow</span>
+                  <span class="border border-slate-600 px-1 py-0.5 opacity-60">infer</span>
+                </div>
+              </div>
+              <div class="seam"></div>
+              <div class="grid grid-cols-3 gap-2 text-xs uppercase tracking-wider text-center">
+                <span class="border border-dashed border-slate-400 p-2">Prompter</span>
+                <span class="border border-dashed border-slate-400 p-2">Registry</span>
+                <span class="border border-dashed border-slate-400 p-2">Source</span>
+              </div>
+              <div class="text-xs text-slate-500">cli keeps argument parsing and printing.</div>
+            </div>
+          </div>
+
+          <p><strong>Problem.</strong> One <code>add</code> is decided in five modules, joined by bookkeeping flags (<code>url_asked</code>, <code>asked</code>, <code>Decided.ref_settled</code>, <code>Packages::Now/Later</code>) that leak across the seams. The same decision is also made twice: <code>--no-sync</code> and sync paths call <code>prepare_add</code> with different modes. Bugs hide in how the pieces are called, not in the pure ones.</p>
+          <p><strong>Solution.</strong> One Add module owns the sequence: expand, pin, ask, edit, sync, infer. Its interface is the repo as typed, the Prompter, Registry and Source, and a result that the CLI prints.</p>
+          <ul class="list-disc pl-6 text-sm space-y-1">
+            <li>locality: ordering and the "was anything asked" rule live in one place</li>
+            <li>leverage: tests drive one interface with a scripted Prompter</li>
+            <li>cli.rs sheds ~250 lines of <code>add</code> orchestration</li>
+            <li>interface shrinks; the flag threading becomes internal</li>
+            <li><code>pin</code>, <code>tag_for</code>, <code>used</code> stay pure behind it</li>
+          </ul>
+          <div class="rounded border border-amber-300 bg-amber-50 text-amber-900 text-sm p-3">ADR 0008 and 0009 describe this pipeline; this keeps their decisions and moves where they are implemented. No conflict.</div>
+        </article>
+
+        <!-- 2 -->
+        <article id="sync-report" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5">
+          <h2 class="font-serif text-2xl">One place that assembles a sync Report</h2>
+          <div class="flex gap-2 text-xs uppercase tracking-wider">
+            <span class="rounded bg-amber-100 text-amber-800 px-2 py-1">Worth exploring</span>
+            <span class="rounded bg-slate-100 text-slate-700 px-2 py-1">in-process</span>
+          </div>
+          <ul class="font-mono text-sm text-slate-700">
+            <li>src/sync.rs <span class="text-slate-400">lock, sync, run_sync, plan_and_apply, edit, edit_only, finish, Report builders</span></li>
+            <li>src/plan/outcome.rs <span class="text-slate-400">check_outcome, Hint</span></li>
+          </ul>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4 space-y-2">
+              <div class="text-xs uppercase tracking-wider text-slate-500">Before: four entries, each picks drift, hint and stage ordering</div>
+              <div class="space-y-1 text-xs uppercase tracking-wider">
+                <div class="border-l-4 border-slate-400 bg-slate-50 p-2">lock → preflight → stage_one → finish</div>
+                <div class="border-l-4 border-slate-400 bg-slate-50 p-2">sync → run_sync → stage_one | check → plan_and_apply → finish</div>
+                <div class="border-l-4 border-slate-400 bg-slate-50 p-2">edit → Applied → preflight → shrunk_lock | resolve_all → commit → write → plan_and_apply</div>
+                <div class="border-l-4 border-slate-400 bg-slate-50 p-2">edit_only → Applied → write</div>
+                <div class="border-l-4 border-red-500 bg-red-50 text-red-700 p-2">"--check with a missing Lock" decided twice: run_sync and plan_and_apply (<code>check_outcome(None, true)</code>)</div>
+                <div class="border-l-4 border-red-500 bg-red-50 text-red-700 p-2">Hint chosen at 5 exit points; Lock-written order patched by <code>finish</code></div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 space-y-2">
+              <div class="text-xs uppercase tracking-wider text-slate-500">After: one run with named exits</div>
+              <div class="deep text-white rounded-lg p-5 text-sm space-y-1">
+                <div class="text-xs uppercase tracking-wider text-slate-300">Run</div>
+                <div>stage 1 → write edit → stage 2 → Report</div>
+                <div class="text-slate-400 text-xs">check, missing Lock, hint and Lock-first ordering decided once</div>
+              </div>
+              <div class="seam"></div>
+              <div class="text-xs uppercase tracking-wider text-center border border-dashed border-slate-400 p-2">Source</div>
+            </div>
+          </div>
+
+          <p><strong>Problem.</strong> The two stages are pure and well tested (ADR 0006); the shell that sequences them is copied across four entries, so the same rules are restated and each new exit needs a hint and a drift call.</p>
+          <p><strong>Solution.</strong> Make the sequence one module whose entries differ only in whether an edit comes first and whether the run is a check.</p>
+          <ul class="list-disc pl-6 text-sm space-y-1">
+            <li>locality: Hint and ordering rules in one body</li>
+            <li>delete one duplicated missing-Lock branch</li>
+            <li>leverage: <code>lock</code>, <code>sync</code>, <code>edit</code> share one interface</li>
+          </ul>
+          <div class="rounded border border-amber-300 bg-amber-50 text-amber-900 text-sm p-3">ADR 0006 says <code>sync</code> sets the Hint where it knows why a run stopped. This keeps that and only gathers where.</div>
+        </article>
+
+        <!-- 3 -->
+        <article id="tags-seam" class="rounded-xl border border-slate-200 bg-white p-6 space-y-5">
+          <h2 class="font-serif text-2xl">Tags is a seam wrapped around a seam</h2>
+          <div class="flex gap-2 text-xs uppercase tracking-wider">
+            <span class="rounded bg-slate-200 text-slate-700 px-2 py-1">Speculative</span>
+            <span class="rounded bg-slate-100 text-slate-700 px-2 py-1">ports &amp; adapters</span>
+          </div>
+          <ul class="font-mono text-sm text-slate-700">
+            <li>src/source.rs <span class="text-slate-400">Source::tags</span></li>
+            <li>src/registry/pin.rs <span class="text-slate-400">Tags, NoTags, blanket impl for Source, Why::Unlisted</span></li>
+            <li>src/source/fake.rs, src/source/git/remote.rs</li>
+          </ul>
+
+          <div class="grid md:grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-4">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">Before</div>
+              <pre class="mermaid">
+flowchart LR
+  pin[registry::pin] --> T[Tags]
+  T --> S[Source: 7 methods]
+  T --> N[NoTags]
+  S -. tags touches no Cache or Checkout .-> G[git ls-remote]
+  N -. exists to say Option::None .-> W[Why::Unlisted]
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class N,W,S leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-4 space-y-3">
+              <div class="text-xs uppercase tracking-wider text-slate-500">After (shape to decide)</div>
+              <div class="border-4 border-slate-900 rounded p-4 text-sm">Tag listing is one seam with its own adapters; Source returns to cache and checkout only; "cannot list" is not a second adapter.</div>
+            </div>
+          </div>
+
+          <p><strong>Problem.</strong> <code>Source::tags</code> shares a trait with checkout mechanics it has nothing to do with (the ADR says so), and <code>Tags</code> re-wraps it so <code>--no-sync</code> can answer "none". The only reason for <code>NoTags</code> is one flag.</p>
+          <p><strong>Solution.</strong> Give tag listing its own seam, or let the caller say "no listing" directly, and drop the blanket impl.</p>
+          <ul class="list-disc pl-6 text-sm space-y-1">
+            <li>Source interface shrinks by a method</li>
+            <li>delete the blanket impl and <code>NoTags</code></li>
+            <li>contract tests for Source stop covering listing</li>
+          </ul>
+          <div class="rounded border border-amber-300 bg-amber-50 text-amber-900 text-sm p-3">ADR 0006 lists <code>tags</code> among Source's seven methods; this contradicts it. Worth reopening only if candidate 1 lands and <code>Tags</code> is still awkward.</div>
+        </article>
+
+      </section>
+
+      <section id="top-recommendation" class="rounded-xl border-4 border-slate-900 bg-white p-6 space-y-2">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Top recommendation</div>
+        <h2 class="font-serif text-2xl"><a class="underline" href="#add-flow">Deepen the Add module</a></h2>
+        <p>It is the code that changed in nearly every recent commit, it has the most flags crossing seams, and the other candidates (the <code>Tags</code> seam) get simpler once it exists.</p>
+      </section>
+    </main>
+  </body>
+</html>
