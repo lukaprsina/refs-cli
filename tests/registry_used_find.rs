@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
-use refs_cli::registry::Ecosystem;
 use refs_cli::registry::used::{Format, Lookup, find};
+use refs_cli::registry::{Ecosystem, Package};
 use tempfile::TempDir;
 
 const CARGO_LOCK: &str = r#"
@@ -74,7 +74,7 @@ fn a_lockfile_in_the_project_directory_is_read() {
     let (_repo, _top, project) = worktree();
     fs::write(project.join("Cargo.lock"), CARGO_LOCK).unwrap();
 
-    let lookup = find(Ecosystem::Cargo, "serde", &project);
+    let lookup = find(&Package::new(Ecosystem::Cargo, "serde"), &project);
 
     assert_eq!(versions(&lookup), ["1.0.200"]);
     assert_eq!(found_file(&lookup), project.join("Cargo.lock"));
@@ -86,7 +86,7 @@ fn a_lockfile_further_up_is_found_as_far_as_the_worktree_top() {
     fs::write(top.join("Cargo.lock"), CARGO_LOCK).unwrap();
 
     assert_eq!(
-        found_file(&find(Ecosystem::Cargo, "serde", &project)),
+        found_file(&find(&Package::new(Ecosystem::Cargo, "serde"), &project)),
         top.join("Cargo.lock")
     );
 }
@@ -100,7 +100,7 @@ fn a_lockfile_above_the_worktree_is_not_read() {
     common::git(&repo, &["init", "-q"]);
 
     assert!(matches!(
-        find(Ecosystem::Cargo, "serde", &canonical(&repo)),
+        find(&Package::new(Ecosystem::Cargo, "serde"), &canonical(&repo)),
         Lookup::Missing
     ));
 }
@@ -113,11 +113,17 @@ fn outside_a_worktree_only_the_project_directory_is_read() {
     fs::create_dir_all(&project).unwrap();
 
     assert!(matches!(
-        find(Ecosystem::Cargo, "serde", &canonical(&project)),
+        find(
+            &Package::new(Ecosystem::Cargo, "serde"),
+            &canonical(&project)
+        ),
         Lookup::Missing
     ));
     assert_eq!(
-        versions(&find(Ecosystem::Cargo, "serde", &canonical(dir.path()))),
+        versions(&find(
+            &Package::new(Ecosystem::Cargo, "serde"),
+            &canonical(dir.path())
+        )),
         ["1.0.200"]
     );
 }
@@ -128,7 +134,7 @@ fn the_nearest_lockfile_wins_even_when_it_lacks_the_package() {
     fs::write(top.join("Cargo.lock"), CARGO_LOCK).unwrap();
     fs::write(project.join("Cargo.lock"), "version = 4\n").unwrap();
 
-    let lookup = find(Ecosystem::Cargo, "serde", &project);
+    let lookup = find(&Package::new(Ecosystem::Cargo, "serde"), &project);
 
     assert_eq!(found_file(&lookup), project.join("Cargo.lock"));
     assert_eq!(versions(&lookup), Vec::<&str>::new());
@@ -140,15 +146,15 @@ fn an_ecosystem_reads_only_its_own_lockfiles() {
     fs::write(project.join("package-lock.json"), PACKAGE_LOCK).unwrap();
 
     assert!(matches!(
-        find(Ecosystem::Cargo, "serde", &project),
+        find(&Package::new(Ecosystem::Cargo, "serde"), &project),
         Lookup::Missing
     ));
     assert!(matches!(
-        find(Ecosystem::Pypi, "requests", &project),
+        find(&Package::new(Ecosystem::Pypi, "requests"), &project),
         Lookup::Missing
     ));
     assert_eq!(
-        versions(&find(Ecosystem::Npm, "react", &project)),
+        versions(&find(&Package::new(Ecosystem::Npm, "react"), &project)),
         ["18.2.0"]
     );
 }
@@ -158,7 +164,7 @@ fn of_uv_lock_and_poetry_lock_in_one_directory_uv_lock_is_read() {
     let (_repo, _top, project) = worktree();
     fs::write(project.join("poetry.lock"), POETRY_LOCK).unwrap();
     fs::write(project.join("uv.lock"), UV_LOCK).unwrap();
-    let Lookup::Found(found) = find(Ecosystem::Pypi, "requests", &project) else {
+    let Lookup::Found(found) = find(&Package::new(Ecosystem::Pypi, "requests"), &project) else {
         panic!("expected a lockfile");
     };
     assert_eq!(found.format, Format::UvLock);
@@ -170,7 +176,7 @@ fn of_uv_lock_and_poetry_lock_in_one_directory_uv_lock_is_read() {
 fn bun_lock_is_read_and_comes_after_the_other_npm_lockfiles() {
     let (_repo, _top, project) = worktree();
     fs::write(project.join("bun.lock"), BUN_LOCK).unwrap();
-    let lookup = find(Ecosystem::Npm, "react", &project);
+    let lookup = find(&Package::new(Ecosystem::Npm, "react"), &project);
     assert_eq!(versions(&lookup), ["18.3.1"]);
     let Lookup::Found(found) = lookup else {
         panic!("expected a lockfile");
@@ -178,7 +184,7 @@ fn bun_lock_is_read_and_comes_after_the_other_npm_lockfiles() {
     assert_eq!(found.format, Format::BunLock);
 
     fs::write(project.join("package-lock.json"), PACKAGE_LOCK).unwrap();
-    let Lookup::Found(found) = find(Ecosystem::Npm, "react", &project) else {
+    let Lookup::Found(found) = find(&Package::new(Ecosystem::Npm, "react"), &project) else {
         panic!("expected a lockfile");
     };
     assert_eq!(found.format, Format::PackageLock);
@@ -191,7 +197,7 @@ fn the_binary_bun_lockb_is_never_read() {
     fs::write(project.join("bun.lockb"), b"#!/usr/bin/env bun\n\0\0").unwrap();
 
     assert!(matches!(
-        find(Ecosystem::Npm, "react", &project),
+        find(&Package::new(Ecosystem::Npm, "react"), &project),
         Lookup::Missing
     ));
 }
@@ -201,14 +207,14 @@ fn of_several_npm_lockfiles_in_one_directory_pnpm_then_yarn_then_npm_is_read() {
     let (_repo, _top, project) = worktree();
     fs::write(project.join("package-lock.json"), PACKAGE_LOCK).unwrap();
     fs::write(project.join("yarn.lock"), YARN_LOCK).unwrap();
-    let Lookup::Found(found) = find(Ecosystem::Npm, "react", &project) else {
+    let Lookup::Found(found) = find(&Package::new(Ecosystem::Npm, "react"), &project) else {
         panic!("expected a lockfile");
     };
     assert_eq!(found.format, Format::Yarn);
     assert_eq!(found.ignored, [project.join("package-lock.json")]);
 
     fs::write(project.join("pnpm-lock.yaml"), PNPM_LOCK).unwrap();
-    let Lookup::Found(found) = find(Ecosystem::Npm, "react", &project) else {
+    let Lookup::Found(found) = find(&Package::new(Ecosystem::Npm, "react"), &project) else {
         panic!("expected a lockfile");
     };
     assert_eq!(found.format, Format::Pnpm);
@@ -224,7 +230,7 @@ fn no_lockfile_is_missing() {
     let (_repo, _top, project) = worktree();
 
     assert!(matches!(
-        find(Ecosystem::Npm, "react", &project),
+        find(&Package::new(Ecosystem::Npm, "react"), &project),
         Lookup::Missing
     ));
 }
@@ -234,7 +240,7 @@ fn a_lockfile_that_cannot_be_read_says_which_and_why() {
     let (_repo, _top, project) = worktree();
     fs::write(project.join("Cargo.lock"), "{ not toml").unwrap();
 
-    match find(Ecosystem::Cargo, "serde", &project) {
+    match find(&Package::new(Ecosystem::Cargo, "serde"), &project) {
         Lookup::Unreadable { file, why } => {
             assert_eq!(file, project.join("Cargo.lock"));
             assert!(!why.is_empty());

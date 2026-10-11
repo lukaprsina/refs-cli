@@ -47,6 +47,22 @@ impl Ecosystem {
     }
 }
 
+/// A package as a registry knows it: the ecosystem and the name together.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Package {
+    pub ecosystem: Ecosystem,
+    pub name: String,
+}
+
+impl Package {
+    pub fn new(ecosystem: Ecosystem, name: impl Into<String>) -> Self {
+        Package {
+            ecosystem,
+            name: name.into(),
+        }
+    }
+}
+
 /// What a registry says about where a package lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
@@ -73,53 +89,41 @@ pub enum RegistryError {
     #[diagnostic(code(refs::registry::unavailable))]
     Unavailable,
 
-    #[error("`{}` is not on {}", .name, .ecosystem.registry())]
+    #[error("`{}` is not on {}", .package.name, .package.ecosystem.registry())]
     #[diagnostic(code(refs::registry::not_found))]
-    NotFound { ecosystem: Ecosystem, name: String },
+    NotFound { package: Package },
 
-    #[error("{} has no repository for `{}`", .ecosystem.registry(), .name)]
+    #[error("{} has no repository for `{}`", .package.ecosystem.registry(), .package.name)]
     #[diagnostic(
         code(refs::registry::no_repository),
         help("add it by its git URL instead")
     )]
-    NoRepository { ecosystem: Ecosystem, name: String },
+    NoRepository { package: Package },
 
-    #[error("could not ask {} about `{}`: {why}", .ecosystem.registry(), .name)]
+    #[error("could not ask {} about `{}`: {why}", .package.ecosystem.registry(), .package.name)]
     #[diagnostic(code(refs::registry::request_failed))]
-    Request {
-        ecosystem: Ecosystem,
-        name: String,
-        why: String,
-    },
+    Request { package: Package, why: String },
 
-    #[error("{} answered {status} about `{}`", .ecosystem.registry(), .name)]
+    #[error("{} answered {status} about `{}`", .package.ecosystem.registry(), .package.name)]
     #[diagnostic(code(refs::registry::bad_status))]
-    Status {
-        ecosystem: Ecosystem,
-        name: String,
-        status: u16,
-    },
+    Status { package: Package, status: u16 },
 
     #[error(
         "{} sent an answer about `{}` that refs cannot read: {why}",
-        .ecosystem.registry(), .name
+        .package.ecosystem.registry(), .package.name
     )]
     #[diagnostic(code(refs::registry::malformed))]
-    Malformed {
-        ecosystem: Ecosystem,
-        name: String,
-        why: String,
-    },
+    Malformed { package: Package, why: String },
 
     #[error(
-        "`{}{name}` needs the network, which `--offline` forbids",
-        .ecosystem.prefix()
+        "`{}{}` needs the network, which `--offline` forbids",
+        .package.ecosystem.prefix(), .package.name
     )]
     #[diagnostic(
         code(refs::registry::offline),
         help("add it by its git URL, or leave out `--offline`")
     )]
-    Offline { ecosystem: Ecosystem, name: String },
+    Offline { package: Package },
 
     #[error("`{shorthand}` does not name a repository: {why}")]
     #[diagnostic(
@@ -139,12 +143,11 @@ pub enum RegistryError {
 
     #[error(
         "{} gives `{url}` for `{}`, which cannot be used: {problem}",
-        .ecosystem.registry(), .name
+        .package.ecosystem.registry(), .package.name
     )]
     #[diagnostic(code(refs::registry::bad_url), help("add it by a git URL you trust"))]
     BadUrl {
-        ecosystem: Ecosystem,
-        name: String,
+        package: Package,
         url: String,
         problem: String,
     },
@@ -152,14 +155,14 @@ pub enum RegistryError {
 
 /// Looks packages up. One call per `add`, for the document that names the package's repository.
 pub trait Registry {
-    fn lookup(&self, ecosystem: Ecosystem, name: &str) -> Result<Found, RegistryError>;
+    fn lookup(&self, package: &Package) -> Result<Found, RegistryError>;
 }
 
 /// The registry of a run that has none: `cli::run_with`, which cannot reach the network.
 pub struct Unavailable;
 
 impl Registry for Unavailable {
-    fn lookup(&self, _: Ecosystem, _: &str) -> Result<Found, RegistryError> {
+    fn lookup(&self, _: &Package) -> Result<Found, RegistryError> {
         Err(RegistryError::Unavailable)
     }
 }
@@ -206,18 +209,17 @@ fn exact_version(version: &str) -> Result<&str, &'static str> {
 /// The package a shorthand named, and its version if the shorthand gave one, for finding the
 /// tag it was released as.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Release {
-    pub ecosystem: Ecosystem,
-    pub name: String,
+pub struct Requested {
+    pub package: Package,
     pub version: Option<String>,
 }
 
-/// An `add` after `expand`: the repo to add, and the release its shorthand named, if it was a
-/// shorthand.
+/// An `add` after `expand`: the repo to add, and the package its shorthand named, if it was a
+/// registry shorthand.
 #[derive(Debug, Clone)]
 pub struct Expanded {
     pub repo: AddRepo,
-    pub release: Option<Release>,
+    pub requested: Option<Requested>,
     /// The path a forge shorthand had after the repository, which was dropped.
     pub ignored: Option<String>,
 }
@@ -227,7 +229,7 @@ pub struct Expanded {
 /// line gave them (ADR 0009).
 /// Any other `repo` comes back as it is.
 /// With `offline` a shorthand is refused, as it needs the network.
-/// The `ref` is not set here: a shorthand says which `release` it names, and with a version
+/// The `ref` is not set here: a shorthand says which package it `requested`, and with a version
 /// (given, or found in a Package lockfile, see `used::find`) `Source::tags` and
 /// `tag::tag_for` turn that into a tag.
 pub fn expand(
@@ -250,14 +252,14 @@ pub fn expand(
         expanded.url = named.url;
         return Ok(Expanded {
             repo: expanded,
-            release: None,
+            requested: None,
             ignored: named.ignored,
         });
     }
     let Some((ecosystem, name, version)) = parse_shorthand(&repo.url) else {
         return Ok(Expanded {
             repo: repo.clone(),
-            release: None,
+            requested: None,
             ignored: None,
         });
     };
@@ -269,17 +271,14 @@ pub fn expand(
             })
         })
         .transpose()?;
+    let package = Package::new(ecosystem, name);
     if offline {
-        return Err(RegistryError::Offline {
-            ecosystem,
-            name: name.to_owned(),
-        });
+        return Err(RegistryError::Offline { package });
     }
-    let found = registry.lookup(ecosystem, name)?;
+    let found = registry.lookup(&package)?;
     if let Some((problem, _)) = crate::config::url_problem(&found.url) {
         return Err(RegistryError::BadUrl {
-            ecosystem,
-            name: name.to_owned(),
+            package,
             url: found.url,
             problem: problem.to_owned(),
         });
@@ -290,13 +289,12 @@ pub fn expand(
         expanded.paths.extend(found.directory);
     }
     if expanded.packages.is_empty() {
-        expanded.packages.push(name.to_owned());
+        expanded.packages.push(package.name.clone());
     }
     Ok(Expanded {
         repo: expanded,
-        release: Some(Release {
-            ecosystem,
-            name: name.to_owned(),
+        requested: Some(Requested {
+            package,
             version: version.map(str::to_owned),
         }),
         ignored: None,

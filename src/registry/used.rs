@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::Ecosystem;
+use super::{Ecosystem, Package};
 use crate::worktree::candidate_dirs;
 
 mod bun;
@@ -149,12 +149,12 @@ pub enum Lookup {
     },
 }
 
-/// Look for `name` in the Package lockfile of the project at `project_dir`. The nearest
+/// Look for `package` in the Package lockfile of the project at `project_dir`. The nearest
 /// directory (see `candidate_dirs`) with a Package lockfile of the ecosystem is the one that is read,
 /// whether or not it has the package; in it, the first of the ecosystem's Package lockfiles that
 /// exists.
-pub fn find(ecosystem: Ecosystem, name: &str, project_dir: &Path) -> Lookup {
-    let formats = Format::of(ecosystem);
+pub fn find(package: &Package, project_dir: &Path) -> Lookup {
+    let formats = Format::of(package.ecosystem);
     for dir in candidate_dirs(project_dir) {
         let mut present = formats
             .iter()
@@ -166,7 +166,7 @@ pub fn find(ecosystem: Ecosystem, name: &str, project_dir: &Path) -> Lookup {
         let ignored = present.map(|(path, _)| path).collect();
         let read = std::fs::read_to_string(&file)
             .map_err(|e| e.to_string())
-            .and_then(|text| used_versions(format, name, &text));
+            .and_then(|text| used_versions(format, &package.name, &text));
         return match read {
             Ok(used) => Lookup::Found(Found {
                 file,

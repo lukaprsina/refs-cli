@@ -2,14 +2,16 @@
 //! network. The reqwest side (`Reqwest`: User-Agent, timeout) is checked by hand.
 
 use refs_cli::registry::fake::FakeFetch;
-use refs_cli::registry::{Ecosystem, Http, Registry, RegistryError};
+use refs_cli::registry::{Ecosystem, Http, Package, Registry, RegistryError};
 
 const NPM_BODY: &str =
     r#"{ "repository": { "url": "git+https://github.com/o/r.git", "directory": "pkg" } }"#;
 const PYPI_X: &str = "https://pypi.org/pypi/x/json";
 
 fn ask(fetch: &FakeFetch, ecosystem: Ecosystem, name: &str) -> Result<String, RegistryError> {
-    Http::new(fetch).lookup(ecosystem, name).map(|f| f.url)
+    Http::new(fetch)
+        .lookup(&Package::new(ecosystem, name))
+        .map(|f| f.url)
 }
 
 #[test]

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use reqwest::blocking::Client;
 
-use super::{Answer, Ecosystem, Found, Registry, RegistryError, crates, npm, pypi};
+use super::{Answer, Ecosystem, Found, Package, Registry, RegistryError, crates, npm, pypi};
 
 /// crates.io answers 403 to a request without a User-Agent that says who is asking.
 const USER_AGENT: &str = concat!(
@@ -65,25 +65,20 @@ impl<F: Fetch> Http<F> {
 }
 
 impl<F: Fetch> Registry for Http<F> {
-    fn lookup(&self, ecosystem: Ecosystem, name: &str) -> Result<Found, RegistryError> {
-        let name_owned = || name.to_owned();
-        let (url, read) = endpoint(ecosystem, name);
+    fn lookup(&self, package: &Package) -> Result<Found, RegistryError> {
+        let (url, read) = endpoint(package);
         let reply = self.0.get(&url).map_err(|why| RegistryError::Request {
-            ecosystem,
-            name: name_owned(),
+            package: package.clone(),
             why,
         })?;
+        let package = || package.clone();
         match reply.status {
             404 => {
-                return Err(RegistryError::NotFound {
-                    ecosystem,
-                    name: name_owned(),
-                });
+                return Err(RegistryError::NotFound { package: package() });
             }
             status if !(200..300).contains(&status) => {
                 return Err(RegistryError::Status {
-                    ecosystem,
-                    name: name_owned(),
+                    package: package(),
                     status,
                 });
             }
@@ -91,13 +86,9 @@ impl<F: Fetch> Registry for Http<F> {
         }
         match read(&reply.body) {
             Ok(Some(found)) => Ok(found),
-            Ok(None) => Err(RegistryError::NoRepository {
-                ecosystem,
-                name: name_owned(),
-            }),
+            Ok(None) => Err(RegistryError::NoRepository { package: package() }),
             Err(why) => Err(RegistryError::Malformed {
-                ecosystem,
-                name: name_owned(),
+                package: package(),
                 why,
             }),
         }
@@ -109,9 +100,9 @@ type Adapter = fn(&str) -> Answer;
 
 /// The URL of the document that holds the repository, the cheapest one the registry serves,
 /// and the adapter that reads it.
-fn endpoint(ecosystem: Ecosystem, name: &str) -> (String, Adapter) {
-    let name = encode(name);
-    match ecosystem {
+fn endpoint(package: &Package) -> (String, Adapter) {
+    let name = encode(&package.name);
+    match package.ecosystem {
         Ecosystem::Npm => (
             format!("https://registry.npmjs.org/{name}/latest"),
             npm::found,

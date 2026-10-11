@@ -3,18 +3,17 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use super::{Ecosystem, Fetch, Found, Registry, RegistryError, Reply};
+use super::{Ecosystem, Fetch, Found, Package, Registry, RegistryError, Reply};
 
 /// One lookup the fake received, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Call {
-    pub ecosystem: Ecosystem,
-    pub name: String,
+    pub package: Package,
 }
 
 #[derive(Default)]
 pub struct FakeRegistry {
-    packages: HashMap<(Ecosystem, String), Found>,
+    packages: HashMap<Package, Found>,
     calls: RefCell<Vec<Call>>,
 }
 
@@ -25,7 +24,7 @@ impl FakeRegistry {
 
     /// The registry knows `name` in `ecosystem`, published from `url`.
     pub fn with(mut self, ecosystem: Ecosystem, name: &str, found: Found) -> Self {
-        self.packages.insert((ecosystem, name.to_owned()), found);
+        self.packages.insert(Package::new(ecosystem, name), found);
         self
     }
 
@@ -35,17 +34,15 @@ impl FakeRegistry {
 }
 
 impl Registry for FakeRegistry {
-    fn lookup(&self, ecosystem: Ecosystem, name: &str) -> Result<Found, RegistryError> {
+    fn lookup(&self, package: &Package) -> Result<Found, RegistryError> {
         self.calls.borrow_mut().push(Call {
-            ecosystem,
-            name: name.to_owned(),
+            package: package.clone(),
         });
         self.packages
-            .get(&(ecosystem, name.to_owned()))
+            .get(package)
             .cloned()
             .ok_or_else(|| RegistryError::NotFound {
-                ecosystem,
-                name: name.to_owned(),
+                package: package.clone(),
             })
     }
 }

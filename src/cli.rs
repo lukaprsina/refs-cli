@@ -23,7 +23,7 @@ use crate::project;
 use crate::prompt::{self, Packages, Prompter};
 use crate::registry::tag::tag_for;
 use crate::registry::used::{self, Lookup, Pick};
-use crate::registry::{self, Registry, Release};
+use crate::registry::{self, Package, Registry};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
 use crate::update::{self, Updater};
@@ -469,18 +469,23 @@ fn prepare_add(
         ));
     }
     // A registry add has chosen its Ref (a tag, or the default branch), so it is not asked.
-    let ref_settled = expanded.release.is_some();
+    let ref_settled = expanded.requested.is_some();
     let mut repo = expanded.repo;
     // An explicit `ref` wins over any version.
-    if let (None, Some(release)) = (&repo.git_ref, &expanded.release) {
-        let version = match &release.version {
+    if let (None, Some(requested)) = (&repo.git_ref, &expanded.requested) {
+        let version = match &requested.version {
             Some(version) => Some(version.clone()),
-            None => used_version(release, root, asking.prompter.as_deref_mut(), console)?,
+            None => used_version(
+                &requested.package,
+                root,
+                asking.prompter.as_deref_mut(),
+                console,
+            )?,
         };
         if let Some(version) = version {
             pin_release(
                 &mut repo,
-                &release.name,
+                &requested.package.name,
                 &version,
                 source,
                 asking.prompter.as_deref_mut(),
@@ -504,19 +509,19 @@ fn prepare_add(
     )
 }
 
-/// The version of `release` that the Package lockfile of the project at `root` says it uses,
+/// The version of `package` that the Package lockfile of the project at `root` says it uses,
 /// and what was read is said. `None` when there is none to use: the repo then follows the
 /// remote's default branch, and the reason is said. Several versions with nothing to choose
 /// between them are asked about, or refused without a terminal. Never a guess.
 fn used_version(
-    release: &Release,
+    package: &Package,
     root: &Path,
     prompter: Option<&mut (dyn Prompter + '_)>,
     console: &mut Console,
 ) -> Result<Option<String>, u8> {
-    let name = &release.name;
+    let name = &package.name;
     let follows = "the repo follows the remote's default branch";
-    let found = match used::find(release.ecosystem, name, root) {
+    let found = match used::find(package, root) {
         Lookup::Found(found) => found,
         Lookup::Missing => {
             console.status(format_args!(
