@@ -15,6 +15,8 @@ pub enum Method {
     Materialise,
     Remove,
     Inspect,
+    /// Keyed by the remote's URL, not an id.
+    Tags,
 }
 
 /// One call the fake received, in order.
@@ -143,6 +145,7 @@ impl Source for FakeSource {
 
     fn tags(&self, url: &str) -> Result<Vec<String>, SourceError> {
         self.record(Call::Tags(url.into()));
+        self.check(url, Method::Tags)?;
         Ok(self.tags.borrow().get(url).cloned().unwrap_or_default())
     }
 

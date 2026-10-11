@@ -21,7 +21,7 @@ use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::prompt::{self, Decided, Packages, Prompter};
-use crate::registry::pin::{Choice, NoTags, Read, Tags, Why, pin};
+use crate::registry::pin::{Choice, Decision, NoTags, Read, Tags, Why, pin, pin_version};
 use crate::registry::{self, Registry, Requested};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
@@ -527,18 +527,28 @@ fn pin_requested<T: Tags + ?Sized>(
     let package = &requested.package;
     let name = &package.name;
     let version = requested.version.as_deref();
-    let mut pinned = pin(package, version, &repo.url, root, tags).map_err(|e| fail(e, console))?;
+    let pinned = match pin(package, version, &repo.url, root, tags) {
+        Ok(pinned) => pinned,
+        Err(failed) => {
+            if let Some(read) = &failed.read {
+                say_read(read, name, root, console);
+            }
+            return Err(fail(failed.error, console));
+        }
+    };
     if let Some(read) = &pinned.read {
         say_read(read, name, root, console);
     }
     let mut prompter = prompter;
-    if let Choice::Several { file, versions } = &pinned.choice {
-        let file = file_name(file, root);
-        let version = choose_version(versions, &file, name, prompter.as_deref_mut(), console)?;
-        pinned =
-            pin(package, Some(&version), &repo.url, root, tags).map_err(|e| fail(e, console))?;
-    }
-    match pinned.choice {
+    let choice = match pinned.decision {
+        Decision::Settled(choice) => choice,
+        Decision::Several { file, versions } => {
+            let file = file_name(&file, root);
+            let version = choose_version(&versions, &file, name, prompter.as_deref_mut(), console)?;
+            pin_version(package, &version, &repo.url, tags).map_err(|e| fail(e, console))?
+        }
+    };
+    match choice {
         Choice::Tag { version, tag } => {
             console.status(format_args!("pinned `{name}@{version}` to the tag `{tag}`"));
             repo.git_ref = Some(tag);
@@ -547,7 +557,6 @@ fn pin_requested<T: Tags + ?Sized>(
         Choice::DefaultBranch(why) => {
             follow_default_branch(&why, name, &repo.url, root, prompter, console)
         }
-        Choice::Several { .. } => unreachable!("a chosen version is one version"),
     }
 }
 

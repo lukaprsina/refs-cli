@@ -3,7 +3,9 @@
 
 use std::fs;
 
-use refs_cli::registry::pin::{Choice, NoTags, Pinned, Why, pin};
+use refs_cli::registry::pin::{
+    Choice, Decision, Failed, NoTags, Pinned, Tags, Why, pin, pin_version,
+};
 use refs_cli::registry::{Ecosystem, Package};
 use refs_cli::source::fake::FakeSource;
 use tempfile::TempDir;
@@ -51,6 +53,13 @@ fn tagged(names: &[&str]) -> FakeSource {
     source
 }
 
+fn settled(pinned: &Pinned) -> Choice {
+    match &pinned.decision {
+        Decision::Settled(choice) => choice.clone(),
+        other => panic!("expected a settled choice, got {other:?}"),
+    }
+}
+
 fn run(version: Option<&str>, dir: &TempDir, source: &FakeSource) -> Pinned {
     pin(&serde(), version, URL, dir.path(), source).unwrap()
 }
@@ -60,7 +69,7 @@ fn a_version_given_is_pinned_to_its_tag_without_reading_a_lockfile() {
     let dir = project(Some(TWO_SERDES));
     let pinned = run(Some("1.0.150"), &dir, &tagged(&["v1.0.150"]));
     assert_eq!(
-        pinned.choice,
+        settled(&pinned),
         Choice::Tag {
             version: "1.0.150".into(),
             tag: "v1.0.150".into()
@@ -74,7 +83,7 @@ fn a_version_with_no_tag_follows_the_default_branch() {
     let dir = project(None);
     let pinned = run(Some("1.0.150"), &dir, &tagged(&["v1.0.149"]));
     assert_eq!(
-        pinned.choice,
+        settled(&pinned),
         Choice::DefaultBranch(Why::Untagged {
             version: "1.0.150".into()
         })
@@ -86,7 +95,7 @@ fn without_tags_to_list_a_version_is_not_pinned() {
     let dir = project(None);
     let pinned = pin(&serde(), Some("1.0.150"), URL, dir.path(), &NoTags).unwrap();
     assert_eq!(
-        pinned.choice,
+        settled(&pinned),
         Choice::DefaultBranch(Why::Unlisted {
             version: "1.0.150".into()
         })
@@ -97,7 +106,7 @@ fn without_tags_to_list_a_version_is_not_pinned() {
 fn no_lockfile_follows_the_default_branch() {
     let dir = project(None);
     let pinned = run(None, &dir, &tagged(&["v1.0.200"]));
-    assert_eq!(pinned.choice, Choice::DefaultBranch(Why::NoLockfile));
+    assert_eq!(settled(&pinned), Choice::DefaultBranch(Why::NoLockfile));
     assert_eq!(pinned.read, None);
 }
 
@@ -106,7 +115,7 @@ fn the_used_version_is_pinned_to_its_tag_and_the_file_read_is_named() {
     let dir = project(Some(ONE_SERDE));
     let pinned = run(None, &dir, &tagged(&["v1.0.199", "v1.0.200"]));
     assert_eq!(
-        pinned.choice,
+        settled(&pinned),
         Choice::Tag {
             version: "1.0.200".into(),
             tag: "v1.0.200".into()
@@ -122,7 +131,7 @@ fn a_used_version_with_no_tag_still_names_what_was_read() {
     let dir = project(Some(ONE_SERDE));
     let pinned = run(None, &dir, &tagged(&[]));
     assert_eq!(
-        pinned.choice,
+        settled(&pinned),
         Choice::DefaultBranch(Why::Untagged {
             version: "1.0.200".into()
         })
@@ -136,7 +145,7 @@ fn a_package_the_lockfile_lacks_follows_the_default_branch() {
     let other = Package::new(Ecosystem::Cargo, "tokio");
     let pinned = pin(&other, None, URL, dir.path(), &tagged(&[])).unwrap();
     assert_eq!(
-        pinned.choice,
+        settled(&pinned),
         Choice::DefaultBranch(Why::NotInLockfile {
             file: dir.path().join("Cargo.lock")
         })
@@ -149,8 +158,8 @@ fn several_versions_with_nothing_to_choose_between_them_are_left_to_the_caller()
     let dir = project(Some(TWO_SERDES));
     let pinned = run(None, &dir, &tagged(&["v1.0.200"]));
     assert_eq!(
-        pinned.choice,
-        Choice::Several {
+        pinned.decision,
+        Decision::Several {
             file: dir.path().join("Cargo.lock"),
             versions: vec!["1.0.100".into(), "1.0.200".into()]
         }
@@ -161,8 +170,8 @@ fn several_versions_with_nothing_to_choose_between_them_are_left_to_the_caller()
 fn an_unreadable_lockfile_follows_the_default_branch_and_says_why() {
     let dir = project(Some("this is not toml ["));
     let pinned = run(None, &dir, &tagged(&[]));
-    let Choice::DefaultBranch(Why::Unreadable { file, .. }) = pinned.choice else {
-        panic!("expected an unreadable lockfile, got {:?}", pinned.choice);
+    let Choice::DefaultBranch(Why::Unreadable { file, .. }) = settled(&pinned) else {
+        panic!("expected an unreadable lockfile, got {:?}", pinned.decision);
     };
     assert_eq!(file, dir.path().join("Cargo.lock"));
 }
@@ -181,4 +190,45 @@ fn another_lockfile_of_the_ecosystem_in_the_same_directory_is_named_as_not_read(
     let read = pinned.read.unwrap();
     assert_eq!(read.file, dir.path().join("pnpm-lock.yaml"));
     assert_eq!(read.ignored, [dir.path().join("yarn.lock")]);
+}
+
+struct Unreachable;
+
+impl Tags for Unreachable {
+    fn remote_tags(
+        &self,
+        _: &str,
+    ) -> Result<Option<Vec<String>>, refs_cli::diagnostic::SourceError> {
+        Err(refs_cli::diagnostic::SourceError::Failed {
+            message: "no route".into(),
+        })
+    }
+}
+
+#[test]
+fn failing_to_list_tags_still_names_what_was_read() {
+    let dir = project(Some(ONE_SERDE));
+    let Failed { read, .. } = *pin(&serde(), None, URL, dir.path(), &Unreachable).unwrap_err();
+    let read = read.unwrap();
+    assert_eq!(read.file, dir.path().join("Cargo.lock"));
+    assert_eq!(read.version.as_deref(), Some("1.0.200"));
+}
+
+#[test]
+fn failing_to_list_tags_for_a_given_version_read_nothing() {
+    let dir = project(Some(ONE_SERDE));
+    let failed = pin(&serde(), Some("1.0.1"), URL, dir.path(), &Unreachable).unwrap_err();
+    assert_eq!(failed.read, None);
+}
+
+#[test]
+fn a_chosen_version_is_pinned_to_its_tag() {
+    let choice = pin_version(&serde(), "1.0.100", URL, &tagged(&["v1.0.100"])).unwrap();
+    assert_eq!(
+        choice,
+        Choice::Tag {
+            version: "1.0.100".into(),
+            tag: "v1.0.100".into()
+        }
+    );
 }

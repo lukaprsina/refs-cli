@@ -8,7 +8,7 @@ use refs_cli::cli::{Outside, Terminal, run_on};
 use refs_cli::prompt::{Abort, Prompter};
 use refs_cli::registry::fake::FakeRegistry;
 use refs_cli::registry::{Ecosystem, Found};
-use refs_cli::source::fake::{Call, FakeSource};
+use refs_cli::source::fake::{Call, FakeSource, Method};
 use refs_cli::update::Unmanaged;
 use tempfile::TempDir;
 
@@ -689,6 +689,27 @@ fn the_version_in_the_lockfile_picks_its_tag_and_the_output_says_so() {
         "{}",
         run.err
     );
+}
+
+#[test]
+fn a_tag_listing_that_fails_still_says_what_the_lockfile_had_first() {
+    let dir = project();
+    write(dir.path(), "package-lock.json", NPM_LOCK_ONE);
+    let source = FakeSource::new();
+    source.fail(FOO, Method::Tags, "no route to host");
+
+    let run = add(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &["npm:foo-js", "--id", "foo"],
+    );
+
+    assert_ne!(run.code, 0);
+    let said = run.err.find("`foo-js` is 1.2.3 in package-lock.json");
+    let failed = run.err.find("no route to host");
+    assert!(said.is_some() && failed.is_some(), "{}", run.err);
+    assert!(said < failed, "{}", run.err);
 }
 
 #[test]

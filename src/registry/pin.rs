@@ -57,14 +57,20 @@ pub enum Why {
     Unlisted { version: String },
 }
 
+/// What a version is pinned to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Choice {
     /// Pin to `tag`, which `version` was released as.
     Tag { version: String, tag: String },
     /// Follow the remote's default branch.
     DefaultBranch(Why),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Decision {
+    Settled(Choice),
     /// The Package lockfile `file` has several versions, lowest first, and nothing to choose
-    /// between them: call `pin` again with the one chosen.
+    /// between them: call `pin_version` with the one chosen.
     Several {
         file: PathBuf,
         versions: Vec<String>,
@@ -75,7 +81,21 @@ pub enum Choice {
 pub struct Pinned {
     /// The Package lockfile that was read, if one was.
     pub read: Option<Read>,
-    pub choice: Choice,
+    pub decision: Decision,
+}
+
+/// The tags of the remote could not be listed. `read` is what was read from the Package
+/// lockfile before that, for saying so before the error.
+#[derive(Debug, Clone)]
+pub struct Failed {
+    pub read: Option<Read>,
+    pub error: SourceError,
+}
+
+impl Failed {
+    fn new(read: Option<Read>, error: SourceError) -> Box<Self> {
+        Box::new(Failed { read, error })
+    }
 }
 
 /// What to pin `package`, in the repo at `url`, to. With a `version` that is the one used;
@@ -87,16 +107,22 @@ pub fn pin<T: Tags + ?Sized>(
     url: &str,
     root: &Path,
     tags: &T,
-) -> Result<Pinned, SourceError> {
+) -> Result<Pinned, Box<Failed>> {
+    let settled = |read, choice| Pinned {
+        read,
+        decision: Decision::Settled(choice),
+    };
     if let Some(version) = version {
-        let choice = tag_choice(package, version, url, tags)?;
-        return Ok(Pinned { read: None, choice });
+        let choice = pin_version(package, version, url, tags)
+            .map_err(|error| Failed { read: None, error })?;
+        return Ok(settled(None, choice));
     }
     let found = match used::find(package, root) {
         Lookup::Found(found) => found,
-        Lookup::Missing => return Ok(follows(None, Why::NoLockfile)),
+        Lookup::Missing => return Ok(settled(None, Choice::DefaultBranch(Why::NoLockfile))),
         Lookup::Unreadable { file, why } => {
-            return Ok(follows(None, Why::Unreadable { file, why }));
+            let why = Why::Unreadable { file, why };
+            return Ok(settled(None, Choice::DefaultBranch(why)));
         }
     };
     let mut read = Read {
@@ -107,13 +133,13 @@ pub fn pin<T: Tags + ?Sized>(
     match found.pick() {
         Pick::Nothing => {
             let why = Why::NotInLockfile { file: found.file };
-            Ok(follows(Some(read), why))
+            Ok(settled(Some(read), Choice::DefaultBranch(why)))
         }
         Pick::Several(versions) => {
             let versions = versions.into_iter().map(str::to_owned).collect();
             Ok(Pinned {
                 read: Some(read),
-                choice: Choice::Several {
+                decision: Decision::Several {
                     file: found.file,
                     versions,
                 },
@@ -121,23 +147,17 @@ pub fn pin<T: Tags + ?Sized>(
         }
         Pick::One(version) => {
             read.version = Some(version.to_owned());
-            let choice = tag_choice(package, version, url, tags)?;
-            Ok(Pinned {
-                read: Some(read),
-                choice,
-            })
+            match pin_version(package, version, url, tags) {
+                Ok(choice) => Ok(settled(Some(read), choice)),
+                Err(error) => Err(Failed::new(Some(read), error)),
+            }
         }
     }
 }
 
-fn follows(read: Option<Read>, why: Why) -> Pinned {
-    Pinned {
-        read,
-        choice: Choice::DefaultBranch(why),
-    }
-}
-
-fn tag_choice<T: Tags + ?Sized>(
+/// What to pin `version` of `package`, in the repo at `url`, to: the tag it was released as, if
+/// `tags` lists one.
+pub fn pin_version<T: Tags + ?Sized>(
     package: &Package,
     version: &str,
     url: &str,
