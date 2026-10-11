@@ -986,3 +986,128 @@ fn offline_still_refuses_the_registry_lookup_with_a_lockfile() {
     assert_eq!(run.code, 1);
     assert!(run.err.contains("--offline"), "{}", run.err);
 }
+
+#[test]
+fn a_forge_shorthand_writes_the_full_url_without_the_network() {
+    for (shorthand, url) in [
+        ("gh:o/r", "https://github.com/o/r"),
+        ("github:o/r", "https://github.com/o/r"),
+        ("gh:o/r.git", "https://github.com/o/r"),
+    ] {
+        let dir = project();
+
+        let run = add(
+            dir.path(),
+            &FakeRegistry::new(),
+            &FakeSource::new(),
+            &[shorthand, "--no-sync", "--offline"],
+        );
+
+        assert_eq!(run.code, 0, "{shorthand}: {}", run.err);
+        let config = config_text(dir.path());
+        assert!(config.contains(&format!("url = \"{url}\"")), "{config}");
+        assert!(
+            !config.contains("gh:") && !config.contains("github:"),
+            "{config}"
+        );
+    }
+}
+
+#[test]
+fn a_gitlab_shorthand_keeps_subgroups() {
+    for (shorthand, url) in [
+        ("gl:group/sub/r", "https://gitlab.com/group/sub/r"),
+        ("gl:g/s/wiki", "https://gitlab.com/g/s/wiki"),
+        ("gitlab:o/r", "https://gitlab.com/o/r"),
+    ] {
+        let dir = project();
+
+        let run = add(
+            dir.path(),
+            &FakeRegistry::new(),
+            &FakeSource::new(),
+            &[shorthand, "--no-sync", "--offline"],
+        );
+
+        assert_eq!(run.code, 0, "{shorthand}: {}", run.err);
+        assert!(
+            config_text(dir.path()).contains(&format!("url = \"{url}\"")),
+            "{shorthand}"
+        );
+        assert!(!run.err.contains("ignored"), "{}", run.err);
+    }
+}
+
+#[test]
+fn a_path_after_the_repository_is_ignored_with_a_note() {
+    for (shorthand, url, ignored) in [
+        (
+            "gh:o/r/tree/main/docs",
+            "https://github.com/o/r",
+            "/tree/main/docs",
+        ),
+        ("gh:o/r/docs", "https://github.com/o/r", "/docs"),
+        ("gh:o/r.git/tree/x", "https://github.com/o/r", "/tree/x"),
+        ("gh:o/r#frag", "https://github.com/o/r", "#frag"),
+        (
+            "gl:g/s/r/-/tree/main",
+            "https://gitlab.com/g/s/r",
+            "/-/tree/main",
+        ),
+    ] {
+        let dir = project();
+
+        let run = add(
+            dir.path(),
+            &FakeRegistry::new(),
+            &FakeSource::new(),
+            &[shorthand, "--no-sync", "--offline"],
+        );
+
+        assert_eq!(run.code, 0, "{shorthand}: {}", run.err);
+        assert!(
+            config_text(dir.path()).contains(&format!("url = \"{url}\"")),
+            "{shorthand}"
+        );
+        assert!(
+            run.err.contains(&format!("ignored `{ignored}`")) && run.err.contains("--ref"),
+            "{shorthand}: {}",
+            run.err
+        );
+    }
+}
+
+#[test]
+fn a_forge_shorthand_that_names_no_repository_is_refused() {
+    for shorthand in [
+        "gh:",
+        "gh:owner",
+        "gh:/r",
+        "gh:o/..",
+        "gh:o/r@v1.2",
+        "gh:o/r name",
+        "gh:o//r",
+        "gl:-x/r",
+    ] {
+        let dir = project();
+
+        let run = add(
+            dir.path(),
+            &FakeRegistry::new(),
+            &FakeSource::new(),
+            &[shorthand, "--no-sync"],
+        );
+
+        assert_ne!(run.code, 0, "{shorthand}");
+        assert!(run.err.contains(shorthand), "{shorthand}: {}", run.err);
+        assert_eq!(config_text(dir.path()), "", "{shorthand}");
+    }
+    let dir = project();
+    let run = add(
+        dir.path(),
+        &FakeRegistry::new(),
+        &FakeSource::new(),
+        &["gh:o/r@v1.2", "--no-sync"],
+    );
+    assert!(run.err.contains("--ref"), "{}", run.err);
+}

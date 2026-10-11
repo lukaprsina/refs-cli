@@ -1,9 +1,10 @@
 //! Package registries (ADR 0009): `add npm:<name>`, `cargo:<name>` and `pypi:<name>` ask one
 //! for the repository a package is published from. The prefix is input sugar; the Repo that is
-//! stored has the git URL.
+//! stored has the git URL. So is `gh:owner/repo` (`forge`), which asks nothing.
 
 pub mod crates;
 pub mod fake;
+pub mod forge;
 pub mod npm;
 pub mod pypi;
 pub mod tag;
@@ -120,6 +121,13 @@ pub enum RegistryError {
     )]
     Offline { ecosystem: Ecosystem, name: String },
 
+    #[error("`{shorthand}` does not name a repository: {why}")]
+    #[diagnostic(
+        code(refs::registry::bad_forge),
+        help("write it as `gh:owner/repo` or `gl:group/sub/repo`, or give the full git URL")
+    )]
+    BadForge { shorthand: String, why: String },
+
     #[error("`{shorthand}` does not name a version: {why}")]
     #[diagnostic(
         code(refs::registry::bad_version),
@@ -204,6 +212,8 @@ pub struct Release {
 pub struct Expanded {
     pub repo: AddRepo,
     pub release: Option<Release>,
+    /// The path a forge shorthand had after the repository, which was dropped.
+    pub ignored: Option<String>,
 }
 
 /// `repo` with a registry shorthand in its `url` replaced by what the registry says: the git
@@ -219,10 +229,30 @@ pub fn expand(
     registry: &dyn Registry,
     offline: bool,
 ) -> Result<Expanded, RegistryError> {
+    if let Some(named) = forge::name(&repo.url) {
+        let named = named.map_err(|why| RegistryError::BadForge {
+            shorthand: repo.url.clone(),
+            why: why.to_owned(),
+        })?;
+        if let Some((problem, _)) = crate::config::url_problem(&named.url) {
+            return Err(RegistryError::BadForge {
+                shorthand: repo.url.clone(),
+                why: problem.to_owned(),
+            });
+        }
+        let mut expanded = repo.clone();
+        expanded.url = named.url;
+        return Ok(Expanded {
+            repo: expanded,
+            release: None,
+            ignored: named.ignored,
+        });
+    }
     let Some((ecosystem, name, version)) = parse_shorthand(&repo.url) else {
         return Ok(Expanded {
             repo: repo.clone(),
             release: None,
+            ignored: None,
         });
     };
     let version = version
@@ -263,5 +293,6 @@ pub fn expand(
             name: name.to_owned(),
             version: version.map(str::to_owned),
         }),
+        ignored: None,
     })
 }

@@ -38,6 +38,10 @@ _Avoid_: Package file, metadata file
 A package index (npm, crates.io, PyPI) that `add` asks for a package's repository. Named in `add` by a prefix (`npm:`, `cargo:`, `pypi:`); the Repo that is stored has the git URL, never the prefix.
 _Avoid_: Source, Cache
 
+**Forge**:
+A code host (GitHub, GitLab) that `add` names with a prefix (`gh:`, `gl:`) and the path of a repository on it; the Repo that is stored has the https URL, never the prefix. It asks nothing, unlike a Registry.
+_Avoid_: Registry, Provider
+
 **Start**:
 Files inside a Repo's Paths that are worth reading first.
 _Avoid_: Entry points, hints

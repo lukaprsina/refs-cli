@@ -453,6 +453,13 @@ fn prepare_add(
         Ok(expanded) => expanded,
         Err(e) => return Err(fail(e, console)),
     };
+    if let Some(ignored) = &expanded.ignored {
+        let shorthand = &repo.url;
+        console.problem(format_args!(
+            "warning: ignored `{ignored}` after the repository in `{shorthand}`; \
+             use `--ref` and `--paths` to choose a ref and directories"
+        ));
+    }
     // A registry add has chosen its Ref (a tag, or the default branch), so it is not asked.
     let ref_settled = expanded.release.is_some();
     let mut repo = expanded.repo;
