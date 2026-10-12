@@ -18,7 +18,7 @@
 
 //! The versions a Package lockfile says a project uses, from trimmed real lockfiles.
 
-use refs_cli::registry::used::{Format, Used, used_versions};
+use refs_cli::registry::used::{Used, used_versions};
 
 fn used(version: &str, direct: bool) -> Used {
     Used {
@@ -81,7 +81,7 @@ checksum = "ee"
 "#;
 
     fn of(name: &str) -> Vec<Used> {
-        used_versions(Format::CargoLock, name, LOCK).unwrap()
+        used_versions("Cargo.lock", name, LOCK).unwrap()
     }
 
     #[test]
@@ -135,7 +135,7 @@ name = "serde"
 version = "1.0.200"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 "#;
-        let of = |name| used_versions(Format::CargoLock, name, lock).unwrap();
+        let of = |name| used_versions("Cargo.lock", name, lock).unwrap();
         assert_eq!(of("serde"), [used("1.0.200", true)]);
         assert_eq!(of("log"), [used("0.4.22", true)]);
         // A member is not a registry version, whoever depends on it.
@@ -149,7 +149,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
     #[test]
     fn a_lockfile_that_is_not_toml_is_an_error() {
-        assert!(used_versions(Format::CargoLock, "serde", "{ not toml").is_err());
+        assert!(used_versions("Cargo.lock", "serde", "{ not toml").is_err());
     }
 }
 
@@ -195,7 +195,7 @@ mod package_lock {
 }"#;
 
     fn of3(name: &str) -> Vec<Used> {
-        used_versions(Format::PackageLock, name, V3).unwrap()
+        used_versions("package-lock.json", name, V3).unwrap()
     }
 
     #[test]
@@ -224,11 +224,11 @@ mod package_lock {
     #[test]
     fn version_1_lists_every_version_and_marks_none_direct() {
         assert_eq!(
-            used_versions(Format::PackageLock, "ms", V1).unwrap(),
+            used_versions("package-lock.json", "ms", V1).unwrap(),
             [used("2.1.2", false), used("2.1.3", false)]
         );
         assert_eq!(
-            used_versions(Format::PackageLock, "debug", V1).unwrap(),
+            used_versions("package-lock.json", "debug", V1).unwrap(),
             [used("4.3.4", false)]
         );
     }
@@ -244,7 +244,7 @@ mod package_lock {
   }
 }"#;
         for name in ["fromgit", "fromfile", "fromurl"] {
-            assert_eq!(used_versions(Format::PackageLock, name, text).unwrap(), []);
+            assert_eq!(used_versions("package-lock.json", name, text).unwrap(), []);
         }
     }
 
@@ -252,7 +252,7 @@ mod package_lock {
     fn a_package_not_in_the_lockfile_has_no_version() {
         assert_eq!(of3("left-pad"), []);
         assert_eq!(
-            used_versions(Format::PackageLock, "left-pad", V1).unwrap(),
+            used_versions("package-lock.json", "left-pad", V1).unwrap(),
             []
         );
     }
@@ -268,21 +268,21 @@ mod package_lock {
   }
 }"#;
         assert_eq!(
-            used_versions(Format::PackageLock, "ms", text).unwrap(),
+            used_versions("package-lock.json", "ms", text).unwrap(),
             [used("2.0.0", false), used("2.1.3", true)]
         );
     }
 
     #[test]
     fn a_lockfile_that_is_not_json_is_an_error() {
-        assert!(used_versions(Format::PackageLock, "react", "nope").is_err());
+        assert!(used_versions("package-lock.json", "react", "nope").is_err());
     }
 }
 
 const NONE: [&str; 0] = [];
 
-fn versions(format: Format, text: &str, name: &str) -> Vec<String> {
-    used_versions(format, name, text)
+fn versions(file: &str, text: &str, name: &str) -> Vec<String> {
+    used_versions(file, name, text)
         .unwrap()
         .into_iter()
         .map(|used| used.version)
@@ -295,7 +295,7 @@ mod pnpm {
     const PNPM_V9: &str = include_str!("fixtures/used/pnpm-v9-workspace.yaml");
 
     fn pnpm(text: &str, name: &str) -> Vec<String> {
-        versions(Format::Pnpm, text, name)
+        versions("pnpm-lock.yaml", text, name)
     }
 
     #[test]
@@ -732,12 +732,12 @@ snapshots:
 
     #[test]
     fn pnpm_text_that_is_not_yaml_is_an_error() {
-        assert!(used_versions(Format::Pnpm, "zod", "importers: [unclosed").is_err());
+        assert!(used_versions("pnpm-lock.yaml", "zod", "importers: [unclosed").is_err());
     }
 
     #[test]
     fn pnpm_marks_what_an_importer_lists_as_direct() {
-        let used = |name| used_versions(Format::Pnpm, name, PNPM_V9).unwrap();
+        let used = |name| used_versions("pnpm-lock.yaml", name, PNPM_V9).unwrap();
         assert_eq!(
             used("react"),
             [super::used("17.0.2", true), super::used("18.2.0", true)]
@@ -766,7 +766,7 @@ mod yarn {
     const YARN_BERRY: &str = include_str!("fixtures/used/yarn-berry.lock");
 
     fn yarn(text: &str, name: &str) -> Vec<String> {
-        versions(Format::Yarn, text, name)
+        versions("yarn.lock", text, name)
     }
 
     #[test]
@@ -957,7 +957,7 @@ version \"file:../my-lib\"\n";
 
     #[test]
     fn yarn_cannot_say_what_is_direct() {
-        let found = used_versions(Format::Yarn, "react", YARN_V1).unwrap();
+        let found = used_versions("yarn.lock", "react", YARN_V1).unwrap();
         assert!(!found.is_empty() && found.iter().all(|used| !used.direct));
     }
 
@@ -994,7 +994,7 @@ mod uv {
     const LOCK: &str = include_str!("fixtures/used/uv.lock");
 
     fn of(name: &str) -> Vec<Used> {
-        used_versions(Format::UvLock, name, LOCK).unwrap()
+        used_versions("uv.lock", name, LOCK).unwrap()
     }
 
     #[test]
@@ -1032,7 +1032,7 @@ mod uv {
     #[test]
     fn in_a_workspace_what_any_member_or_extra_asks_for_is_direct() {
         let lock = include_str!("fixtures/used/uv-workspace.lock");
-        let of = |name| used_versions(Format::UvLock, name, lock).unwrap();
+        let of = |name| used_versions("uv.lock", name, lock).unwrap();
         assert_eq!(of("six"), [used("1.17.0", true)]);
         assert_eq!(of("zope-interface"), [used("8.6", true)]);
     }
@@ -1040,7 +1040,7 @@ mod uv {
     #[test]
     fn a_dot_a_dash_and_an_underscore_are_the_same_in_a_project_name() {
         let lock = include_str!("fixtures/used/uv-workspace.lock");
-        let of = |name| used_versions(Format::UvLock, name, lock).unwrap();
+        let of = |name| used_versions("uv.lock", name, lock).unwrap();
         assert_eq!(of("Typing_Extensions"), [used("4.16.0", true)]);
         assert_eq!(of("Zope.Interface"), [used("8.6", true)]);
     }
@@ -1069,7 +1069,7 @@ version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
 "#;
         assert_eq!(
-            used_versions(Format::UvLock, "six", lock).unwrap(),
+            used_versions("uv.lock", "six", lock).unwrap(),
             [used("1.16.0", false), used("1.17.0", true)]
         );
     }
@@ -1092,14 +1092,14 @@ version = "2.4.6"
 source = { registry = "https://pypi.org/simple" }
 "#;
         assert_eq!(
-            used_versions(Format::UvLock, "numpy", lock).unwrap(),
+            used_versions("uv.lock", "numpy", lock).unwrap(),
             [used("2.4.6", false)]
         );
     }
 
     #[test]
     fn a_text_that_is_not_a_uv_lock_is_an_error() {
-        assert!(used_versions(Format::UvLock, "click", "[[package]\n").is_err());
+        assert!(used_versions("uv.lock", "click", "[[package]\n").is_err());
     }
 }
 
@@ -1109,7 +1109,7 @@ mod poetry {
     const LOCK: &str = include_str!("fixtures/used/poetry.lock");
 
     fn of(name: &str) -> Vec<Used> {
-        used_versions(Format::PoetryLock, name, LOCK).unwrap()
+        used_versions("poetry.lock", name, LOCK).unwrap()
     }
 
     #[test]
@@ -1130,7 +1130,7 @@ mod poetry {
 
     #[test]
     fn a_text_that_is_not_a_poetry_lock_is_an_error() {
-        assert!(used_versions(Format::PoetryLock, "click", "[[package]\n").is_err());
+        assert!(used_versions("poetry.lock", "click", "[[package]\n").is_err());
     }
 }
 
@@ -1140,7 +1140,7 @@ mod bun {
     const LOCK: &str = include_str!("fixtures/used/bun.lock");
 
     fn of(name: &str) -> Vec<Used> {
-        used_versions(Format::BunLock, name, LOCK).unwrap()
+        used_versions("bun.lock", name, LOCK).unwrap()
     }
 
     #[test]
@@ -1185,13 +1185,13 @@ mod bun {
   "packages": { "x,}": ["x,}@1.0.0", "", {}, "sha512-a\",]",], },
 }"#;
         assert_eq!(
-            used_versions(Format::BunLock, "x,}", lock).unwrap(),
+            used_versions("bun.lock", "x,}", lock).unwrap(),
             [used("1.0.0", true)]
         );
     }
 
     #[test]
     fn a_text_that_is_not_a_bun_lock_is_an_error() {
-        assert!(used_versions(Format::BunLock, "ms", "{ \"packages\": ").is_err());
+        assert!(used_versions("bun.lock", "ms", "{ \"packages\": ").is_err());
     }
 }

@@ -34,7 +34,7 @@ impl Entry {
     }
 }
 
-pub(super) fn used(name: &str, text: &str) -> Result<Vec<Used>, String> {
+pub(crate) fn used(name: &str, text: &str) -> Result<Vec<Used>, String> {
     let doc: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
     match doc.get("packages").and_then(Value::as_object) {
         Some(packages) => Ok(from_packages(name, packages)),

@@ -38,7 +38,7 @@ struct Spec {
     found: fn(&str) -> Answer,
     /// The ecosystem's Package lockfiles, as file name and format, in the order they are
     /// preferred when a directory holds more than one.
-    lockfiles: &'static [(&'static str, used::Format)],
+    lockfiles: &'static [(&'static str, used::Parser)],
 }
 
 impl Ecosystem {

@@ -10,7 +10,7 @@ use super::npm_spec::{is_registry_version, split_pkg_spec, strip_peer_suffix};
 
 const DEP_GROUPS: [&str; 3] = ["dependencies", "devDependencies", "optionalDependencies"];
 
-pub(super) fn used(pkg: &str, text: &str) -> Result<Vec<Used>, String> {
+pub(crate) fn used(pkg: &str, text: &str) -> Result<Vec<Used>, String> {
     let doc: Value = serde_yaml_ng::from_str(text).map_err(|e| e.to_string())?;
     let mut found = Vec::new();
     let mut add = |version: &str, direct: bool| {

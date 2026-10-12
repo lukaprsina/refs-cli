@@ -3,18 +3,18 @@
 
 use std::path::{Path, PathBuf};
 
-use super::Package;
+use super::{Ecosystem, Package};
 use crate::worktree::candidate_dirs;
 
-mod bun;
-mod cargo;
+pub(crate) mod bun;
+pub(crate) mod cargo;
 mod npm_spec;
-mod package_lock;
-mod pnpm;
-mod poetry;
+pub(crate) mod package_lock;
+pub(crate) mod pnpm;
+pub(crate) mod poetry;
 mod python;
-mod uv;
-mod yarn;
+pub(crate) mod uv;
+pub(crate) mod yarn;
 
 /// The dependency groups of a `package.json`, which the npm formats that record the project's own
 /// dependencies (`package-lock.json`, `bun.lock`) read to tell which versions it asks for.
@@ -25,17 +25,8 @@ const DEPENDENCY_GROUPS: [&str; 4] = [
     "peerDependencies",
 ];
 
-/// The Package lockfile formats refs can read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Format {
-    CargoLock,
-    PackageLock,
-    Pnpm,
-    Yarn,
-    UvLock,
-    PoetryLock,
-    BunLock,
-}
+/// Reads one Package lockfile format: the versions of a package in the file's text.
+pub type Parser = fn(name: &str, text: &str) -> Result<Vec<Used>, String>;
 
 /// A version of a package that a Package lockfile resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,21 +37,26 @@ pub struct Used {
     pub direct: bool,
 }
 
-/// Every distinct registry version of `name` in `text`, lowest first. A version the project
-/// asks for itself is `direct` even if another entry of that version is not. Packages from git,
-/// a path or a workspace are not registry versions and are left out. Errors when `text` is not
-/// the format's document.
-pub fn used_versions(format: Format, name: &str, text: &str) -> Result<Vec<Used>, String> {
-    let found = match format {
-        Format::CargoLock => cargo::used(name, text)?,
-        Format::PackageLock => package_lock::used(name, text)?,
-        Format::Pnpm => pnpm::used(name, text)?,
-        Format::Yarn => yarn::used(name, text),
-        Format::UvLock => uv::used(name, text)?,
-        Format::PoetryLock => poetry::used(name, text)?,
-        Format::BunLock => bun::used(name, text)?,
-    };
-    Ok(distinct(found))
+/// Every distinct registry version of `name` in `text`, the document of the Package lockfile
+/// called `file`, lowest first. A version the project asks for itself is `direct` even if
+/// another entry of that version is not. Packages from git, a path or a workspace are not
+/// registry versions and are left out. Errors when `file` is not a Package lockfile refs reads,
+/// or `text` is not its document.
+pub fn used_versions(file: &str, name: &str, text: &str) -> Result<Vec<Used>, String> {
+    let parser = Ecosystem::ALL
+        .iter()
+        .flat_map(|ecosystem| ecosystem.spec().lockfiles)
+        .find(|(known, _)| *known == file)
+        .map(|&(_, parser)| parser);
+    parse(
+        parser.ok_or(format!("refs does not read {file}"))?,
+        name,
+        text,
+    )
+}
+
+fn parse(parser: Parser, name: &str, text: &str) -> Result<Vec<Used>, String> {
+    Ok(distinct(parser(name, text)?))
 }
 
 /// `found` with each version once (direct if any entry of it is), lowest first. A version that
@@ -84,7 +80,6 @@ fn distinct(found: Vec<Used>) -> Vec<Used> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
     pub file: PathBuf,
-    pub format: Format,
     /// Empty when the Package lockfile does not have the package.
     pub used: Vec<Used>,
     /// Package lockfiles of the same ecosystem in the same directory that were not read, in order of
@@ -134,23 +129,22 @@ pub enum Lookup {
 /// whether or not it has the package; in it, the first of the ecosystem's Package lockfiles that
 /// exists.
 pub fn find(package: &Package, project_dir: &Path) -> Lookup {
-    let formats = package.ecosystem.spec().lockfiles;
+    let lockfiles = package.ecosystem.spec().lockfiles;
     for dir in candidate_dirs(project_dir) {
-        let mut present = formats
+        let mut present = lockfiles
             .iter()
-            .map(|&(file, format)| (dir.join(file), format))
+            .map(|&(file, parser)| (dir.join(file), parser))
             .filter(|(path, _)| path.is_file());
-        let Some((file, format)) = present.next() else {
+        let Some((file, parser)) = present.next() else {
             continue;
         };
         let ignored = present.map(|(path, _)| path).collect();
         let read = std::fs::read_to_string(&file)
             .map_err(|e| e.to_string())
-            .and_then(|text| used_versions(format, &package.name, &text));
+            .and_then(|text| parse(parser, &package.name, &text));
         return match read {
             Ok(used) => Lookup::Found(Found {
                 file,
-                format,
                 used,
                 ignored,
             }),

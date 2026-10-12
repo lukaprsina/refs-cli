@@ -1,7 +1,7 @@
 use miette::{Diagnostic, NamedSource, SourceSpan};
 use thiserror::Error;
 
-use crate::tooling::{Gap, Tool};
+use crate::tooling::{self, Gap};
 
 /// Every problem found in a `refs.toml`, reported together.
 #[derive(Debug, Error, Diagnostic)]
@@ -53,7 +53,7 @@ pub enum ConfigProblem {
     #[error("`{name}` is not a tool refs knows")]
     #[diagnostic(
         code(refs::config::unknown_tool),
-        help("use one of: {}", Tool::names().join(", "))
+        help("use one of: {}", tooling::names().join(", "))
     )]
     UnknownTool { name: String },
 
@@ -448,7 +448,7 @@ pub enum Note {
     #[diagnostic(code(refs::sync::recreated))]
     Recreated { id: String },
 
-    #[error("{} does not exclude the references directory", .gap.tool.name())]
+    #[error("{} does not exclude the references directory", .gap.tool)]
     #[diagnostic(code(refs::tooling::gap), help("add this to {}: {}", .gap.file, .gap.snippet))]
     ToolingGap { gap: Gap },
 }

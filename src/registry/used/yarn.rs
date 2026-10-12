@@ -35,7 +35,7 @@ fn real_name<'a>(name: &'a str, range: &'a str) -> &'a str {
         .map_or(name, |(real, _)| real)
 }
 
-pub(super) fn used(pkg: &str, text: &str) -> Vec<Used> {
+pub(crate) fn used(pkg: &str, text: &str) -> Result<Vec<Used>, String> {
     let mut blocks: Vec<Vec<&str>> = Vec::new();
     let mut current: Vec<&str> = Vec::new();
     for raw in text.lines() {
@@ -114,5 +114,5 @@ pub(super) fn used(pkg: &str, text: &str) -> Vec<Used> {
             }
         }
     }
-    found
+    Ok(found)
 }

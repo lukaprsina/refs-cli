@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
-use refs_cli::registry::used::{Format, Lookup, find};
+use refs_cli::registry::used::{Lookup, find};
 use refs_cli::registry::{Ecosystem, Package};
 use tempfile::TempDir;
 
@@ -167,7 +167,7 @@ fn of_uv_lock_and_poetry_lock_in_one_directory_uv_lock_is_read() {
     let Lookup::Found(found) = find(&Package::new(Ecosystem::Pypi, "requests"), &project) else {
         panic!("expected a lockfile");
     };
-    assert_eq!(found.format, Format::UvLock);
+    assert_eq!(found.file, project.join("uv.lock"));
     assert_eq!(found.used[0].version, "2.32.0");
     assert_eq!(found.ignored, [project.join("poetry.lock")]);
 }
@@ -181,13 +181,13 @@ fn bun_lock_is_read_and_comes_after_the_other_npm_lockfiles() {
     let Lookup::Found(found) = lookup else {
         panic!("expected a lockfile");
     };
-    assert_eq!(found.format, Format::BunLock);
+    assert_eq!(found.file, project.join("bun.lock"));
 
     fs::write(project.join("package-lock.json"), PACKAGE_LOCK).unwrap();
     let Lookup::Found(found) = find(&Package::new(Ecosystem::Npm, "react"), &project) else {
         panic!("expected a lockfile");
     };
-    assert_eq!(found.format, Format::PackageLock);
+    assert_eq!(found.file, project.join("package-lock.json"));
     assert_eq!(found.ignored, [project.join("bun.lock")]);
 }
 
@@ -210,14 +210,14 @@ fn of_several_npm_lockfiles_in_one_directory_pnpm_then_yarn_then_npm_is_read() {
     let Lookup::Found(found) = find(&Package::new(Ecosystem::Npm, "react"), &project) else {
         panic!("expected a lockfile");
     };
-    assert_eq!(found.format, Format::Yarn);
+    assert_eq!(found.file, project.join("yarn.lock"));
     assert_eq!(found.ignored, [project.join("package-lock.json")]);
 
     fs::write(project.join("pnpm-lock.yaml"), PNPM_LOCK).unwrap();
     let Lookup::Found(found) = find(&Package::new(Ecosystem::Npm, "react"), &project) else {
         panic!("expected a lockfile");
     };
-    assert_eq!(found.format, Format::Pnpm);
+    assert_eq!(found.file, project.join("pnpm-lock.yaml"));
     assert_eq!(found.used[0].version, "18.3.1");
     assert_eq!(
         found.ignored,

@@ -21,7 +21,7 @@ struct Package {
     source: Option<toml::Value>,
 }
 
-pub(super) fn used(name: &str, text: &str) -> Result<Vec<Used>, String> {
+pub(crate) fn used(name: &str, text: &str) -> Result<Vec<Used>, String> {
     let lock: Lock = toml::from_str(text).map_err(|e| e.to_string())?;
     Ok(lock
         .package

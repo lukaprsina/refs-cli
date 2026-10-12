@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
-use refs_cli::tooling::{Gap, Tool, gaps};
+use refs_cli::tooling::{Gap, gaps};
 use tempfile::TempDir;
 
 const DIR: &str = ".references";
@@ -24,7 +24,7 @@ fn worktree() -> (TempDir, PathBuf, PathBuf) {
     (repo, top, project)
 }
 
-fn gap(tool: Tool, file: &str, snippet: &str) -> Gap {
+fn gap(tool: &'static str, file: &str, snippet: &str) -> Gap {
     Gap {
         tool,
         file: file.into(),
@@ -32,7 +32,7 @@ fn gap(tool: Tool, file: &str, snippet: &str) -> Gap {
     }
 }
 
-fn tools(found: &[Gap]) -> Vec<Tool> {
+fn tools(found: &[Gap]) -> Vec<&'static str> {
     found.iter().map(|gap| gap.tool).collect()
 }
 
@@ -44,7 +44,7 @@ fn an_eslint_flat_config_that_does_not_name_the_directory_is_a_gap() {
     assert_eq!(
         gaps(dir.path(), DIR, &[]),
         [gap(
-            Tool::Eslint,
+            "eslint",
             "eslint.config.js",
             r#"{ ignores: [".references/**"] }"#
         )]
@@ -75,7 +75,7 @@ fn legacy_eslint_is_fixed_in_eslintignore() {
 
     assert_eq!(
         gaps(dir.path(), DIR, &[]),
-        [gap(Tool::Eslint, ".eslintignore", ".references/")]
+        [gap("eslint", ".eslintignore", ".references/")]
     );
 }
 
@@ -97,7 +97,7 @@ fn a_flat_config_is_not_covered_by_eslintignore_which_eslint_then_ignores() {
     assert_eq!(
         gaps(dir.path(), DIR, &[]),
         [gap(
-            Tool::Eslint,
+            "eslint",
             "eslint.config.js",
             r#"{ ignores: [".references/**"] }"#
         )]
@@ -111,7 +111,7 @@ fn prettier_is_fixed_in_prettierignore_even_with_a_config() {
 
     assert_eq!(
         gaps(dir.path(), DIR, &[]),
-        [gap(Tool::Prettier, ".prettierignore", ".references/")]
+        [gap("prettier", ".prettierignore", ".references/")]
     );
 }
 
@@ -120,7 +120,7 @@ fn a_prettierignore_alone_counts_as_using_prettier() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join(".prettierignore"), "dist\n").unwrap();
 
-    assert_eq!(tools(&gaps(dir.path(), DIR, &[])), [Tool::Prettier]);
+    assert_eq!(tools(&gaps(dir.path(), DIR, &[])), ["prettier"]);
 }
 
 #[test]
@@ -145,11 +145,11 @@ fn oxlint_and_tsc_name_their_own_key() {
         found,
         [
             gap(
-                Tool::Oxlint,
+                "oxlint",
                 ".oxlintrc.json",
                 r#""ignorePatterns": [".references/"]"#
             ),
-            gap(Tool::Tsc, "tsconfig.json", r#""exclude": [".references"]"#),
+            gap("tsc", "tsconfig.json", r#""exclude": [".references"]"#),
         ]
     );
 }
@@ -168,7 +168,7 @@ fn an_ignored_tool_is_not_reported() {
     fs::write(dir.path().join("eslint.config.js"), "").unwrap();
     fs::write(dir.path().join("tsconfig.json"), "{}").unwrap();
 
-    assert_eq!(tools(&gaps(dir.path(), DIR, &[Tool::Eslint])), [Tool::Tsc]);
+    assert_eq!(tools(&gaps(dir.path(), DIR, &["eslint"])), ["tsc"]);
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn a_config_further_up_is_found_with_the_path_from_its_directory() {
     assert_eq!(
         gaps(&project, DIR, &[]),
         [gap(
-            Tool::Eslint,
+            "eslint",
             "../../eslint.config.js",
             r#"{ ignores: ["apps/web/.references/**"] }"#
         )]
@@ -202,8 +202,8 @@ fn each_tool_takes_its_own_nearest_directory() {
     fs::write(project.join("eslint.config.js"), "").unwrap();
 
     let mut found = tools(&gaps(&project, DIR, &[]));
-    found.sort_by_key(|tool| *tool as u8);
-    assert_eq!(found, [Tool::Eslint, Tool::Tsc]);
+    found.sort();
+    assert_eq!(found, ["eslint", "tsc"]);
 }
 
 #[test]

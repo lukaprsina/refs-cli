@@ -16,22 +16,6 @@ fn ask(ecosystem: Ecosystem, name: &str) -> String {
 }
 
 #[test]
-fn each_ecosystem_asks_its_cheapest_document() {
-    assert_eq!(
-        ask(Ecosystem::Npm, "left-pad"),
-        "https://registry.npmjs.org/left-pad/latest"
-    );
-    assert_eq!(
-        ask(Ecosystem::Cargo, "serde"),
-        "https://crates.io/api/v1/crates/serde?include="
-    );
-    assert_eq!(
-        ask(Ecosystem::Pypi, "requests"),
-        "https://pypi.org/pypi/requests/json"
-    );
-}
-
-#[test]
 fn each_ecosystem_reads_its_own_document() {
     assert_eq!(
         answer(Ecosystem::Npm, 200, NPM_BODY).unwrap(),

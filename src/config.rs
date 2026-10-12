@@ -5,14 +5,14 @@ use toml::Spanned;
 use miette::NamedSource;
 
 use crate::diagnostic::{ConfigError, ConfigErrors, ConfigProblem};
-use crate::tooling::Tool;
+use crate::tooling;
 
 pub type Id = Spanned<String>;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// Tools to leave out of the tooling gap notes, by name (`Tool::names`).
+    /// Tools to leave out of the tooling gap notes, by name (`tooling::names`).
     #[serde(default)]
     pub tooling_ignore: Vec<Spanned<String>>,
     #[serde(default)]
@@ -25,10 +25,10 @@ pub struct Config {
 
 impl Config {
     /// The tools named in `tooling_ignore`. Validation has refused any other name.
-    pub fn tooling_ignored(&self) -> Vec<Tool> {
+    pub fn tooling_ignored(&self) -> Vec<&str> {
         self.tooling_ignore
             .iter()
-            .filter_map(|name| Tool::from_name(name.get_ref()))
+            .map(|name| name.get_ref().as_str())
             .collect()
     }
 }
@@ -193,7 +193,7 @@ impl Validator<'_> {
 
     fn tooling_ignore(&mut self, names: &[Spanned<String>]) {
         for name in names {
-            if Tool::from_name(name.get_ref()).is_none() {
+            if !tooling::names().contains(&name.get_ref().as_str()) {
                 let unknown = name.get_ref().clone();
                 self.report(name, ConfigProblem::UnknownTool { name: unknown });
             }

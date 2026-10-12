@@ -27,7 +27,7 @@ fn same_crate(a: &str, b: &str) -> bool {
     canon(a) == canon(b)
 }
 
-pub(super) fn used(name: &str, text: &str) -> Result<Vec<Used>, String> {
+pub(crate) fn used(name: &str, text: &str) -> Result<Vec<Used>, String> {
     let lock: Lock = toml::from_str(text).map_err(|e| e.to_string())?;
     // A dependency is `name`, or `name version` when the lockfile has several versions of it.
     let asked_for = |version: &str| {

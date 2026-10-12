@@ -46,7 +46,7 @@ fn asked_for(doc: &Value) -> Vec<(&str, &str)> {
         .collect()
 }
 
-pub(super) fn used(name: &str, text: &str) -> Result<Vec<Used>, String> {
+pub(crate) fn used(name: &str, text: &str) -> Result<Vec<Used>, String> {
     let doc: Value =
         serde_json::from_str(&without_trailing_commas(text)).map_err(|e| e.to_string())?;
     let asked_for = asked_for(&doc);
