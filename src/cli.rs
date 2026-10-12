@@ -20,8 +20,8 @@ use crate::edit::{AddRepo, Edit, Target};
 use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
-use crate::prompt::{self, Counting, Prompter};
-use crate::registry::pin::{Say, Stop};
+use crate::prompt::{self, Prompter};
+use crate::registry::pin::Say;
 use crate::registry::{self, Registry};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
@@ -334,7 +334,6 @@ pub fn run_on<'a>(
         Command::Config(command) => match load(start, &mut console) {
             Ok((root, config)) => {
                 let prompter = outside.prompter.filter(|_| !cli.no_input);
-                let prompter = prompter.map(Counting::new);
                 run_config(
                     &command,
                     &root,
@@ -451,9 +450,9 @@ fn aborted(abort: prompt::Abort, console: &mut Console) -> u8 {
 fn failed(failure: Failure, console: &mut Console) -> u8 {
     match failure {
         Failure::Registry(e) => fail(e, console),
-        Failure::Pin(Stop::Source(e)) => fail(e, console),
-        Failure::Asked(abort) | Failure::Pin(Stop::Asked(abort)) => aborted(abort, console),
-        Failure::Pin(Stop::Refused(why)) => {
+        Failure::Source(e) => fail(e, console),
+        Failure::Asked(abort) => aborted(abort, console),
+        Failure::Refused(why) => {
             console.problem(format_args!("error: {why}"));
             EXIT_ERROR
         }
@@ -471,7 +470,7 @@ fn equivalent(repo: &AddRepo, console: &mut Console) {
     ));
 }
 
-/// `refs add` (`add::run`), then its reports. When anything was asked, on the way or after, the
+/// `refs add` (`add::run`), then its reports. When there was someone to ask, the
 /// `equivalent:` line comes last, with the `packages` that were read.
 fn add(
     source: Option<&dyn Source>,

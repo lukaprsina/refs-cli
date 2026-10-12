@@ -39,54 +39,6 @@ pub trait Prompter {
     fn confirm(&mut self, message: &str) -> Result<bool, Abort>;
 }
 
-/// A `Prompter` that remembers whether it was asked anything, so `add` can tell whether to
-/// print the equivalent command line, whichever step asked.
-pub struct Counting<'p> {
-    inner: &'p mut dyn Prompter,
-    asked: bool,
-}
-
-impl<'p> Counting<'p> {
-    pub fn new(inner: &'p mut dyn Prompter) -> Self {
-        Counting {
-            inner,
-            asked: false,
-        }
-    }
-
-    /// Whether any question has been asked.
-    pub fn asked(&self) -> bool {
-        self.asked
-    }
-}
-
-impl Prompter for Counting<'_> {
-    fn text(
-        &mut self,
-        message: &str,
-        default: Option<&str>,
-        validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        self.asked = true;
-        self.inner.text(message, default, validate)
-    }
-
-    fn suggest(
-        &mut self,
-        message: &str,
-        suggestions: &[String],
-        validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        self.asked = true;
-        self.inner.suggest(message, suggestions, validate)
-    }
-
-    fn confirm(&mut self, message: &str) -> Result<bool, Abort> {
-        self.asked = true;
-        self.inner.confirm(message)
-    }
-}
-
 /// Complete `repo` by asking for each value it does not have, except the URL, which `add` asks
 /// first (`ask_url`) so that a shorthand is expanded before the rest. A value given on the command
 /// line is never asked for again; an empty answer leaves a value absent, as omitting its flag

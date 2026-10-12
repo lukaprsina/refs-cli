@@ -9,9 +9,10 @@
 use std::path::Path;
 
 use crate::config::Config;
+use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit};
 use crate::packages::infer_packages;
-use crate::prompt::{self, Abort, Counting, Prompter};
+use crate::prompt::{self, Abort, Prompter};
 use crate::registry::pin::{Say, Stop, pin};
 use crate::registry::{self, Registry, RegistryError};
 use crate::source::Source;
@@ -20,19 +21,16 @@ use crate::sync::{self, Outcome, Report, SyncFlags};
 /// Who `add` can ask and what it can ask about.
 pub struct Asking<'a> {
     /// The person to ask, when stdin and stderr are terminals and `--no-input` is not set.
-    pub prompter: Option<Counting<'a>>,
+    pub prompter: Option<&'a mut dyn Prompter>,
     pub registry: &'a dyn Registry,
     pub offline: bool,
 }
 
 impl Asking<'_> {
     pub fn prompter(&mut self) -> Option<&mut dyn Prompter> {
-        self.prompter.as_mut().map(|p| p as &mut dyn Prompter)
-    }
-
-    /// Whether any question has been asked so far.
-    fn asked(&self) -> bool {
-        self.prompter.as_ref().is_some_and(Counting::asked)
+        self.prompter
+            .as_mut()
+            .map(|p| &mut **p as &mut dyn Prompter)
     }
 }
 
@@ -40,17 +38,23 @@ impl Asking<'_> {
 #[derive(Debug)]
 pub enum Failure {
     Registry(RegistryError),
-    /// What to pin to could not be decided (`registry::pin`).
-    Pin(Stop),
+    /// The tags of the remote could not be listed.
+    Source(SourceError),
     /// A question ended without an answer.
     Asked(Abort),
+    /// A question had to be asked and there is no one to ask: the message says what to do.
+    Refused(String),
     /// There is no URL and no one to ask for it.
     UrlRequired,
 }
 
 impl From<Stop> for Failure {
     fn from(stop: Stop) -> Failure {
-        Failure::Pin(stop)
+        match stop {
+            Stop::Source(e) => Failure::Source(e),
+            Stop::Asked(abort) => Failure::Asked(abort),
+            Stop::Refused(why) => Failure::Refused(why),
+        }
     }
 }
 
@@ -64,8 +68,7 @@ pub struct Added {
     pub repo: AddRepo,
     /// Why the repo was left without the `packages` it was asked for, if it was.
     pub skipped: Option<Skipped>,
-    /// Whether anything was asked, before the add or after, so the equivalent command line is
-    /// worth printing.
+    /// Whether there was someone to ask, so the equivalent command line is worth printing.
     pub asked: bool,
 }
 
@@ -95,7 +98,7 @@ pub fn run(
 ) -> Result<Added, Failure> {
     let repo = prepare(repo, source, root, config, asking, say)?;
     let mut added = sync_and_infer(source, root, config, &repo, flags, asking);
-    added.asked = asking.asked();
+    added.asked = asking.prompter.is_some();
     Ok(added)
 }
 
