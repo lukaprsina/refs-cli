@@ -2,9 +2,9 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use toml::Spanned;
 
-use miette::{NamedSource, SourceSpan};
+use miette::NamedSource;
 
-use crate::diagnostic::{ConfigError, ConfigErrors};
+use crate::diagnostic::{ConfigError, ConfigErrors, ConfigProblem};
 use crate::tooling::Tool;
 
 pub type Id = Spanned<String>;
@@ -172,14 +172,11 @@ struct Validator<'a> {
 
 impl Validator<'_> {
     /// Build an error that points at `at`, carrying its own copy of the source (ADR 0002).
-    fn report<T>(
-        &mut self,
-        at: &Spanned<T>,
-        make: impl FnOnce(NamedSource<String>, SourceSpan) -> ConfigError,
-    ) {
+    fn report<T>(&mut self, at: &Spanned<T>, problem: ConfigProblem) {
         let r = at.span();
+        let span = (r.start, r.end - r.start).into();
         self.errors
-            .push(make(source(self.text), (r.start, r.end - r.start).into()));
+            .push(ConfigError::new(problem, source(self.text), Some(span)));
     }
 
     fn settings(&mut self, settings: &Settings) {
@@ -189,11 +186,7 @@ impl Validator<'_> {
         for path in dir.chain(files) {
             if !is_project_path(path.get_ref()) {
                 let bad = path.get_ref().clone();
-                self.report(path, |src, span| ConfigError::BadSettingsPath {
-                    path: bad,
-                    src,
-                    span,
-                });
+                self.report(path, ConfigProblem::BadSettingsPath { path: bad });
             }
         }
     }
@@ -202,11 +195,7 @@ impl Validator<'_> {
         for name in names {
             if Tool::from_name(name.get_ref()).is_none() {
                 let unknown = name.get_ref().clone();
-                self.report(name, |src, span| ConfigError::UnknownTool {
-                    name: unknown,
-                    src,
-                    span,
-                });
+                self.report(name, ConfigProblem::UnknownTool { name: unknown });
             }
         }
     }
@@ -216,7 +205,7 @@ impl Validator<'_> {
         // covers marker text
         let heading = group.name.as_ref().unwrap_or(id);
         if !is_heading_safe(heading.get_ref()) {
-            self.report(heading, |src, span| ConfigError::BadGroupName { src, span });
+            self.report(heading, ConfigProblem::BadGroupName);
         }
         for text in group.description.iter() {
             self.text_line(text);
@@ -226,34 +215,21 @@ impl Validator<'_> {
     fn repo(&mut self, config: &Config, id: &Id, repo: &Repo) {
         if !is_repo_id(id.get_ref()) {
             let id_text = id.get_ref().clone();
-            self.report(id, |src, span| ConfigError::BadId {
-                id: id_text,
-                src,
-                span,
-            });
+            self.report(id, ConfigProblem::BadId { id: id_text });
         }
         if let Some(group) = &repo.group
             && !config.groups.contains_key(group.get_ref().as_str())
         {
             let name = group.get_ref().clone();
-            self.report(group, |src, span| ConfigError::DanglingGroup {
-                group: name,
-                src,
-                span,
-            });
+            self.report(group, ConfigProblem::DanglingGroup { group: name });
         }
         if let Some((reason, help)) = url_problem(repo.url.get_ref()) {
-            self.report(&repo.url, |src, span| ConfigError::BadUrl {
-                reason,
-                help,
-                src,
-                span,
-            });
+            self.report(&repo.url, ConfigProblem::BadUrl { reason, help });
         }
         if let Some(git_ref) = &repo.git_ref
             && git_ref.get_ref().starts_with('-')
         {
-            self.report(git_ref, |src, span| ConfigError::BadRef { src, span });
+            self.report(git_ref, ConfigProblem::BadRef);
         }
         for text in repo
             .description
@@ -266,11 +242,7 @@ impl Validator<'_> {
         for path in repo.paths.iter().chain(&repo.start) {
             if !is_relative_path(path.get_ref()) {
                 let bad = path.get_ref().clone();
-                self.report(path, |src, span| ConfigError::BadPath {
-                    path: bad,
-                    src,
-                    span,
-                });
+                self.report(path, ConfigProblem::BadPath { path: bad });
             }
         }
         // a start that is not a relative path was already reported as `bad_path`
@@ -280,11 +252,7 @@ impl Validator<'_> {
                     && !start_is_checked_out(start.get_ref(), &repo.paths)
                 {
                     let bad = start.get_ref().clone();
-                    self.report(start, |src, span| ConfigError::StartOutsidePaths {
-                        start: bad,
-                        src,
-                        span,
-                    });
+                    self.report(start, ConfigProblem::StartOutsidePaths { start: bad });
                 }
             }
         }
@@ -292,7 +260,7 @@ impl Validator<'_> {
 
     fn text_line(&mut self, text: &Spanned<String>) {
         if !is_single_line_text(text.get_ref()) {
-            self.report(text, |src, span| ConfigError::UnsafeText { src, span });
+            self.report(text, ConfigProblem::UnsafeText);
         }
     }
 }
@@ -433,16 +401,14 @@ fn from_toml_error(e: &toml::de::Error, text: &str) -> ConfigError {
     if let (Some(span), Some(rest)) = (span, message.strip_prefix("unknown field `"))
         && let Some((key, expected)) = rest.split_once("`, ")
     {
-        return ConfigError::UnknownKey {
+        let problem = ConfigProblem::UnknownKey {
             key: key.to_string(),
             expected: expected.to_string(),
-            src: source(text),
-            span,
         };
+        return ConfigError::new(problem, source(text), Some(span));
     }
-    ConfigError::Syntax {
+    let problem = ConfigProblem::Syntax {
         message: message.to_string(),
-        src: source(text),
-        span,
-    }
+    };
+    ConfigError::new(problem, source(text), span)
 }

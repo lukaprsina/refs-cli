@@ -39,102 +39,54 @@ pub enum EditError {
     Unreadable(String),
 }
 
+/// What is wrong with a `refs.toml`, apart from where.
 #[derive(Debug, Error, Diagnostic)]
-pub enum ConfigError {
+pub enum ConfigProblem {
     #[error("{message}")]
     #[diagnostic(code(refs::config::syntax))]
-    Syntax {
-        message: String,
-        #[source_code]
-        src: NamedSource<String>,
-        #[label("here")]
-        span: Option<SourceSpan>,
-    },
+    Syntax { message: String },
 
     #[error("unknown key `{key}`")]
     #[diagnostic(code(refs::config::unknown_key), help("{expected}"))]
-    UnknownKey {
-        key: String,
-        expected: String,
-        #[source_code]
-        src: NamedSource<String>,
-        #[label("not a refs.toml key")]
-        span: SourceSpan,
-    },
+    UnknownKey { key: String, expected: String },
 
     #[error("`{name}` is not a tool refs knows")]
     #[diagnostic(
         code(refs::config::unknown_tool),
         help("use one of: {}", Tool::names().join(", "))
     )]
-    UnknownTool {
-        name: String,
-        #[source_code]
-        src: NamedSource<String>,
-        #[label("unknown tool")]
-        span: SourceSpan,
-    },
+    UnknownTool { name: String },
 
     #[error("invalid repo id `{id}`")]
     #[diagnostic(
         code(refs::config::bad_id),
         help("use lowercase letters, digits, `.`, `_` and `-`, starting with a letter or digit")
     )]
-    BadId {
-        id: String,
-        #[source_code]
-        src: NamedSource<String>,
-        #[label("not a valid directory name")]
-        span: SourceSpan,
-    },
+    BadId { id: String },
 
     #[error("repo refers to unknown group `{group}`")]
     #[diagnostic(
         code(refs::config::dangling_group),
         help("define it under [groups.{group}]")
     )]
-    DanglingGroup {
-        group: String,
-        #[source_code]
-        src: NamedSource<String>,
-        #[label("no such group")]
-        span: SourceSpan,
-    },
+    DanglingGroup { group: String },
 
     #[error("`start` entry `{start}` is not in `paths`")]
     #[diagnostic(
         code(refs::config::start_outside_paths),
         help("use a file inside one of `paths`, or a file directly in the repo root")
     )]
-    StartOutsidePaths {
-        start: String,
-        #[source_code]
-        src: NamedSource<String>,
-        #[label("not checked out")]
-        span: SourceSpan,
-    },
+    StartOutsidePaths { start: String },
 
     #[error("`{path}` must be a relative path without `..`")]
     #[diagnostic(code(refs::config::bad_path))]
-    BadPath {
-        path: String,
-        #[source_code]
-        src: NamedSource<String>,
-        #[label("not allowed")]
-        span: SourceSpan,
-    },
+    BadPath { path: String },
 
     #[error(
         "`{path}` must be a path inside the project: relative, without `..`, backticks or control characters"
     )]
     #[diagnostic(code(refs::config::bad_settings_path))]
-    BadSettingsPath {
-        path: String,
-        #[source_code]
-        src: NamedSource<String>,
-        #[label("not allowed")]
-        span: SourceSpan,
-    },
+    BadSettingsPath { path: String },
 
     #[error("{reason}")]
     #[diagnostic(code(refs::config::bad_url))]
@@ -142,20 +94,11 @@ pub enum ConfigError {
         reason: &'static str,
         #[help]
         help: Option<&'static str>,
-        #[source_code]
-        src: NamedSource<String>,
-        #[label("rejected")]
-        span: SourceSpan,
     },
 
     #[error("`ref` must not start with `-`")]
     #[diagnostic(code(refs::config::bad_ref))]
-    BadRef {
-        #[source_code]
-        src: NamedSource<String>,
-        #[label("git would read this as an option")]
-        span: SourceSpan,
-    },
+    BadRef,
 
     #[error("invalid group name")]
     #[diagnostic(
@@ -164,24 +107,74 @@ pub enum ConfigError {
             "use letters, digits, spaces and . , : ( ) / + & - only, with no leading or trailing space"
         )
     )]
-    BadGroupName {
-        #[source_code]
-        src: NamedSource<String>,
-        #[label("rendered as a heading")]
-        span: SourceSpan,
-    },
+    BadGroupName,
 
     #[error("text is rendered into the managed block and cannot contain this")]
     #[diagnostic(
         code(refs::config::unsafe_text),
         help("use a single line with no control characters, no ``` and no BEGIN:refs or END:refs")
     )]
-    UnsafeText {
-        #[source_code]
-        src: NamedSource<String>,
-        #[label("rejected")]
-        span: SourceSpan,
-    },
+    UnsafeText,
+}
+
+impl ConfigProblem {
+    /// The text under the span in the rendered source.
+    fn label(&self) -> &'static str {
+        match self {
+            ConfigProblem::Syntax { .. } => "here",
+            ConfigProblem::UnknownKey { .. } => "not a refs.toml key",
+            ConfigProblem::UnknownTool { .. } => "unknown tool",
+            ConfigProblem::BadId { .. } => "not a valid directory name",
+            ConfigProblem::DanglingGroup { .. } => "no such group",
+            ConfigProblem::StartOutsidePaths { .. } => "not checked out",
+            ConfigProblem::BadPath { .. } => "not allowed",
+            ConfigProblem::BadSettingsPath { .. } => "not allowed",
+            ConfigProblem::BadUrl { .. } => "rejected",
+            ConfigProblem::BadRef => "git would read this as an option",
+            ConfigProblem::BadGroupName => "rendered as a heading",
+            ConfigProblem::UnsafeText => "rejected",
+        }
+    }
+}
+
+/// A `ConfigProblem` at a place in the `refs.toml` it was found in. Each error carries its own
+/// copy of the source (ADR 0002).
+#[derive(Debug, Error)]
+#[error("{problem}")]
+pub struct ConfigError {
+    pub problem: ConfigProblem,
+    src: NamedSource<String>,
+    span: Option<SourceSpan>,
+}
+
+impl ConfigError {
+    pub fn new(problem: ConfigProblem, src: NamedSource<String>, span: Option<SourceSpan>) -> Self {
+        ConfigError { problem, src, span }
+    }
+}
+
+impl Diagnostic for ConfigError {
+    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        self.problem.code()
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        self.problem.help()
+    }
+
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        Some(&self.src)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        let label = self.problem.label();
+        self.span.map(|span| {
+            Box::new(std::iter::once(miette::LabeledSpan::new_with_span(
+                Some(label.into()),
+                span,
+            ))) as _
+        })
+    }
 }
 
 /// A failure reported by a `Source`.
