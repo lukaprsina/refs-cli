@@ -3,3 +3,5 @@
 **/__pycache__/**
 /.archify
 /.claude/worktrees
+/mutants.out
+/mutants-results

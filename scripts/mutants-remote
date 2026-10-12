@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Runs cargo-mutants on a throwaway Linux server and packs the useful results.
+# Run it on the server (scripts/mutants does that over ssh). Extra args go to cargo-mutants.
+set -euo pipefail
+JOBS=${JOBS:-4}
+REPO_URL=${REPO_URL:-https://github.com/lukaprsina/refs-cli}
+
+if ! command -v cargo >/dev/null; then
+    sudo apt-get update
+    sudo apt-get install -y build-essential git pkg-config tmux
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+fi
+. "$HOME/.cargo/env"
+if ! command -v cargo-binstall >/dev/null; then
+    curl -L --proto '=https' --tlsv1.2 -sSf         https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+fi
+cargo binstall --no-confirm --locked cargo-mutants cargo-nextest
+
+[ -d ~/refs-cli ] || git clone "$REPO_URL" ~/refs-cli
+cd ~/refs-cli
+git pull --ff-only
+echo "mutants: $(cargo mutants --list | wc -l)"
+
+rm -rf ~/results
+# A nonzero exit only means some mutants were missed.
+cargo mutants --test-tool nextest -j "$JOBS" --output ~/results "$@" || true
+
+out=~/mutants-$(git rev-parse --short HEAD).tgz
+tar czf "$out" -C ~/results/mutants.out --exclude=log --exclude=lock.json .
+echo "done: $out"

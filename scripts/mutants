@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Usage: scripts/mutants user@host [cargo-mutants args]
+# Copies scripts/mutants-remote to the server, runs it in tmux (survives ssh drops),
+# and with --fetch as the only extra argument downloads the finished tarball into mutants-results/.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+host=${1:?usage: scripts/mutants user@host [--fetch | cargo-mutants args]}
+shift
+
+if [ "${1:-}" = "--fetch" ]; then
+    mkdir -p mutants-results
+    scp "$host:mutants-*.tgz" mutants-results/
+    exit 0
+fi
+
+scp scripts/mutants-remote "$host:mutants-remote"
+ssh "$host" "tmux new -d -s mutants 'JOBS=${JOBS:-4} bash mutants-remote $* 2>&1 | tee run.log'"
+echo "started; follow with: ssh $host tmux attach -t mutants"
+echo "then fetch with:      scripts/mutants $host --fetch"
