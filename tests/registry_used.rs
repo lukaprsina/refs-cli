@@ -731,6 +731,11 @@ snapshots:
     }
 
     #[test]
+    fn pnpm_text_that_is_not_yaml_is_an_error() {
+        assert!(used_versions(Format::Pnpm, "zod", "importers: [unclosed").is_err());
+    }
+
+    #[test]
     fn pnpm_marks_what_an_importer_lists_as_direct() {
         let used = |name| used_versions(Format::Pnpm, name, PNPM_V9).unwrap();
         assert_eq!(

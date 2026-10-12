@@ -54,7 +54,7 @@ pub fn used_versions(format: Format, name: &str, text: &str) -> Result<Vec<Used>
     let found = match format {
         Format::CargoLock => cargo::used(name, text)?,
         Format::PackageLock => package_lock::used(name, text)?,
-        Format::Pnpm => pnpm::used(name, text),
+        Format::Pnpm => pnpm::used(name, text)?,
         Format::Yarn => yarn::used(name, text),
         Format::UvLock => uv::used(name, text)?,
         Format::PoetryLock => poetry::used(name, text)?,
