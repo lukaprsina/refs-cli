@@ -13,7 +13,7 @@ mod url;
 pub mod used;
 
 mod http;
-pub use http::{Fetch, Http, Reply, Reqwest};
+pub use http::{Http, interpret, url};
 
 use crate::edit::AddRepo;
 

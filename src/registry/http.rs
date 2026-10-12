@@ -1,7 +1,6 @@
-//! The real `Registry`: the three registries over HTTPS, through a `Fetch` so that tests can
-//! script the answers.
+//! The real `Registry`: the three registries over HTTPS.
 //!
-//! After changing `Reqwest`, run `refs add npm:`, `cargo:` and `pypi:` by hand against the real
+//! After changing `get`, run `refs add npm:`, `cargo:` and `pypi:` by hand against the real
 //! registries (`--no-sync` is enough).
 
 use std::time::Duration;
@@ -18,100 +17,74 @@ const USER_AGENT: &str = concat!(
 );
 const TIMEOUT: Duration = Duration::from_secs(15);
 
-/// What a registry answered to a GET.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Reply {
-    pub status: u16,
-    pub body: String,
-}
+/// Asks npm, crates.io and PyPI over HTTPS. One lookup per `add`, far under crates.io's rate
+/// limit of a request per second, so there is no retry. Tests never touch the network: they
+/// check `url` and `interpret`, and the GET itself is the part to run by hand after a change.
+pub struct Http;
 
-/// One GET, the seam under `Http`. `Err` says why the registry could not be reached or read.
-pub trait Fetch {
-    fn get(&self, url: &str) -> Result<Reply, String>;
-}
-
-impl<T: Fetch> Fetch for &T {
-    fn get(&self, url: &str) -> Result<Reply, String> {
-        (**self).get(url)
-    }
-}
-
-/// `Fetch` over HTTPS. It has no test, as tests never touch the network; it is the part of
-/// this module to run by hand after a change.
-pub struct Reqwest;
-
-impl Fetch for Reqwest {
-    fn get(&self, url: &str) -> Result<Reply, String> {
-        let client = Client::builder()
-            .user_agent(USER_AGENT)
-            .timeout(TIMEOUT)
-            .build()
-            .map_err(|e| e.to_string())?;
-        let response = client.get(url).send().map_err(|e| e.to_string())?;
-        let status = response.status().as_u16();
-        let body = response.text().map_err(|e| e.to_string())?;
-        Ok(Reply { status, body })
-    }
-}
-
-/// Asks npm, crates.io and PyPI through `fetch`. One lookup per `add`, far under crates.io's
-/// rate limit of a request per second, so there is no retry.
-pub struct Http<F>(F);
-
-impl<F: Fetch> Http<F> {
-    pub fn new(fetch: F) -> Self {
-        Http(fetch)
-    }
-}
-
-impl<F: Fetch> Registry for Http<F> {
+impl Registry for Http {
     fn lookup(&self, package: &Package) -> Result<Found, RegistryError> {
-        let (url, read) = endpoint(package);
-        let reply = self.0.get(&url).map_err(|why| RegistryError::Request {
+        let (status, body) = get(&url(package)).map_err(|why| RegistryError::Request {
             package: package.clone(),
             why,
         })?;
-        let package = || package.clone();
-        match reply.status {
-            404 => {
-                return Err(RegistryError::NotFound { package: package() });
-            }
-            status if !(200..300).contains(&status) => {
-                return Err(RegistryError::Status {
-                    package: package(),
-                    status,
-                });
-            }
-            _ => {}
-        }
-        match read(&reply.body) {
-            Ok(Some(found)) => Ok(found),
-            Ok(None) => Err(RegistryError::NoRepository { package: package() }),
-            Err(why) => Err(RegistryError::Malformed {
+        interpret(package, status, &body)
+    }
+}
+
+fn get(url: &str) -> Result<(u16, String), String> {
+    let client = Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(TIMEOUT)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client.get(url).send().map_err(|e| e.to_string())?;
+    let status = response.status().as_u16();
+    let body = response.text().map_err(|e| e.to_string())?;
+    Ok((status, body))
+}
+
+/// What a registry's answer (`status` and `body`) says about `package`.
+pub fn interpret(package: &Package, status: u16, body: &str) -> Result<Found, RegistryError> {
+    let package = || package.clone();
+    match status {
+        404 => return Err(RegistryError::NotFound { package: package() }),
+        status if !(200..300).contains(&status) => {
+            return Err(RegistryError::Status {
                 package: package(),
-                why,
-            }),
+                status,
+            });
         }
+        _ => {}
+    }
+    match reader(package().ecosystem)(body) {
+        Ok(Some(found)) => Ok(found),
+        Ok(None) => Err(RegistryError::NoRepository { package: package() }),
+        Err(why) => Err(RegistryError::Malformed {
+            package: package(),
+            why,
+        }),
     }
 }
 
 /// An adapter: reads a registry's document for where the package lives.
 type Adapter = fn(&str) -> Answer;
 
-/// The URL of the document that holds the repository, the cheapest one the registry serves,
-/// and the adapter that reads it.
-fn endpoint(package: &Package) -> (String, Adapter) {
+/// The URL of the document that holds the repository: the cheapest one the registry serves.
+pub fn url(package: &Package) -> String {
     let name = encode(&package.name);
     match package.ecosystem {
-        Ecosystem::Npm => (
-            format!("https://registry.npmjs.org/{name}/latest"),
-            npm::found,
-        ),
-        Ecosystem::Cargo => (
-            format!("https://crates.io/api/v1/crates/{name}?include="),
-            crates::found,
-        ),
-        Ecosystem::Pypi => (format!("https://pypi.org/pypi/{name}/json"), pypi::found),
+        Ecosystem::Npm => format!("https://registry.npmjs.org/{name}/latest"),
+        Ecosystem::Cargo => format!("https://crates.io/api/v1/crates/{name}?include="),
+        Ecosystem::Pypi => format!("https://pypi.org/pypi/{name}/json"),
+    }
+}
+
+fn reader(ecosystem: Ecosystem) -> Adapter {
+    match ecosystem {
+        Ecosystem::Npm => npm::found,
+        Ecosystem::Cargo => crates::found,
+        Ecosystem::Pypi => pypi::found,
     }
 }
 
