@@ -1,6 +1,7 @@
 //! `refs add` after the prompts (ADR 0009): add the repo and sync, then read the new
 //! Checkout's Manifests for its `packages`, confirm them, and write them with a second sync
-//! that only re-renders the Managed block.
+//! that only re-renders the Managed block. With no sync (`--no-sync`) there is no Checkout, so
+//! the `packages` stay as given.
 
 use std::path::Path;
 
@@ -36,7 +37,7 @@ pub enum Skipped {
 /// are then read from the Checkout: asked for with the names found as the default when there
 /// is a `prompter`, otherwise the names found are written. `flags` are for the add's own sync.
 /// Without a `source` (`--no-sync`) the repo is only added: there is no Checkout to read, so
-/// the `packages` were asked before (`prompt::fill_add`).
+/// the `packages` stay as given.
 pub fn run(
     source: Option<&dyn Source>,
     root: &Path,

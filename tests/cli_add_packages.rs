@@ -242,6 +242,21 @@ fn a_failing_terminal_is_reported_as_such_and_the_repo_stays_added() {
 }
 
 #[test]
+fn asking_only_for_packages_still_prints_the_equivalent_command() {
+    let dir = project_with_checkout_of_foo("package.json", r#"{ "name": "foo-js" }"#);
+    let source = FakeSource::new();
+    let mut script = Script::new([Answer::Text("")]);
+    let run = add_foo(dir.path(), &source, &["--group", "g"], Some(&mut script));
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(script.asked.len(), 1, "{:?}", script.asked);
+    assert!(
+        run.err.contains("equivalent: refs add") && run.err.contains("--packages foo-js"),
+        "{}",
+        run.err
+    );
+}
+
+#[test]
 fn explicit_packages_and_no_sync_infer_nothing() {
     let dir = project_with_checkout_of_foo("package.json", r#"{ "name": "foo-js" }"#);
     let source = FakeSource::new();

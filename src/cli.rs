@@ -20,7 +20,7 @@ use crate::edit::{AddRepo, Edit, Target};
 use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
-use crate::prompt::{self, Decided, Packages, Prompter};
+use crate::prompt::{self, Counting, Prompter};
 use crate::registry::pin::{Say, Stop, pin};
 use crate::registry::{self, Registry, Requested};
 use crate::source::Source;
@@ -334,6 +334,7 @@ pub fn run_on<'a>(
         Command::Config(command) => match load(start, &mut console) {
             Ok((root, config)) => {
                 let prompter = outside.prompter.filter(|_| !cli.no_input);
+                let prompter = prompter.map(Counting::new);
                 run_config(
                     &command,
                     &root,
@@ -372,9 +373,20 @@ fn load(start: &Path, console: &mut Console) -> Result<(PathBuf, Config), u8> {
 
 /// Who and what a config command may ask: a person, a registry, unless `--offline`.
 struct Asking<'a> {
-    prompter: Option<&'a mut dyn Prompter>,
+    prompter: Option<Counting<'a>>,
     registry: &'a dyn Registry,
     offline: bool,
+}
+
+impl Asking<'_> {
+    fn prompter(&mut self) -> Option<&mut dyn Prompter> {
+        self.prompter.as_mut().map(|p| p as &mut dyn Prompter)
+    }
+
+    /// Whether any question has been asked so far.
+    fn asked(&self) -> bool {
+        self.prompter.as_ref().is_some_and(Counting::asked)
+    }
 }
 
 fn run_config<'a>(
@@ -401,18 +413,20 @@ fn run_config<'a>(
             return 0;
         }
         ConfigCommand::Add { repo, flags } => {
-            let add = |source: Option<&dyn Source>, console: &mut Console| {
-                let prepared = prepare_add(repo, source, root, config, &mut asking, console);
-                let (repo, asked) = match prepared {
-                    Ok(prepared) => prepared,
+            let mut add = |source: Option<&dyn Source>, console: &mut Console| {
+                let repo = match prepare_add(repo, source, root, config, &mut asking, console) {
+                    Ok(repo) => repo,
                     Err(code) => return code,
                 };
-                let job = AddJob {
-                    repo: &repo,
-                    flags: &flags_for_sync,
-                    asked,
-                };
-                add(source, root, config, &job, asking.prompter, console)
+                add(
+                    source,
+                    root,
+                    config,
+                    &repo,
+                    &flags_for_sync,
+                    &mut asking,
+                    console,
+                )
             };
             return if flags.no_sync {
                 add(None, console)
@@ -448,14 +462,12 @@ fn prepare_add(
     config: &Config,
     asking: &mut Asking,
     console: &mut Console,
-) -> Result<(AddRepo, bool), u8> {
+) -> Result<AddRepo, u8> {
     let mut repo = repo.clone();
-    let mut url_asked = false;
     if repo.url.is_empty()
-        && let Some(prompter) = asking.prompter.as_deref_mut()
+        && let Some(prompter) = asking.prompter()
     {
         repo.url = prompt::ask_url(prompter).map_err(|abort| aborted(abort, console))?;
-        url_asked = true;
     }
     let expanded = match registry::expand(&repo, asking.registry, asking.offline) {
         Ok(expanded) => expanded,
@@ -468,15 +480,8 @@ fn prepare_add(
              use `--ref` and `--paths` to choose a ref and directories"
         ));
     }
-    let packages = match source {
-        Some(_) => Packages::Later,
-        None => Packages::Now,
-    };
     // A registry add has chosen its Ref (a tag, or the default branch), so it is not asked.
-    let decided = Decided {
-        packages,
-        ref_settled: expanded.requested.is_some(),
-    };
+    let ref_settled = expanded.requested.is_some();
     let mut repo = expanded.repo;
     // A `ref` given with a version was refused by `expand`; without one it is kept as it is.
     if let (None, Some(requested)) = (&repo.git_ref, &expanded.requested) {
@@ -485,18 +490,11 @@ fn prepare_add(
             requested,
             root,
             source,
-            asking.prompter.as_deref_mut(),
+            asking.prompter(),
             console,
         )?;
     }
-    complete_add(
-        &repo,
-        config,
-        asking.prompter.as_deref_mut(),
-        decided,
-        url_asked,
-        console,
-    )
+    complete_add(&repo, config, asking.prompter(), ref_settled, console)
 }
 
 /// Set the `ref` of `repo` to the tag that `requested` was released as (`registry::pin`), which
@@ -544,28 +542,25 @@ fn aborted(abort: prompt::Abort, console: &mut Console) -> u8 {
     EXIT_ERROR
 }
 
-/// `repo` with what the command line left out, and whether anything was asked: asked for when
-/// there is a prompter, otherwise only a missing URL is a problem (usage, exit 2). On a cancel
-/// nothing has been edited. With `url_asked` the URL was typed at the prompt, which counts as
-/// asking.
+/// `repo` with what the command line left out: asked for when there is a prompter, otherwise
+/// only a missing URL is a problem (usage, exit 2). On a cancel nothing has been edited.
 fn complete_add(
     repo: &AddRepo,
     config: &Config,
     prompter: Option<&mut (dyn Prompter + '_)>,
-    decided: Decided,
-    url_asked: bool,
+    ref_settled: bool,
     console: &mut Console,
-) -> Result<(AddRepo, bool), u8> {
+) -> Result<AddRepo, u8> {
     let mut repo = repo.clone();
     let Some(prompter) = prompter else {
         if repo.url.is_empty() {
             console.problem("error: a URL is required when not run in a terminal");
             return Err(EXIT_USAGE);
         }
-        return Ok((repo, false));
+        return Ok(repo);
     };
-    match prompt::fill_add(&mut repo, config, prompter, decided) {
-        Ok(filled) => Ok((repo, filled.asked || url_asked)),
+    match prompt::fill_add(&mut repo, config, prompter, ref_settled) {
+        Ok(()) => Ok(repo),
         Err(abort) => Err(aborted(abort, console)),
     }
 }
@@ -577,26 +572,27 @@ fn equivalent(repo: &AddRepo, console: &mut Console) {
     ));
 }
 
-/// The repo an `add` was asked for, how to sync it, and whether anything was asked on the way.
-struct AddJob<'r> {
-    repo: &'r AddRepo,
-    flags: &'r SyncFlags,
-    asked: bool,
-}
-
 /// `refs add`: the add and its sync, then the `packages` read from the new Checkout (with no
-/// `source`, `--no-sync`, there is neither). When something was `asked`, the `equivalent:`
-/// line comes last, with those `packages`.
+/// `source`, `--no-sync`, there is neither). When anything was asked, on the way here or
+/// after, the `equivalent:` line comes last, with those `packages`.
 fn add(
     source: Option<&dyn Source>,
     root: &Path,
     config: &Config,
-    job: &AddJob,
-    prompter: Option<&mut dyn Prompter>,
+    repo: &AddRepo,
+    flags: &SyncFlags,
+    asking: &mut Asking,
     console: &mut Console,
 ) -> u8 {
-    let AddJob { repo, flags, asked } = *job;
-    let added = crate::add::run(source, root, config, repo, flags, prompter);
+    if source.is_none() && repo.packages.is_empty() {
+        // The hint to run `refs sync` comes last, so this is said before the edit's report.
+        console.status(format_args!(
+            "no packages for `{}`; set them in {}",
+            repo.resolved_id(),
+            project::CONFIG_FILE
+        ));
+    }
+    let added = crate::add::run(source, root, config, repo, flags, asking.prompter());
     let mut code = 0;
     for report in &added.reports {
         let reported = print_report(report, false, console);
@@ -604,7 +600,7 @@ fn add(
             code = reported;
         }
     }
-    if asked {
+    if asking.asked() {
         equivalent(&added.repo, console);
     }
     if let Some(why) = &added.skipped {

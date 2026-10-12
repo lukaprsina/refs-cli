@@ -144,7 +144,6 @@ fn a_bare_add_asks_for_everything_and_writes_the_answers() {
         Answer::Text("The router"),
         Answer::Yes(true),
         Answer::Text("src docs"),
-        Answer::Text("@solidjs/router"),
         Answer::Text(""),
     ]);
 
@@ -160,7 +159,6 @@ group = "core"
 ref = "next"
 description = "The router"
 paths = ["src", "docs"]
-packages = ["@solidjs/router"]
 "#
         ),
         "{config}"
@@ -168,8 +166,13 @@ packages = ["@solidjs/router"]
     assert!(
         run.err.contains(
             "refs add https://github.com/solidjs/solid-router --group core --ref next \
-             --description \"The router\" --paths src docs --packages @solidjs/router"
+             --description \"The router\" --paths src docs"
         ),
+        "{}",
+        run.err
+    );
+    assert!(
+        run.err.contains("no packages for `solid-router`"),
         "{}",
         run.err
     );
@@ -197,11 +200,7 @@ fn a_value_given_as_a_flag_is_not_asked_again() {
     assert_eq!(run.code, 0, "{}", run.err);
     assert_eq!(
         script.asked,
-        [
-            "Id",
-            "Link to a group?",
-            "Customize paths, packages and start?"
-        ]
+        ["Id", "Link to a group?", "Customize paths and start?"]
     );
     assert!(config_text(dir.path()).contains("ref = \"v2\""));
 }

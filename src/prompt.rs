@@ -39,28 +39,52 @@ pub trait Prompter {
     fn confirm(&mut self, message: &str) -> Result<bool, Abort>;
 }
 
-/// When `add` learns the `packages` of a repo that was not given any.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Packages {
-    /// Among the other questions, as no sync follows to make a Checkout to read.
-    Now,
-    /// After the sync, from the new Checkout (ADR 0009).
-    Later,
+/// A `Prompter` that remembers whether it was asked anything, so `add` can tell whether to
+/// print the equivalent command line, whichever step asked.
+pub struct Counting<'p> {
+    inner: &'p mut dyn Prompter,
+    asked: bool,
 }
 
-/// What `add` has already decided before `fill_add` asks, and so is not asked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Decided {
-    /// When the `packages` are learned.
-    pub packages: Packages,
-    /// Whether the `ref` is chosen: a registry add has picked a tag, or the default branch.
-    pub ref_settled: bool,
+impl<'p> Counting<'p> {
+    pub fn new(inner: &'p mut dyn Prompter) -> Self {
+        Counting {
+            inner,
+            asked: false,
+        }
+    }
+
+    /// Whether any question has been asked.
+    pub fn asked(&self) -> bool {
+        self.asked
+    }
 }
 
-/// What `fill_add` found out: whether it asked anything at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Filled {
-    pub asked: bool,
+impl Prompter for Counting<'_> {
+    fn text(
+        &mut self,
+        message: &str,
+        default: Option<&str>,
+        validate: &dyn Fn(&str) -> Result<(), String>,
+    ) -> Result<String, Abort> {
+        self.asked = true;
+        self.inner.text(message, default, validate)
+    }
+
+    fn suggest(
+        &mut self,
+        message: &str,
+        suggestions: &[String],
+        validate: &dyn Fn(&str) -> Result<(), String>,
+    ) -> Result<String, Abort> {
+        self.asked = true;
+        self.inner.suggest(message, suggestions, validate)
+    }
+
+    fn confirm(&mut self, message: &str) -> Result<bool, Abort> {
+        self.asked = true;
+        self.inner.confirm(message)
+    }
 }
 
 /// Complete `repo` by asking for each value it does not have, except the URL, which `add` asks
@@ -68,74 +92,44 @@ pub struct Filled {
 /// line is never asked for again; an empty answer leaves a value absent, as omitting its flag
 /// would.
 ///
-/// With `Packages::Later` in `decided` the packages are not asked here: `add` reads them from
-/// the new Checkout and asks then (ADR 0009), see `ask_packages`. With `ref_settled` the `ref`
-/// is not asked either: a registry add has chosen it (a tag, or the default branch).
+/// The packages are not asked here: `add` reads them from the new Checkout and asks then (ADR
+/// 0009), see `ask_packages`. With `ref_settled` the `ref` is not asked either: a registry add
+/// has chosen it (a tag, or the default branch).
 pub fn fill_add(
     repo: &mut AddRepo,
     config: &Config,
     prompter: &mut dyn Prompter,
-    decided: Decided,
-) -> Result<Filled, Abort> {
-    let Decided {
-        packages,
-        ref_settled,
-    } = decided;
-    let mut asked = false;
+    ref_settled: bool,
+) -> Result<(), Abort> {
     if repo.id.is_none() {
-        asked = true;
         let default = id_from_url(&repo.url).to_lowercase();
         let taken = |id: &str| valid_id(id, config);
         let id = prompter.text("Id", Some(&default), &taken)?;
         repo.id = Some(id).filter(|id| *id != default);
     }
     if repo.group.is_none() {
-        asked = true;
         repo.group = ask_group(config, prompter)?;
     }
     if repo.git_ref.is_none() && !ref_settled {
-        asked = true;
         repo.git_ref = ask_optional(prompter, "Ref (empty: the remote's default branch)")?;
     }
     if repo.description.is_none() {
-        asked = true;
         repo.description = ask_optional(prompter, "Description (one line on what the repo is)")?;
     }
-    let packages_asked = packages == Packages::Now && repo.packages.is_empty();
-    let any_list_empty = repo.paths.is_empty() || packages_asked || repo.start.is_empty();
-    if any_list_empty {
-        asked = true;
-        let question = if packages_asked {
-            "Customize paths, packages and start?"
-        } else {
-            "Customize paths and start?"
-        };
-        if prompter.confirm(question)? {
-            for (list, message, wanted) in [
-                (
-                    &mut repo.paths,
-                    "Paths to check out (space-separated)",
-                    true,
-                ),
-                (
-                    &mut repo.packages,
-                    "Packages it documents (space-separated)",
-                    packages_asked,
-                ),
-                (
-                    &mut repo.start,
-                    "Files to read first (space-separated)",
-                    true,
-                ),
-            ] {
-                if wanted && list.is_empty() {
-                    let answer = ask_optional(prompter, message)?.unwrap_or_default();
-                    *list = answer.split_whitespace().map(str::to_owned).collect();
-                }
+    if (repo.paths.is_empty() || repo.start.is_empty())
+        && prompter.confirm("Customize paths and start?")?
+    {
+        for (list, message) in [
+            (&mut repo.paths, "Paths to check out (space-separated)"),
+            (&mut repo.start, "Files to read first (space-separated)"),
+        ] {
+            if list.is_empty() {
+                let answer = ask_optional(prompter, message)?.unwrap_or_default();
+                *list = answer.split_whitespace().map(str::to_owned).collect();
             }
         }
     }
-    Ok(Filled { asked })
+    Ok(())
 }
 
 /// The packages of a repo that has just been checked out, with `inferred` as the default. The
