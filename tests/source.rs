@@ -8,7 +8,7 @@ fn at<'a>(id: &'a str, repo: &'a Repo) -> RepoRef<'a> {
 }
 
 fn pin() -> Pin {
-    Pin::git(
+    Pin::new(
         "https://example.com/a",
         "HEAD",
         &"a".repeat(40),
@@ -136,7 +136,7 @@ fn a_failed_materialise_leaves_the_checkout_untouched() {
 #[test]
 fn a_pin_shows_a_short_id_and_the_branch_for_head() {
     let sha = "1a2b3c4d5e6f".to_string() + &"0".repeat(28);
-    let head = Pin::git("u", "HEAD", &sha, Some("main"));
+    let head = Pin::new("u", "HEAD", &sha, Some("main"));
     assert_eq!(head.short_id(), "1a2b3c4");
     assert_eq!(head.display_ref(), "main");
 }
@@ -144,9 +144,9 @@ fn a_pin_shows_a_short_id_and_the_branch_for_head() {
 #[test]
 fn a_pin_shows_its_ref_when_there_is_no_branch() {
     let sha = "1a2b3c4d5e6f".to_string() + &"0".repeat(28);
-    assert_eq!(Pin::git("u", "next", &sha, None).display_ref(), "next");
+    assert_eq!(Pin::new("u", "next", &sha, None).display_ref(), "next");
     // A detached remote HEAD records no branch.
-    assert_eq!(Pin::git("u", "HEAD", &sha, None).display_ref(), "HEAD");
+    assert_eq!(Pin::new("u", "HEAD", &sha, None).display_ref(), "HEAD");
 }
 
 #[test]

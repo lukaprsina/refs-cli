@@ -11,7 +11,7 @@ const SHA: &str = "ee49b3e0123456789012345678901234567890ab";
 fn entry(id: &str, url: &str, git_ref: &str) -> LockedRepo {
     LockedRepo {
         id: id.into(),
-        pin: Pin::git(url, git_ref, SHA, None),
+        pin: Pin::new(url, git_ref, SHA, None),
     }
 }
 

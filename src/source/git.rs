@@ -58,7 +58,7 @@ impl Source for GitSource {
         let git_ref = repo.repo.effective_ref();
         remote::check_input(url, git_ref)?;
         if is_full_sha(git_ref) {
-            return Ok(Pin::git(url, git_ref, git_ref, None));
+            return Ok(Pin::new(url, git_ref, git_ref, None));
         }
         if git_ref == "HEAD" {
             let out = Cmd::new()
@@ -67,7 +67,7 @@ impl Source for GitSource {
                 .arg("HEAD")
                 .run()?;
             let (sha, branch) = remote::select_head(url, &out)?;
-            return Ok(Pin::git(url, git_ref, &sha, branch.as_deref()));
+            return Ok(Pin::new(url, git_ref, &sha, branch.as_deref()));
         }
         let patterns = [
             format!("refs/heads/{git_ref}"),
@@ -80,7 +80,7 @@ impl Source for GitSource {
             .args(&patterns)
             .run()?;
         let sha = remote::select_ref(url, git_ref, &out)?;
-        Ok(Pin::git(url, git_ref, &sha, None))
+        Ok(Pin::new(url, git_ref, &sha, None))
     }
 
     fn tags(&self, url: &str) -> Result<Vec<String>, SourceError> {
@@ -265,7 +265,7 @@ fn observe(cache: &Repo, dest: &Path, admin: &Path) -> Result<Observed, SourceEr
     let record = Record::read(admin).filter(|r| r.pin.sha() == head);
     let (pin, paths) = match record {
         Some(record) => (record.pin, record.paths),
-        None => (Pin::git("", "", &head, None), vec![]),
+        None => (Pin::new("", "", &head, None), vec![]),
     };
     // `--no-optional-locks`: looking must not write, not even the index refresh.
     let status = Cmd::new()

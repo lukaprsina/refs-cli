@@ -59,7 +59,7 @@ impl Remote {
     }
 
     fn pin(&self, git_ref: &str, sha: &str, branch: Option<&str>) -> Pin {
-        Pin::git(&self.url(), git_ref, sha, branch)
+        Pin::new(&self.url(), git_ref, sha, branch)
     }
 }
 

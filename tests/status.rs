@@ -10,7 +10,7 @@ use refs_cli::source::fake::{FakeSource, Method};
 use refs_cli::source::{Observed, Pin};
 
 fn pin(sha: &str) -> Pin {
-    Pin::git("https://github.com/o/r", "HEAD", sha, None)
+    Pin::new("https://github.com/o/r", "HEAD", sha, None)
 }
 
 /// Run `refs list --status` over `config` and the optional `lock`: exit code, stdout, stderr.

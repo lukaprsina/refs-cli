@@ -22,7 +22,7 @@ paths = ["docs", "src"]
 "#;
 
 fn pin(sha: &str) -> Pin {
-    Pin::git("https://github.com/o/a", "next", sha, None)
+    Pin::new("https://github.com/o/a", "next", sha, None)
 }
 
 fn lock() -> Lock {
@@ -182,7 +182,7 @@ fn a_pin_differing_only_in_branch_is_in_sync() {
     source.seed(
         "a",
         Observed::At {
-            pin: Pin::git("https://github.com/o/a", "next", SHA, Some("main")),
+            pin: Pin::new("https://github.com/o/a", "next", SHA, Some("main")),
             paths: vec!["docs".into(), "src".into()],
             dirty_files: vec![],
         },

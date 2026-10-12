@@ -22,7 +22,7 @@ pub struct Pin {
 }
 
 impl Pin {
-    pub fn git(url: &str, git_ref: &str, sha: &str, branch: Option<&str>) -> Pin {
+    pub fn new(url: &str, git_ref: &str, sha: &str, branch: Option<&str>) -> Pin {
         Pin {
             url: url.into(),
             git_ref: git_ref.into(),

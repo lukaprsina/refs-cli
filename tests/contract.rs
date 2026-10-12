@@ -58,7 +58,7 @@ impl Harness for FakeHarness {
         FAKE_URL.into()
     }
     fn pins(&self) -> [Pin; 2] {
-        ["a", "b"].map(|c| Pin::git(FAKE_URL, "main", &c.repeat(40), None))
+        ["a", "b"].map(|c| Pin::new(FAKE_URL, "main", &c.repeat(40), None))
     }
     fn seed(&self, state: Observed) {
         self.source.seed(ID, state);
@@ -136,7 +136,7 @@ impl Harness for GitHarness {
     fn pins(&self) -> [Pin; 2] {
         self.shas
             .clone()
-            .map(|sha| Pin::git(&self.url(), "main", &sha, None))
+            .map(|sha| Pin::new(&self.url(), "main", &sha, None))
     }
     fn seed(&self, state: Observed) {
         match state {

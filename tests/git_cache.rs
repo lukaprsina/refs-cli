@@ -79,7 +79,7 @@ impl Remote {
     }
 
     fn pin(&self) -> Pin {
-        Pin::git(&self.url(), "main", &self.sha, None)
+        Pin::new(&self.url(), "main", &self.sha, None)
     }
 
     /// The ids of the blobs at `files`, as the remote has them.
@@ -314,7 +314,7 @@ mod verify {
         let (remote, env) = (Remote::new(), Env::new());
         let tag_object = git(remote.dir.path(), &["rev-parse", "v1"]);
         assert_ne!(tag_object, remote.sha, "the fixture needs a tag object");
-        let pin = Pin::git(&remote.url(), "v1", &tag_object, None);
+        let pin = Pin::new(&remote.url(), "v1", &tag_object, None);
         let repo = remote.repo(&[], &[]);
 
         let err = env
@@ -327,7 +327,7 @@ mod verify {
     #[test]
     fn a_commit_id_that_could_be_an_option_never_reaches_git() {
         let (remote, env) = (Remote::new(), Env::new());
-        let pin = Pin::git(&remote.url(), "main", "--upload-pack=touch /tmp/x", None);
+        let pin = Pin::new(&remote.url(), "main", "--upload-pack=touch /tmp/x", None);
         let repo = remote.repo(&[], &[]);
         let source = env.source();
 
@@ -345,7 +345,7 @@ mod verify {
     #[test]
     fn a_commit_the_remote_does_not_have_is_an_error() {
         let (remote, env) = (Remote::new(), Env::new());
-        let pin = Pin::git(&remote.url(), "main", &"0123456789".repeat(4), None);
+        let pin = Pin::new(&remote.url(), "main", &"0123456789".repeat(4), None);
         let repo = remote.repo(&[], &[]);
 
         let err = env

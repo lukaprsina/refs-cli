@@ -96,7 +96,7 @@ impl Source for FakeSource {
         self.record(Call::Resolve(repo.id.into()));
         self.check(repo.id, Method::Resolve)?;
         let sha = self.commits.borrow().get(repo.id).cloned();
-        Ok(Pin::git(
+        Ok(Pin::new(
             repo.repo.url.as_ref(),
             repo.repo.effective_ref(),
             &sha.unwrap_or_else(|| "a".repeat(40)),
