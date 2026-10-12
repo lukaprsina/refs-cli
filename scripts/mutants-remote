@@ -21,6 +21,10 @@ cd ~/refs-cli
 git pull --ff-only
 echo "mutants: $(cargo mutants --list | wc -l)"
 
+# /tmp is a small tmpfs on some images and fills up with the per-job build copies, which
+# shows up as bogus "unviable" mutants. Build on the disk instead.
+mkdir -p ~/tmp
+export TMPDIR=~/tmp
 rm -rf ~/results
 # A nonzero exit only means some mutants were missed.
 cargo mutants --test-tool nextest -j "$JOBS" --output ~/results "$@" || true
