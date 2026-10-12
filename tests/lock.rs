@@ -6,14 +6,12 @@ version = 1
 
 [[repo]]
 id = "solid"
-source = "git"
 url = "https://github.com/solidjs/solid"
 ref = "next"
 sha = "1a2b3c4d5e6f0000000000000000000000000000"
 
 [[repo]]
 id = "zed"
-source = "git"
 url = "https://github.com/zed-industries/zed"
 ref = "HEAD"
 sha = "2b3c4d5e6f700000000000000000000000000000"
@@ -31,20 +29,6 @@ fn entries_are_written_sorted_by_id() {
     let mut lock = Lock::parse(LOCK).unwrap();
     lock.repo.reverse();
     assert_eq!(lock.to_toml(), LOCK);
-}
-
-#[test]
-fn an_entry_without_source_is_rejected() {
-    let text = LOCK.replacen("source = \"git\"\n", "", 1);
-    let err = Lock::parse(&text).unwrap_err();
-    assert_eq!(err.code().unwrap().to_string(), "refs::lock::invalid");
-}
-
-#[test]
-fn an_unknown_source_kind_is_rejected() {
-    let text = LOCK.replacen("source = \"git\"", "source = \"tarball\"", 1);
-    let err = Lock::parse(&text).unwrap_err();
-    assert_eq!(err.code().unwrap().to_string(), "refs::lock::invalid");
 }
 
 mod write {

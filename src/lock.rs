@@ -36,7 +36,7 @@ impl std::fmt::Display for Field {
     }
 }
 
-/// One locked Repo. The `source` tag and its fields live in the `Pin`. The Lock records
+/// One locked Repo. Its fields live in the `Pin`. The Lock records
 /// what a Repo resolved to, not which `paths` it checks out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockedRepo {

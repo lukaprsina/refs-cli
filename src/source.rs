@@ -10,11 +10,9 @@ use crate::config::{Repo, RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
 use crate::lock::Field;
 
-/// A resolved identity of a Repo: a commit of a remote. In the Lock the `source` tag says
-/// where it came from; `git` is the only one, and any other is rejected on read.
+/// A resolved identity of a Repo: a commit of a git remote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pin {
-    source: PinSource,
     url: String,
     #[serde(rename = "ref")]
     git_ref: String,
@@ -23,16 +21,9 @@ pub struct Pin {
     branch: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum PinSource {
-    Git,
-}
-
 impl Pin {
     pub fn git(url: &str, git_ref: &str, sha: &str, branch: Option<&str>) -> Pin {
         Pin {
-            source: PinSource::Git,
             url: url.into(),
             git_ref: git_ref.into(),
             sha: sha.into(),
