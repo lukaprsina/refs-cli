@@ -251,12 +251,6 @@ pub fn expand(
             shorthand: repo.url.clone(),
             why: why.to_owned(),
         })?;
-        if let Some((problem, _)) = crate::config::url_problem(&named.url) {
-            return Err(RegistryError::BadForge {
-                shorthand: repo.url.clone(),
-                why: problem.to_owned(),
-            });
-        }
         let mut expanded = repo.clone();
         expanded.url = named.url;
         return Ok(Expanded {
