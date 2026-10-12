@@ -287,14 +287,7 @@ pub fn enable(text: &str, target: Target) -> Result<String, EditError> {
         .map_or(span.start, |k| k.start);
     let start = text[..key_start].rfind('\n').map_or(0, |i| i + 1);
     let end = line_end(text, span.end);
-    let mut out = format!("{}{}", &text[..start], &text[end..]);
-    // The line was the file's last and had no newline: take the one before it too.
-    if end == text.len() && !text.ends_with('\n') && start > 0 {
-        out.pop();
-        if out.ends_with('\r') {
-            out.pop();
-        }
-    }
+    let out = cut(text, start, end);
     config::parse(&out)?;
     Ok(out)
 }
@@ -362,15 +355,20 @@ fn cut_table(text: &str, target: Target) -> Result<String, EditError> {
         start -= blank.len();
     }
 
+    Ok(cut(text, start, end))
+}
+
+/// `text` without `start..end`, which are whole lines. A cut that takes the last line of a file
+/// with no final newline takes the line break before it too, so the file still has none.
+fn cut(text: &str, start: usize, end: usize) -> String {
     let mut out = format!("{}{}", &text[..start], &text[end..]);
-    // A file that ended without a newline ended with the table's last line.
     if end == text.len() && !text.ends_with('\n') && out.ends_with('\n') {
         out.pop();
         if out.ends_with('\r') {
             out.pop();
         }
     }
-    Ok(out)
+    out
 }
 
 /// The last path segment of the URL, without a trailing `.git` or the dots and dashes an id
