@@ -2,80 +2,17 @@
 //! answers scripted and a fake `Source`. The fake makes no files, so each test writes the
 //! Manifests where the Checkout would be.
 
-use std::collections::VecDeque;
 use std::fs;
 use std::path::Path;
 
 use refs_cli::cli::{Outside, Terminal, run_on};
-use refs_cli::prompt::{Abort, Prompter};
+use refs_cli::prompt::Prompter;
 use refs_cli::source::fake::{Call, FakeSource};
 use refs_cli::update::Unmanaged;
 use tempfile::TempDir;
 
-/// The questions asked with the default each had, and the answers to give them in order. An
-/// empty text answer takes the default.
-struct Script {
-    answers: VecDeque<Answer>,
-    asked: Vec<(String, Option<String>)>,
-}
-
-enum Answer {
-    Text(&'static str),
-    Yes(bool),
-    Cancel,
-    Fail(&'static str),
-}
-
-impl Script {
-    fn new(answers: impl IntoIterator<Item = Answer>) -> Script {
-        Script {
-            answers: answers.into_iter().collect(),
-            asked: Vec::new(),
-        }
-    }
-
-    fn next(&mut self, message: &str, default: Option<&str>) -> Answer {
-        self.asked
-            .push((message.to_owned(), default.map(str::to_owned)));
-        self.answers
-            .pop_front()
-            .unwrap_or_else(|| panic!("no answer left for {message:?}"))
-    }
-}
-
-impl Prompter for Script {
-    fn text(
-        &mut self,
-        message: &str,
-        default: Option<&str>,
-        _validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        match self.next(message, default) {
-            Answer::Text("") => Ok(default.unwrap_or("").to_owned()),
-            Answer::Text(text) => Ok(text.to_owned()),
-            Answer::Cancel => Err(Abort::Cancelled),
-            Answer::Fail(why) => Err(Abort::Failed(why.to_owned())),
-            Answer::Yes(_) => panic!("{message:?} is a text question"),
-        }
-    }
-
-    fn suggest(
-        &mut self,
-        message: &str,
-        _suggestions: &[String],
-        validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        self.text(message, None, validate)
-    }
-
-    fn confirm(&mut self, message: &str) -> Result<bool, Abort> {
-        match self.next(message, None) {
-            Answer::Yes(yes) => Ok(yes),
-            Answer::Cancel => Err(Abort::Cancelled),
-            Answer::Text(_) | Answer::Fail(_) => panic!("{message:?} is a confirm question"),
-        }
-    }
-}
+mod common;
+use common::script::{Answer, Script};
 
 struct Run {
     code: u8,

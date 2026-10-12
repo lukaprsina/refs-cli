@@ -1,10 +1,14 @@
 //! Helpers shared by the integration tests.
 
+#[allow(dead_code)] // not every test binary that shares this module scripts answers
+pub mod script;
+
 use std::path::Path;
 use std::process::Command;
 
 /// Run `git args` in `dir` with a fixed identity and no signing; panic with stderr on failure.
 /// Returns trimmed stdout.
+#[allow(dead_code)] // not every test binary that shares this module runs git
 pub fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .env_remove("GIT_DIR")

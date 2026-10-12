@@ -4,11 +4,14 @@
 
 use std::fs;
 
-use refs_cli::prompt::{Abort, Prompter};
+use refs_cli::prompt::Abort;
 use refs_cli::registry::pin::{Say, Stop, pin};
 use refs_cli::registry::{Ecosystem, Package};
 use refs_cli::source::fake::{FakeSource, Method};
 use tempfile::TempDir;
+
+mod common;
+use common::script::Script;
 
 const URL: &str = "https://github.com/o/serde";
 
@@ -47,48 +50,6 @@ impl Say for Lines {
     }
     fn warning(&mut self, line: String) {
         self.0.push(format!("warning: {line}"));
-    }
-}
-
-/// Answers: `yes` to every confirmation, `pick` to a text question. Records the questions.
-struct Answers {
-    yes: bool,
-    pick: &'static str,
-    asked: Vec<String>,
-}
-
-impl Answers {
-    fn new(yes: bool, pick: &'static str) -> Self {
-        Answers {
-            yes,
-            pick,
-            asked: Vec::new(),
-        }
-    }
-}
-
-impl Prompter for Answers {
-    fn text(
-        &mut self,
-        message: &str,
-        _: Option<&str>,
-        validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        self.asked.push(message.to_owned());
-        validate(self.pick).map_err(Abort::Failed)?;
-        Ok(self.pick.to_owned())
-    }
-    fn suggest(
-        &mut self,
-        _: &str,
-        _: &[String],
-        _: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        unreachable!("pin never suggests")
-    }
-    fn confirm(&mut self, message: &str) -> Result<bool, Abort> {
-        self.asked.push(message.to_owned());
-        Ok(self.yes)
     }
 }
 
@@ -157,7 +118,7 @@ fn a_person_is_asked_before_an_untagged_version_follows_the_default_branch() {
     let dir = project(None);
     let source = tagged(&[]);
     let mut say = Lines::default();
-    let mut yes = Answers::new(true, "");
+    let mut yes = Script::takes_defaults(true);
     let pinned = pin(
         &serde(),
         Some("1.0.150"),
@@ -169,14 +130,14 @@ fn a_person_is_asked_before_an_untagged_version_follows_the_default_branch() {
     );
     assert_eq!(pinned.unwrap(), None);
     assert_eq!(
-        yes.asked,
+        yes.questions(),
         [format!(
             "serde@1.0.150 is not tagged in {URL}. Follow the remote's default branch instead?"
         )]
     );
     assert!(say.0.is_empty());
 
-    let mut no = Answers::new(false, "");
+    let mut no = Script::takes_defaults(false);
     let pinned = pin(
         &serde(),
         Some("1.0.150"),
@@ -257,7 +218,7 @@ fn several_versions_are_asked_and_the_one_chosen_is_pinned() {
     let dir = project(Some(TWO_SERDES));
     let source = tagged(&["v1.0.100", "v1.0.200"]);
     let mut say = Lines::default();
-    let mut picks = Answers::new(true, "1.0.100");
+    let mut picks = Script::takes_defaults(true).picking("versions", Some("1.0.100"));
     let pinned = pin(
         &serde(),
         None,
@@ -269,7 +230,7 @@ fn several_versions_are_asked_and_the_one_chosen_is_pinned() {
     );
     assert_eq!(pinned.unwrap().as_deref(), Some("v1.0.100"));
     assert_eq!(
-        picks.asked,
+        picks.questions(),
         ["Cargo.lock has several versions of `serde`: 1.0.100, 1.0.200. Which one?"]
     );
 }

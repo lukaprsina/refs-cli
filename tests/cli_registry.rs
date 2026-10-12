@@ -5,12 +5,15 @@ use std::fs;
 use std::path::Path;
 
 use refs_cli::cli::{Outside, Terminal, run_on};
-use refs_cli::prompt::{Abort, Prompter};
+use refs_cli::prompt::Prompter;
 use refs_cli::registry::fake::FakeRegistry;
 use refs_cli::registry::{Ecosystem, Found};
 use refs_cli::source::fake::{Call, FakeSource, Method};
 use refs_cli::update::Unmanaged;
 use tempfile::TempDir;
+
+mod common;
+use common::script::Script;
 
 struct Run {
     code: u8,
@@ -31,33 +34,6 @@ fn found(url: &str, directory: Option<&str>) -> Found {
     Found {
         url: url.into(),
         directory: directory.map(Into::into),
-    }
-}
-
-/// Takes every default and says no to every yes-or-no question.
-struct Defaults;
-
-impl Prompter for Defaults {
-    fn text(
-        &mut self,
-        _message: &str,
-        default: Option<&str>,
-        _validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        Ok(default.unwrap_or("").to_owned())
-    }
-
-    fn suggest(
-        &mut self,
-        _message: &str,
-        _suggestions: &[String],
-        _validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        Ok(String::new())
-    }
-
-    fn confirm(&mut self, _message: &str) -> Result<bool, Abort> {
-        Ok(false)
     }
 }
 
@@ -281,7 +257,7 @@ fn the_equivalent_command_has_the_expanded_url_and_the_registrys_packages() {
         &registry,
         &FakeSource::new(),
         &["npm:foo-js", "--id", "foo"],
-        Some(&mut Defaults),
+        Some(&mut Script::takes_defaults(false)),
     );
 
     assert_eq!(run.code, 0, "{}", run.err);
@@ -305,39 +281,6 @@ fn foo_registry() -> FakeRegistry {
 fn tags_asked(source: &FakeSource) -> usize {
     let calls = source.calls();
     calls.iter().filter(|c| matches!(c, Call::Tags(_))).count()
-}
-
-/// Answers every yes-or-no question with `yes`, and remembers the questions.
-struct Confirms {
-    yes: bool,
-    asked: Vec<String>,
-    texts: Vec<String>,
-}
-
-impl Prompter for Confirms {
-    fn text(
-        &mut self,
-        message: &str,
-        default: Option<&str>,
-        validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        self.texts.push(message.to_owned());
-        Defaults.text(message, default, validate)
-    }
-
-    fn suggest(
-        &mut self,
-        message: &str,
-        suggestions: &[String],
-        validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        Defaults.suggest(message, suggestions, validate)
-    }
-
-    fn confirm(&mut self, message: &str) -> Result<bool, Abort> {
-        self.asked.push(message.to_owned());
-        Ok(self.yes)
-    }
 }
 
 #[test]
@@ -469,11 +412,7 @@ fn a_version_with_no_tag_without_a_terminal_warns_and_follows_head() {
 fn a_version_with_no_tag_asks_and_continues_on_yes() {
     let dir = project();
     let source = FakeSource::new();
-    let mut prompter = Confirms {
-        yes: true,
-        asked: vec![],
-        texts: vec![],
-    };
+    let mut prompter = Script::takes_defaults(true);
 
     let run = add_asking(
         dir.path(),
@@ -494,7 +433,7 @@ fn a_version_with_no_tag_asks_and_continues_on_yes() {
     assert_eq!(run.code, 0, "{}", run.err);
     assert!(
         prompter
-            .asked
+            .questions()
             .iter()
             .any(|q| q.contains("1.2.3") && q.contains("not tagged")),
         "{:?}",
@@ -503,9 +442,9 @@ fn a_version_with_no_tag_asks_and_continues_on_yes() {
     assert!(dir.path().join("refs.lock").exists());
     // The person just said to follow the default branch: the Ref is not asked again.
     assert!(
-        !prompter.texts.iter().any(|q| q.starts_with("Ref")),
+        !prompter.questions().iter().any(|q| q.starts_with("Ref")),
         "{:?}",
-        prompter.texts
+        prompter.questions()
     );
 }
 
@@ -513,11 +452,7 @@ fn a_version_with_no_tag_asks_and_continues_on_yes() {
 fn a_bare_registry_add_does_not_ask_for_the_ref() {
     let dir = project();
     let source = FakeSource::new();
-    let mut prompter = Confirms {
-        yes: true,
-        asked: vec![],
-        texts: vec![],
-    };
+    let mut prompter = Script::takes_defaults(true);
 
     let run = add_asking(
         dir.path(),
@@ -537,9 +472,9 @@ fn a_bare_registry_add_does_not_ask_for_the_ref() {
 
     assert_eq!(run.code, 0, "{}", run.err);
     assert!(
-        !prompter.texts.iter().any(|q| q.starts_with("Ref")),
+        !prompter.questions().iter().any(|q| q.starts_with("Ref")),
         "{:?}",
-        prompter.texts
+        prompter.questions()
     );
 }
 
@@ -547,11 +482,7 @@ fn a_bare_registry_add_does_not_ask_for_the_ref() {
 fn a_version_with_no_tag_cancels_on_no_and_changes_nothing() {
     let dir = project();
     let source = FakeSource::new();
-    let mut prompter = Confirms {
-        yes: false,
-        asked: vec![],
-        texts: vec![],
-    };
+    let mut prompter = Script::takes_defaults(false);
 
     let run = add_asking(
         dir.path(),
@@ -655,44 +586,6 @@ fn write(dir: &Path, name: &str, text: &str) {
     fs::write(dir.join(name), text).unwrap();
 }
 
-/// Answers the question about which version to use with `answer` (the default when `None`),
-/// remembering the question and the default it came with, and takes the default of every other.
-struct PicksVersion {
-    answer: Option<&'static str>,
-    asked: Vec<(String, Option<String>)>,
-}
-
-impl Prompter for PicksVersion {
-    fn text(
-        &mut self,
-        message: &str,
-        default: Option<&str>,
-        validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        if !message.contains("versions") {
-            return Defaults.text(message, default, validate);
-        }
-        self.asked
-            .push((message.to_owned(), default.map(str::to_owned)));
-        let answer = self.answer.or(default).unwrap_or("").to_owned();
-        validate(&answer).map_err(|_| Abort::Cancelled)?;
-        Ok(answer)
-    }
-
-    fn suggest(
-        &mut self,
-        message: &str,
-        suggestions: &[String],
-        validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        Defaults.suggest(message, suggestions, validate)
-    }
-
-    fn confirm(&mut self, message: &str) -> Result<bool, Abort> {
-        Defaults.confirm(message)
-    }
-}
-
 #[test]
 fn the_version_in_the_lockfile_picks_its_tag_and_the_output_says_so() {
     let dir = project();
@@ -786,10 +679,7 @@ fn of_several_versions_none_named_a_terminal_is_asked_with_the_highest_chosen() 
     write(dir.path(), "package-lock.json", NPM_LOCK_TWO);
     let source = FakeSource::new();
     source.set_tags(FOO, ["v1.2.3", "v1.10.0"]);
-    let mut prompter = PicksVersion {
-        answer: None,
-        asked: vec![],
-    };
+    let mut prompter = Script::takes_defaults(false).picking("versions", None);
 
     let run = add_asking(
         dir.path(),
@@ -809,13 +699,10 @@ fn of_several_versions_none_named_a_terminal_is_asked_with_the_highest_chosen() 
 
     assert_eq!(run.code, 0, "{}", run.err);
     // 1.10.0 is higher than 1.2.3, which a comparison of the text would get wrong.
-    assert_eq!(prompter.asked.len(), 1);
-    assert_eq!(prompter.asked[0].1.as_deref(), Some("1.10.0"));
-    assert!(
-        prompter.asked[0].0.contains("1.2.3"),
-        "{:?}",
-        prompter.asked
-    );
+    let asked = prompter.asked_about("versions");
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_eq!(asked[0].1.as_deref(), Some("1.10.0"));
+    assert!(asked[0].0.contains("1.2.3"), "{asked:?}");
     assert!(config_text(dir.path()).contains("ref = \"v1.10.0\""));
 }
 
@@ -825,10 +712,7 @@ fn the_answer_to_the_question_picks_the_tag() {
     write(dir.path(), "package-lock.json", NPM_LOCK_TWO);
     let source = FakeSource::new();
     source.set_tags(FOO, ["v1.2.3", "v1.10.0"]);
-    let mut prompter = PicksVersion {
-        answer: Some("1.2.3"),
-        asked: vec![],
-    };
+    let mut prompter = Script::takes_defaults(false).picking("versions", Some("1.2.3"));
 
     let run = add_asking(
         dir.path(),
@@ -854,10 +738,7 @@ fn the_answer_to_the_question_picks_the_tag() {
 fn an_answer_that_is_not_one_of_the_versions_is_refused_by_the_question() {
     let dir = project();
     write(dir.path(), "package-lock.json", NPM_LOCK_TWO);
-    let mut prompter = PicksVersion {
-        answer: Some("9.9.9"),
-        asked: vec![],
-    };
+    let mut prompter = Script::takes_defaults(false).picking("versions", Some("9.9.9"));
 
     let run = add_asking(
         dir.path(),

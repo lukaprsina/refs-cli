@@ -1,16 +1,18 @@
 //! Interactive `add` (ADR 0008) through `cli::run_on`, with the answers scripted. Config-only
 //! (`--no-sync`), so the `Source` factory panics if a command reaches for one.
 
-use std::collections::VecDeque;
 use std::fs;
 use std::path::Path;
 
 use refs_cli::cli::{Outside, Terminal, run_on};
 use refs_cli::diagnostic::SourceError;
-use refs_cli::prompt::{Abort, Prompter};
+use refs_cli::prompt::Prompter;
 use refs_cli::source::Source;
 use refs_cli::update::Unmanaged;
 use tempfile::TempDir;
+
+mod common;
+use common::script::{Answer, Script};
 
 const CONFIG: &str = r#"[groups.core]
 description = "The core"
@@ -18,80 +20,6 @@ description = "The core"
 [repos.solid]
 url = "https://github.com/solidjs/solid"
 "#;
-
-/// The questions asked, and the answers to give them in order. A text answer that fails
-/// validation is recorded as a rejection and the next answer is tried, as a terminal would
-/// re-ask. An empty text answer takes the default.
-struct Script {
-    answers: VecDeque<Answer>,
-    asked: Vec<String>,
-    rejected: Vec<String>,
-    suggested: Vec<Vec<String>>,
-}
-
-enum Answer {
-    Text(&'static str),
-    Yes(bool),
-    Cancel,
-}
-
-impl Script {
-    fn new(answers: impl IntoIterator<Item = Answer>) -> Script {
-        Script {
-            answers: answers.into_iter().collect(),
-            asked: Vec::new(),
-            rejected: Vec::new(),
-            suggested: Vec::new(),
-        }
-    }
-
-    fn next(&mut self, message: &str) -> Answer {
-        self.asked.push(message.to_owned());
-        self.answers
-            .pop_front()
-            .unwrap_or_else(|| panic!("no answer left for {message:?}"))
-    }
-}
-
-impl Prompter for Script {
-    fn text(
-        &mut self,
-        message: &str,
-        default: Option<&str>,
-        validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        loop {
-            let answer = match self.next(message) {
-                Answer::Text("") => default.unwrap_or("").to_owned(),
-                Answer::Text(text) => text.to_owned(),
-                Answer::Cancel => return Err(Abort::Cancelled),
-                _ => panic!("{message:?} is a text question"),
-            };
-            match validate(&answer) {
-                Ok(()) => return Ok(answer),
-                Err(why) => self.rejected.push(why),
-            }
-        }
-    }
-
-    fn suggest(
-        &mut self,
-        message: &str,
-        suggestions: &[String],
-        validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort> {
-        self.suggested.push(suggestions.to_vec());
-        self.text(message, None, validate)
-    }
-
-    fn confirm(&mut self, message: &str) -> Result<bool, Abort> {
-        match self.next(message) {
-            Answer::Yes(yes) => Ok(yes),
-            Answer::Cancel => Err(Abort::Cancelled),
-            _ => panic!("{message:?} is a confirm question"),
-        }
-    }
-}
 
 struct Run {
     code: u8,
@@ -194,7 +122,7 @@ fn a_value_given_as_a_flag_is_not_asked_again() {
 
     assert_eq!(run.code, 0, "{}", run.err);
     assert_eq!(
-        script.asked,
+        script.questions(),
         ["Id", "Link to a group?", "Customize paths and start?"]
     );
     assert!(config_text(dir.path()).contains("ref = \"v2\""));
@@ -223,7 +151,7 @@ fn packages_already_given_are_left_out_of_the_confirm() {
 
     assert_eq!(run.code, 0, "{}", run.err);
     assert_eq!(
-        script.asked,
+        script.questions(),
         ["Id", "Link to a group?", "Customize paths and start?"]
     );
 }
