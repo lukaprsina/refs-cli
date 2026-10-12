@@ -231,20 +231,7 @@ impl<'a> Target<'a> {
 pub fn disable(text: &str, target: Target) -> Result<String, EditError> {
     check_exists(text, target)?;
     let doc = parse(text)?;
-    let table = table_of(&doc, target)?;
-    let mut out = text.to_owned();
-    if let Some(span) = table.get("enabled").and_then(Item::span) {
-        out.replace_range(span, "false");
-    } else {
-        let at = line_end(text, body_end(table));
-        let eol = line_ending::of(text);
-        let line = if text[..at].ends_with('\n') {
-            format!("enabled = false{eol}")
-        } else {
-            format!("{eol}enabled = false")
-        };
-        out.insert_str(at, &line);
-    }
+    let out = set_key(text, table_of(&doc, target)?, "enabled", "false");
     config::parse(&out)?;
     Ok(out)
 }
@@ -254,25 +241,36 @@ pub fn set_packages(text: &str, id: &str, names: &[String]) -> Result<String, Ed
     let target = Target::Repo(id);
     check_exists(text, target)?;
     let doc = parse(text)?;
-    let table = table_of(&doc, target)?;
     let array = value(names.iter().collect::<Array>())
         .into_value()
         .expect("an array is a value");
+    let out = set_key(
+        text,
+        table_of(&doc, target)?,
+        "packages",
+        &array.to_string(),
+    );
+    config::parse(&out)?;
+    Ok(out)
+}
+
+/// `text` with `key = value` in `table`: the value of the existing key replaced, or the key on
+/// a new line after the table's last one.
+fn set_key(text: &str, table: &Table, key: &str, value: &str) -> String {
     let mut out = text.to_owned();
-    if let Some(span) = table.get("packages").and_then(Item::span) {
-        out.replace_range(span, &array.to_string());
+    if let Some(span) = table.get(key).and_then(Item::span) {
+        out.replace_range(span, value);
     } else {
         let at = line_end(text, body_end(table));
         let eol = line_ending::of(text);
-        let line = format!("packages = {array}");
+        let line = format!("{key} = {value}");
         if text[..at].ends_with('\n') {
             out.insert_str(at, &format!("{line}{eol}"));
         } else {
             out.insert_str(at, &format!("{eol}{line}"));
         }
     }
-    config::parse(&out)?;
-    Ok(out)
+    out
 }
 
 /// Remove the `enabled` key of the repo or group (spec §6.4: absent means enabled).
