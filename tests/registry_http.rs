@@ -1,7 +1,7 @@
-//! `Http` without a network: the URL it asks for (`url`), and what each answer becomes
+//! `Http` without a network: the URL it asks for (`request_url`), and what each answer becomes
 //! (`interpret`). The GET itself (User-Agent, timeout) is checked by hand.
 
-use refs_cli::registry::{Ecosystem, Package, RegistryError, interpret, url};
+use refs_cli::registry::{Ecosystem, Package, RegistryError, interpret, request_url};
 
 const NPM_BODY: &str =
     r#"{ "repository": { "url": "git+https://github.com/o/r.git", "directory": "pkg" } }"#;
@@ -12,7 +12,7 @@ fn answer(ecosystem: Ecosystem, status: u16, body: &str) -> Result<String, Regis
 }
 
 fn ask(ecosystem: Ecosystem, name: &str) -> String {
-    url(&Package::new(ecosystem, name))
+    request_url(&Package::new(ecosystem, name))
 }
 
 #[test]

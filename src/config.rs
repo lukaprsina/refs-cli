@@ -265,7 +265,7 @@ impl Validator<'_> {
     }
 }
 
-/// A reason and an optional help line, for `ConfigError::BadUrl`.
+/// A reason and an optional help line, for `ConfigProblem::BadUrl`.
 pub(crate) type UrlProblem = (&'static str, Option<&'static str>);
 
 const NO_PASSWORD: UrlProblem = (

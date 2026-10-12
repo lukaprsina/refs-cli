@@ -13,7 +13,7 @@ mod url;
 pub mod used;
 
 mod http;
-pub use http::{Http, interpret, url};
+pub use http::{Http, interpret, request_url};
 
 use crate::edit::AddRepo;
 

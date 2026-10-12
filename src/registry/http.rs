@@ -19,12 +19,12 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Asks npm, crates.io and PyPI over HTTPS. One lookup per `add`, far under crates.io's rate
 /// limit of a request per second, so there is no retry. Tests never touch the network: they
-/// check `url` and `interpret`, and the GET itself is the part to run by hand after a change.
+/// check `request_url` and `interpret`, and the GET itself is the part to run by hand after a change.
 pub struct Http;
 
 impl Registry for Http {
     fn lookup(&self, package: &Package) -> Result<Found, RegistryError> {
-        let (status, body) = get(&url(package)).map_err(|why| RegistryError::Request {
+        let (status, body) = get(&request_url(package)).map_err(|why| RegistryError::Request {
             package: package.clone(),
             why,
         })?;
@@ -71,7 +71,7 @@ pub fn interpret(package: &Package, status: u16, body: &str) -> Result<Found, Re
 type Adapter = fn(&str) -> Answer;
 
 /// The URL of the document that holds the repository: the cheapest one the registry serves.
-pub fn url(package: &Package) -> String {
+pub fn request_url(package: &Package) -> String {
     let name = encode(&package.name);
     match package.ecosystem {
         Ecosystem::Npm => format!("https://registry.npmjs.org/{name}/latest"),
