@@ -81,6 +81,10 @@ fn npm_cleans_each_spelling_of_the_url() {
             "https://gitlab.com/group/sub/r.git",
             "https://gitlab.com/group/sub/r",
         ),
+        (
+            "https://codeberg.org/o/r/src/branch/main",
+            "https://codeberg.org/o/r",
+        ),
     ] {
         let body = npm_with(&format!(r#"{{ "url": "{raw}" }}"#));
         assert_eq!(npm::found(&body), Ok(found(clean, None)), "{raw}");
@@ -92,6 +96,8 @@ fn npm_accepts_a_string_repository_in_each_shorthand() {
     for (raw, clean) in [
         ("npm/example", "https://github.com/npm/example"),
         ("github:npm/example", "https://github.com/npm/example"),
+        ("gh:npm/example", "https://github.com/npm/example"),
+        ("gl:user/repo", "https://gitlab.com/user/repo"),
         ("gitlab:user/repo", "https://gitlab.com/user/repo"),
         ("bitbucket:user/repo", "https://bitbucket.org/user/repo"),
         ("https://github.com/o/r.git", "https://github.com/o/r"),
