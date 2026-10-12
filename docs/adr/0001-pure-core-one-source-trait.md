@@ -6,5 +6,5 @@ Config parsing, the active set, locking, Entry building, rendering, Agent-file s
 
 - `add` lists a remote's tags to turn a version into a Version tag. It takes the `Source` as an `Option`: `--no-sync` has none, and so lists no tags. It is not a second kind of seam to the project's data.
 
-- The Lock entry carries a `source` tag (only `git` exists); only `source` code interprets the pin.
+- Only `source` code interprets the pin.
 - `GitSource` keeps a few real-git contract tests, because those pin down facts about git that a fake would only restate (no fetch refspec in bare clones, per-worktree sparse config, blobless fetch). Pure parts of it (ref preference, URL normalisation, `ls-remote` parsing) are tested as data.
