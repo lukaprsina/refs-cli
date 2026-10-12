@@ -21,7 +21,7 @@ use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::prompt::{self, Decided, Packages, Prompter};
-use crate::registry::pin::{Choice, Decision, Read, Why, pin, pin_version};
+use crate::registry::pin::{Say, Stop, pin};
 use crate::registry::{self, Registry, Requested};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
@@ -499,11 +499,8 @@ fn prepare_add(
     )
 }
 
-/// Set the `ref` of `repo` to the tag that `requested` was released as (`registry::pin`), and
-/// say what was read and decided. Several versions with nothing to choose between them are
-/// asked about, or refused without a terminal. A version with no tag is never pinned silently:
-/// with a prompter the person is asked whether to follow the remote's default branch instead,
-/// otherwise it is a warning and the repo follows it. Never a guess.
+/// Set the `ref` of `repo` to the tag that `requested` was released as (`registry::pin`), which
+/// says what it read and decided, and asks the questions it needs.
 fn pin_requested(
     repo: &mut AddRepo,
     requested: &Requested,
@@ -512,134 +509,30 @@ fn pin_requested(
     prompter: Option<&mut (dyn Prompter + '_)>,
     console: &mut Console,
 ) -> Result<(), u8> {
-    let package = &requested.package;
-    let name = &package.name;
     let version = requested.version.as_deref();
-    let pinned = match pin(package, version, &repo.url, root, source) {
-        Ok(pinned) => pinned,
-        Err(failed) => {
-            if let Some(read) = &failed.read {
-                say_read(read, name, root, console);
-            }
-            return Err(fail(failed.error, console));
-        }
-    };
-    if let Some(read) = &pinned.read {
-        say_read(read, name, root, console);
-    }
-    let mut prompter = prompter;
-    let choice = match pinned.decision {
-        Decision::Settled(choice) => choice,
-        Decision::Several { file, versions } => {
-            let file = file_name(&file, root);
-            let version = choose_version(&versions, &file, name, prompter.as_deref_mut(), console)?;
-            pin_version(package, &version, &repo.url, source).map_err(|e| fail(e, console))?
-        }
-    };
-    match choice {
-        Choice::Tag { version, tag } => {
-            console.status(format_args!("pinned `{name}@{version}` to the tag `{tag}`"));
-            repo.git_ref = Some(tag);
+    let package = &requested.package;
+    match pin(package, version, &repo.url, root, source, prompter, console) {
+        Ok(tag) => {
+            repo.git_ref = tag;
             Ok(())
         }
-        Choice::DefaultBranch(why) => {
-            follow_default_branch(&why, name, &repo.url, root, prompter, console)
+        Err(Stop::Source(e)) => Err(fail(e, console)),
+        Err(Stop::Asked(abort)) => Err(aborted(abort, console)),
+        Err(Stop::Refused(why)) => {
+            console.problem(format_args!("error: {why}"));
+            Err(EXIT_ERROR)
         }
     }
 }
 
-/// Say which Package lockfile was read, the others that were not, and the version it has.
-fn say_read(read: &Read, name: &str, root: &Path, console: &mut Console) {
-    let file = file_name(&read.file, root);
-    for ignored in &read.ignored {
-        console.status(format_args!(
-            "{} is also here and was not read; {file} was",
-            file_name(ignored, root)
-        ));
+impl Say for Console<'_> {
+    fn status(&mut self, line: String) {
+        Console::status(self, line);
     }
-    if let Some(version) = &read.version {
-        console.status(format_args!("`{name}` is {version} in {file}"));
+
+    fn warning(&mut self, line: String) {
+        self.problem(format_args!("warning: {line}"));
     }
-}
-
-/// Which of `versions` to use: asked, with the highest as the default, or refused without a
-/// terminal.
-fn choose_version(
-    versions: &[String],
-    file: &str,
-    name: &str,
-    prompter: Option<&mut (dyn Prompter + '_)>,
-    console: &mut Console,
-) -> Result<String, u8> {
-    let list = versions.join(", ");
-    let Some(prompter) = prompter else {
-        console.problem(format_args!(
-            "error: {file} has several versions of `{name}` ({list}), and none is the \
-             one the project asks for; give one as `{name}@version`"
-        ));
-        return Err(EXIT_ERROR);
-    };
-    let one_of_them = |answer: &str| match versions.iter().any(|v| v == answer) {
-        true => Ok(()),
-        false => Err(format!("one of {list}")),
-    };
-    let message = format!("{file} has several versions of `{name}`: {list}. Which one?");
-    prompter
-        .text(&message, versions.last().map(String::as_str), &one_of_them)
-        .map_err(|abort| aborted(abort, console))
-}
-
-/// Say why the repo follows the remote's default branch, and with a prompter and a version
-/// that has no tag, ask whether that is wanted (no cancels the add).
-fn follow_default_branch(
-    why: &Why,
-    name: &str,
-    url: &str,
-    root: &Path,
-    prompter: Option<&mut (dyn Prompter + '_)>,
-    console: &mut Console,
-) -> Result<(), u8> {
-    let follows = "the repo follows the remote's default branch";
-    match why {
-        Why::NoLockfile => console.status(format_args!(
-            "no Package lockfile found for `{name}`; {follows}"
-        )),
-        Why::Unreadable { file, why } => console.problem(format_args!(
-            "warning: cannot read {}: {why}; {follows}",
-            file_name(file, root)
-        )),
-        Why::NotInLockfile { file } => console.status(format_args!(
-            "`{name}` is not in {}; {follows}",
-            file_name(file, root)
-        )),
-        Why::Unlisted { version } => console.problem(format_args!(
-            "warning: `{name}@{version}` is not pinned to a tag, as `--no-sync` lists no tags; \
-             {follows}"
-        )),
-        Why::Untagged { version } => {
-            let untagged = format!("{name}@{version} is not tagged in {url}");
-            let Some(prompter) = prompter else {
-                console.problem(format_args!("warning: {untagged}; {follows}"));
-                return Ok(());
-            };
-            return match prompter.confirm(&format!(
-                "{untagged}. Follow the remote's default branch instead?"
-            )) {
-                Ok(true) => Ok(()),
-                Ok(false) => Err(aborted(prompt::Abort::Cancelled, console)),
-                Err(abort) => Err(aborted(abort, console)),
-            };
-        }
-    }
-    Ok(())
-}
-
-/// `file` as it is named in a message: relative to the project `root` if it is below it.
-fn file_name(file: &Path, root: &Path) -> String {
-    file.strip_prefix(root)
-        .unwrap_or(file)
-        .display()
-        .to_string()
 }
 
 /// Say why a question ended without an answer, and give the exit code.

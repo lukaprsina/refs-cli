@@ -1,158 +1,169 @@
 //! What `add` pins a registry package to (spec §7.2): the version given or the one a Package
-//! lockfile says the project uses, and the Version tag it was released as. It decides; `cli`
-//! words the result and asks the two questions it leaves open.
+//! lockfile says the project uses, and the Version tag it was released as. It decides, says what
+//! it read and decided as it goes (`Say`, so a line comes before the question it leads to), and
+//! asks the two questions that can come up through the `Prompter`: which of several versions,
+//! and whether a version with no tag may follow the default branch.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::Package;
 use super::tag::tag_for;
 use super::used::{self, Lookup, Pick};
 use crate::diagnostic::SourceError;
+use crate::prompt::{Abort, Prompter};
 use crate::source::Source;
 
-/// The Package lockfile that was read.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Read {
-    pub file: PathBuf,
-    /// Package lockfiles of the same ecosystem in the same directory that were not read.
-    pub ignored: Vec<PathBuf>,
-    /// The version the project uses; `None` when the file has no such package, or several.
-    pub version: Option<String>,
+/// Where `pin` says what it read and decided.
+pub trait Say {
+    /// What was read or decided.
+    fn status(&mut self, line: String);
+    /// Something the person should see even when the run is quiet.
+    fn warning(&mut self, line: String);
 }
 
-/// Why the repo follows the remote's default branch.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Why {
-    /// No Package lockfile of the ecosystem was found.
-    NoLockfile,
-    /// The nearest Package lockfile could not be read.
-    Unreadable { file: PathBuf, why: String },
-    /// The Package lockfile `file` does not have the package.
-    NotInLockfile { file: PathBuf },
-    /// `version` has no tag in the remote.
-    Untagged { version: String },
-    /// `version` could not be looked up, as no tags can be listed.
-    Unlisted { version: String },
+/// Why `pin` could not say what to pin to.
+#[derive(Debug)]
+pub enum Stop {
+    /// The tags of the remote could not be listed.
+    Source(SourceError),
+    /// A question ended without an answer.
+    Asked(Abort),
+    /// A question had to be asked and there is no one to ask: the message says what to do.
+    Refused(String),
 }
 
-/// What a version is pinned to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Choice {
-    /// Pin to `tag`, which `version` was released as.
-    Tag { version: String, tag: String },
-    /// Follow the remote's default branch.
-    DefaultBranch(Why),
-}
-
-/// What `pin` came to: one version settled, or several left to choose from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Decision {
-    Settled(Choice),
-    /// The Package lockfile `file` has several versions, lowest first, and nothing to choose
-    /// between them: call `pin_version` with the one chosen.
-    Several {
-        file: PathBuf,
-        versions: Vec<String>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Pinned {
-    /// The Package lockfile that was read, if one was.
-    pub read: Option<Read>,
-    pub decision: Decision,
-}
-
-/// The tags of the remote could not be listed. `read` is what was read from the Package
-/// lockfile before that, for saying so before the error.
-#[derive(Debug, Clone)]
-pub struct Failed {
-    pub read: Option<Read>,
-    pub error: SourceError,
-}
-
-impl Failed {
-    fn new(read: Option<Read>, error: SourceError) -> Box<Self> {
-        Box::new(Failed { read, error })
-    }
-}
-
-/// What to pin `package`, in the repo at `url`, to. With a `version` that is the one used;
-/// without, the project at `root` is asked through its Package lockfile (`used::find`, then
-/// `Found::pick`). The tag for the version is
-/// one of the `source`'s tags (`tag_for`); `--no-sync` has no `source`.
+/// The tag that `package`, in the repo at `url`, is pinned to, or `None` to follow the remote's
+/// default branch. With a `version` that is the one used; without, the project at `root` is
+/// asked through its Package lockfile (`used::find`, then `Found::pick`). The tag for the
+/// version is one of the `source`'s tags (`tag_for`); `--no-sync` has no `source`. A version
+/// with no tag is never pinned silently: with a `prompter` the person is asked whether to follow
+/// the default branch instead, otherwise it is a warning.
 pub fn pin(
     package: &Package,
     version: Option<&str>,
     url: &str,
     root: &Path,
     source: Option<&dyn Source>,
-) -> Result<Pinned, Box<Failed>> {
-    let settled = |read, choice| Pinned {
-        read,
-        decision: Decision::Settled(choice),
+    prompter: Option<&mut (dyn Prompter + '_)>,
+    say: &mut dyn Say,
+) -> Result<Option<String>, Stop> {
+    let mut pinning = Pinning {
+        package,
+        url,
+        root,
+        source,
+        prompter,
+        say,
     };
-    if let Some(version) = version {
-        let choice = pin_version(package, version, url, source)
-            .map_err(|error| Failed { read: None, error })?;
-        return Ok(settled(None, choice));
-    }
-    let found = match used::find(package, root) {
-        Lookup::Found(found) => found,
-        Lookup::Missing => return Ok(settled(None, Choice::DefaultBranch(Why::NoLockfile))),
-        Lookup::Unreadable { file, why } => {
-            let why = Why::Unreadable { file, why };
-            return Ok(settled(None, Choice::DefaultBranch(why)));
-        }
-    };
-    let mut read = Read {
-        file: found.file.clone(),
-        ignored: found.ignored.clone(),
-        version: None,
-    };
-    match found.pick() {
-        Pick::Nothing => {
-            let why = Why::NotInLockfile { file: found.file };
-            Ok(settled(Some(read), Choice::DefaultBranch(why)))
-        }
-        Pick::Several(versions) => {
-            let versions = versions.into_iter().map(str::to_owned).collect();
-            Ok(Pinned {
-                read: Some(read),
-                decision: Decision::Several {
-                    file: found.file,
-                    versions,
-                },
-            })
-        }
-        Pick::One(version) => {
-            read.version = Some(version.to_owned());
-            match pin_version(package, version, url, source) {
-                Ok(choice) => Ok(settled(Some(read), choice)),
-                Err(error) => Err(Failed::new(Some(read), error)),
-            }
-        }
+    match version {
+        Some(version) => pinning.settle(version),
+        None => pinning.read_lockfile(),
     }
 }
 
-/// What to pin `version` of `package`, in the repo at `url`, to: the tag it was released as, if
-/// `source` lists one.
-pub fn pin_version(
-    package: &Package,
-    version: &str,
-    url: &str,
-    source: Option<&dyn Source>,
-) -> Result<Choice, SourceError> {
-    let version = version.to_owned();
-    let Some(source) = source else {
-        return Ok(Choice::DefaultBranch(Why::Unlisted { version }));
-    };
-    let tags = source.tags(url)?;
-    Ok(match tag_for(&package.name, &version, &tags) {
-        Some(tag) => Choice::Tag {
-            tag: tag.to_owned(),
-            version,
-        },
-        None => Choice::DefaultBranch(Why::Untagged { version }),
-    })
+const FOLLOWS: &str = "the repo follows the remote's default branch";
+
+struct Pinning<'a, 'p> {
+    package: &'a Package,
+    url: &'a str,
+    root: &'a Path,
+    source: Option<&'a dyn Source>,
+    prompter: Option<&'a mut (dyn Prompter + 'p)>,
+    say: &'a mut dyn Say,
+}
+
+impl Pinning<'_, '_> {
+    /// `file` as it is named in a message: relative to the project if it is below it.
+    fn name(&self, file: &Path) -> String {
+        let file = file.strip_prefix(self.root).unwrap_or(file);
+        file.display().to_string()
+    }
+
+    fn read_lockfile(&mut self) -> Result<Option<String>, Stop> {
+        let name = &self.package.name;
+        let found = match used::find(self.package, self.root) {
+            Lookup::Found(found) => found,
+            Lookup::Missing => {
+                self.say
+                    .status(format!("no Package lockfile found for `{name}`; {FOLLOWS}"));
+                return Ok(None);
+            }
+            Lookup::Unreadable { file, why } => {
+                let file = self.name(&file);
+                self.say
+                    .warning(format!("cannot read {file}: {why}; {FOLLOWS}"));
+                return Ok(None);
+            }
+        };
+        let file = self.name(&found.file);
+        for ignored in &found.ignored {
+            let ignored = self.name(ignored);
+            self.say.status(format!(
+                "{ignored} is also here and was not read; {file} was"
+            ));
+        }
+        match found.pick() {
+            Pick::Nothing => {
+                self.say
+                    .status(format!("`{name}` is not in {file}; {FOLLOWS}"));
+                Ok(None)
+            }
+            Pick::One(version) => {
+                self.say.status(format!("`{name}` is {version} in {file}"));
+                self.settle(version)
+            }
+            Pick::Several(versions) => {
+                let version = self.choose(&versions, &file)?;
+                self.settle(&version)
+            }
+        }
+    }
+
+    /// Which of `versions` to use: asked, with the highest as the default, or refused without
+    /// someone to ask.
+    fn choose(&mut self, versions: &[&str], file: &str) -> Result<String, Stop> {
+        let name = &self.package.name;
+        let list = versions.join(", ");
+        let Some(prompter) = self.prompter.as_deref_mut() else {
+            return Err(Stop::Refused(format!(
+                "{file} has several versions of `{name}` ({list}), and none is the one the \
+                 project asks for; give one as `{name}@version`"
+            )));
+        };
+        let one_of_them = |answer: &str| match versions.contains(&answer) {
+            true => Ok(()),
+            false => Err(format!("one of {list}")),
+        };
+        let message = format!("{file} has several versions of `{name}`: {list}. Which one?");
+        prompter
+            .text(&message, versions.last().copied(), &one_of_them)
+            .map_err(Stop::Asked)
+    }
+
+    /// The tag `version` was released as, if the `source` lists one.
+    fn settle(&mut self, version: &str) -> Result<Option<String>, Stop> {
+        let name = &self.package.name;
+        let Some(source) = self.source else {
+            self.say.warning(format!(
+                "`{name}@{version}` is not pinned to a tag, as `--no-sync` lists no tags; {FOLLOWS}"
+            ));
+            return Ok(None);
+        };
+        let tags = source.tags(self.url).map_err(Stop::Source)?;
+        if let Some(tag) = tag_for(name, version, &tags) {
+            self.say
+                .status(format!("pinned `{name}@{version}` to the tag `{tag}`"));
+            return Ok(Some(tag.to_owned()));
+        }
+        let untagged = format!("{name}@{version} is not tagged in {}", self.url);
+        let Some(prompter) = self.prompter.as_deref_mut() else {
+            self.say.warning(format!("{untagged}; {FOLLOWS}"));
+            return Ok(None);
+        };
+        let question = format!("{untagged}. Follow the remote's default branch instead?");
+        match prompter.confirm(&question).map_err(Stop::Asked)? {
+            true => Ok(None),
+            false => Err(Stop::Asked(Abort::Cancelled)),
+        }
+    }
 }
