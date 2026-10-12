@@ -1,4 +1,29 @@
-use refs_cli::edit::{AddRepo, Edit, Target, add, disable, enable, remove, set_packages};
+use refs_cli::diagnostic::EditError;
+use refs_cli::edit::{AddRepo, Edit, Target};
+
+fn text_of(edit: Edit, text: &str) -> Result<String, EditError> {
+    edit.apply(text).map(|applied| applied.text)
+}
+
+fn add(text: &str, req: &AddRepo) -> Result<String, EditError> {
+    text_of(Edit::Add(req), text)
+}
+
+fn remove(text: &str, id: &str) -> Result<String, EditError> {
+    text_of(Edit::Remove(id), text)
+}
+
+fn disable(text: &str, target: Target) -> Result<String, EditError> {
+    text_of(Edit::Disable(target), text)
+}
+
+fn enable(text: &str, target: Target) -> Result<String, EditError> {
+    text_of(Edit::Enable(target), text)
+}
+
+fn set_packages(text: &str, id: &str, names: &[String]) -> Result<String, EditError> {
+    text_of(Edit::SetPackages { id, names }, text)
+}
 
 const CONFIG: &str = r#"# My references.
 

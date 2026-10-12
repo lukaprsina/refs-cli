@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::active::{ActiveSet, active};
 use crate::agent_file;
-use crate::config::{self, Config};
+use crate::config::Config;
 use crate::diagnostic::Note;
 use crate::edit::Edit;
 use crate::exclude;
@@ -223,8 +223,8 @@ fn rejected(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
     Report::failed(error).with_hint(Hint::ConfigUnchanged)
 }
 
-/// An edit applied to the text of `<root>/refs.toml` and parsed, but not yet written. The
-/// edited text is parsed once, here, into the config a sync runs against.
+/// An edit applied to the text of `<root>/refs.toml` and parsed, but not yet written: the
+/// config a sync runs against.
 struct Applied {
     before: String,
     after: String,
@@ -236,11 +236,10 @@ impl Applied {
     fn read(root: &Path, edit: &Edit) -> Result<Applied, Report> {
         let before = project::read_config(root).map_err(rejected)?;
         let applied = edit.apply(&before).map_err(rejected)?;
-        let config = config::parse(&applied.text).map_err(rejected)?;
         Ok(Applied {
             before,
             after: applied.text,
-            config,
+            config: applied.config,
             group_created: applied.group_created,
         })
     }

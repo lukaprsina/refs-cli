@@ -1,8 +1,8 @@
 //! Comment-preserving edits of `refs.toml` (spec §6.3): text in, text out.
 //!
-//! Each edit parses the text it was given, changes it with `toml_edit`, and validates the
-//! result with `config::parse` before returning it, so a rejected edit has produced no text
-//! to write.
+//! `Edit::apply` is the interface: it parses the text it was given, changes it with `toml_edit`,
+//! and validates the result with `config::parse` before returning it, so a rejected edit has
+//! produced no text to write.
 
 use toml_edit::{Array, Document, DocumentMut, Item, Table, value};
 
@@ -60,43 +60,37 @@ pub enum Edit<'a> {
     SetPackages { id: &'a str, names: &'a [String] },
 }
 
-/// What an edit gave: the new text, and the Group it had to create for it.
+/// What an edit gave: the new text, that text parsed, and the Group it had to create for it.
 #[derive(Debug)]
 pub struct Applied {
     pub text: String,
+    pub config: config::Config,
     pub group_created: Option<String>,
-}
-
-impl Applied {
-    fn of(text: String) -> Applied {
-        Applied {
-            text,
-            group_created: None,
-        }
-    }
 }
 
 impl Edit<'_> {
     /// The text this edit gives `text`.
     pub fn apply(&self, text: &str) -> Result<Applied, EditError> {
-        match self {
-            Edit::Add(req) => add_creating_group(text, req),
-            Edit::Remove(id) => remove(text, id).map(Applied::of),
-            Edit::Disable(target) => disable(text, *target).map(Applied::of),
-            Edit::Enable(target) => enable(text, *target).map(Applied::of),
-            Edit::SetPackages { id, names } => set_packages(text, id, names).map(Applied::of),
-        }
+        let (text, group_created) = match self {
+            Edit::Add(req) => add(text, req)?,
+            Edit::Remove(id) => (remove(text, id)?, None),
+            Edit::Disable(target) => (disable(text, *target)?, None),
+            Edit::Enable(target) => (enable(text, *target)?, None),
+            Edit::SetPackages { id, names } => (set_packages(text, id, names)?, None),
+        };
+        let config = config::parse(&text)?;
+        Ok(Applied {
+            text,
+            config,
+            group_created,
+        })
     }
 }
 
 /// Append a repo table to the end of `text`, after a blank line. The text before it is
 /// left as it was, so the edit cannot disturb it. A `--group` that is not in the config is
-/// created, bare, just before the repo.
-pub fn add(text: &str, req: &AddRepo) -> Result<String, EditError> {
-    Ok(add_creating_group(text, req)?.text)
-}
-
-fn add_creating_group(text: &str, req: &AddRepo) -> Result<Applied, EditError> {
+/// created, bare, just before the repo, and returned.
+fn add(text: &str, req: &AddRepo) -> Result<(String, Option<String>), EditError> {
     let config = open(text)?;
     let id = req.resolved_id();
     if config.repos.contains_key(id.as_str()) {
@@ -137,11 +131,7 @@ fn add_creating_group(text: &str, req: &AddRepo) -> Result<Applied, EditError> {
     if !text.is_empty() && !text.ends_with('\n') {
         out.pop();
     }
-    config::parse(&out)?;
-    Ok(Applied {
-        text: out,
-        group_created,
-    })
+    Ok((out, group_created))
 }
 
 /// The keys of a repo table for `req`.
@@ -181,7 +171,7 @@ fn table_text(parent: &str, id: &str, table: Table) -> String {
 
 /// Drop the repo `id` with the comment lines directly above it, and its group when it was
 /// the group's last repo (disabled repos count) and the group has no `description`.
-pub fn remove(text: &str, id: &str) -> Result<String, EditError> {
+fn remove(text: &str, id: &str) -> Result<String, EditError> {
     let config = open(text)?;
     let repo = config
         .repos
@@ -200,7 +190,6 @@ pub fn remove(text: &str, id: &str) -> Result<String, EditError> {
             out = cut_table(&out, Target::Group(group))?;
         }
     }
-    config::parse(&out)?;
     Ok(out)
 }
 
@@ -228,30 +217,26 @@ impl<'a> Target<'a> {
 }
 
 /// Set `enabled = false` on the repo or group, or on its existing `enabled` key.
-pub fn disable(text: &str, target: Target) -> Result<String, EditError> {
+fn disable(text: &str, target: Target) -> Result<String, EditError> {
     check_exists(text, target)?;
     let doc = parse(text)?;
-    let out = set_key(text, table_of(&doc, target)?, "enabled", "false");
-    config::parse(&out)?;
-    Ok(out)
+    Ok(set_key(text, table_of(&doc, target)?, "enabled", "false"))
 }
 
 /// Give the repo `id` the `packages` `names`, after its last key.
-pub fn set_packages(text: &str, id: &str, names: &[String]) -> Result<String, EditError> {
+fn set_packages(text: &str, id: &str, names: &[String]) -> Result<String, EditError> {
     let target = Target::Repo(id);
     check_exists(text, target)?;
     let doc = parse(text)?;
     let array = value(names.iter().collect::<Array>())
         .into_value()
         .expect("an array is a value");
-    let out = set_key(
+    Ok(set_key(
         text,
         table_of(&doc, target)?,
         "packages",
         &array.to_string(),
-    );
-    config::parse(&out)?;
-    Ok(out)
+    ))
 }
 
 /// `text` with `key = value` in `table`: the value of the existing key replaced, or the key on
@@ -274,7 +259,7 @@ fn set_key(text: &str, table: &Table, key: &str, value: &str) -> String {
 }
 
 /// Remove the `enabled` key of the repo or group (spec §6.4: absent means enabled).
-pub fn enable(text: &str, target: Target) -> Result<String, EditError> {
+fn enable(text: &str, target: Target) -> Result<String, EditError> {
     check_exists(text, target)?;
     let doc = parse(text)?;
     let table = table_of(&doc, target)?;
@@ -288,7 +273,6 @@ pub fn enable(text: &str, target: Target) -> Result<String, EditError> {
     let start = text[..key_start].rfind('\n').map_or(0, |i| i + 1);
     let end = line_end(text, span.end);
     let out = cut(text, start, end);
-    config::parse(&out)?;
     Ok(out)
 }
 
