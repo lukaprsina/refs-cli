@@ -8,7 +8,7 @@ A change that alters behaviour updates, in the same change, every doc that descr
 
 ## Where decisions live
 
-`plan` decides and returns data; `sync` runs typed actions through `Source` and reports; `cli` parses arguments and prints a typed result (ADR 0006). A `match` on policy in `sync` or `cli` belongs in `plan`. The follow-up `Hint` is not policy: it records where a run stopped, so `sync` sets it there. Completing a request (prompting for missing flags, refusing an empty URL, ADR 0008) is input handling in `cli` and `prompt`, not policy for `plan`. So is asking, or warning, about an input that maps to nothing (a version with no tag, spec §7.2).
+`plan` decides and returns data; `sync` runs typed actions through `Source` and reports; `cli` parses arguments and prints a typed result (ADR 0006). A `match` on policy in `sync` or `cli` belongs in `plan`. The follow-up `Hint` is not policy: it records where a run stopped, so `sync` sets it there. Completing a request (prompting for missing flags, refusing an empty URL, ADR 0008) is input handling in `cli` and `prompt`, not policy for `plan`. So is asking, or warning, about an input that maps to nothing (a version with no tag, spec §7.2): `registry::pin` does it, called from `cli`, with its questions through `Prompter` and its lines through `Say`.
 
 One rule decides whether a Pin or Checkout matches a Repo. Do not write a second comparison.
 
@@ -28,7 +28,7 @@ Scripted stand-ins, each given to `cli::run_on`:
 - Packages inferred on `add`: `packages::infer_packages` over temp directories (`tests/packages.rs`); the add pipeline through `cli::run_with` with a scripted `Prompter` (`tests/cli_add_packages.rs`).
 - Package lockfiles: `registry::used::used_versions` is tested as data per format (`tests/registry_used.rs`), `registry::used::find` and `worktree::candidate_dirs` over temp directories (`tests/registry_used_find.rs`, `tests/worktree.rs`).
 - Tooling gaps: `tooling::gaps` over temp directories (`tests/tooling.rs`); the note on `sync`, `add` and `--check` through `cli::run_with` (`tests/cli_output.rs`).
-- What `add` pins a registry package to: `registry::pin::pin` over temp directories and a scripted tag list (`tests/registry_pin.rs`); its wording and questions through `cli::run_with` (`tests/cli_registry.rs`).
+- What `add` pins a registry package to: `registry::pin::pin` over temp directories, a scripted tag list and scripted answers, including its wording and questions (`tests/registry_pin.rs`); and end to end through `cli::run_with` (`tests/cli_registry.rs`).
 - Tags: `Source::tags` is a row of the `Source` contract (`tests/contract.rs`), run against the fake and git; `registry::tag::tag_for` is tested as data (`tests/registry_tag.rs`).
 
 Three adapters have no test. After changing one, check it by hand:
