@@ -4,7 +4,7 @@
 use std::io::ErrorKind;
 use std::path::Path;
 
-use crate::diagnostic::BlockError;
+use crate::diagnostic::{BlockError, FileError};
 use crate::line_ending;
 
 pub(crate) const BEGIN: &str = "<!-- BEGIN:refs -->";
@@ -65,24 +65,18 @@ fn find_region(text: &str) -> Result<Option<std::ops::Range<usize>>, BlockError>
 }
 
 /// The text of the Agent file at `path`, `None` when it does not exist.
-pub fn read(path: &Path) -> Result<Option<String>, BlockError> {
+pub fn read(path: &Path) -> Result<Option<String>, FileError> {
     match std::fs::read_to_string(path) {
         Ok(text) => Ok(Some(text)),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(BlockError::Read {
-            path: path.display().to_string(),
-            source,
-        }),
+        Err(source) => Err(FileError::read(path, source)),
     }
 }
 
 /// Write via a temp file in the same directory, then rename, so a reader never sees a
 /// partial file. A symlinked Agent file (`CLAUDE.md` pointing at `AGENTS.md`) is written
 /// through, so the link survives.
-pub fn write(path: &Path, text: &str) -> Result<(), BlockError> {
+pub fn write(path: &Path, text: &str) -> Result<(), FileError> {
     let target = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    crate::atomic::write(&target, text).map_err(|source| BlockError::Write {
-        path: path.display().to_string(),
-        source,
-    })
+    crate::atomic::write(&target, text).map_err(|source| FileError::write(path, source))
 }

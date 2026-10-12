@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::agent_file;
 use crate::atomic;
 use crate::config::{self, Config};
-use crate::diagnostic::ProjectError;
+use crate::diagnostic::{FileError, ProjectError};
 use crate::exclude;
 use crate::plan::{AgentFileText, ProjectObserved};
 use crate::worktree::Worktree;
@@ -15,10 +15,7 @@ pub const CONFIG_FILE: &str = "refs.toml";
 
 /// The nearest directory at or above `start` that holds a `refs.toml`, canonicalised.
 pub fn find_root(start: &Path) -> Result<PathBuf, ProjectError> {
-    let start = dunce::canonicalize(start).map_err(|source| ProjectError::Read {
-        path: start.display().to_string(),
-        source,
-    })?;
+    let start = dunce::canonicalize(start).map_err(|source| FileError::read(start, source))?;
     start
         .ancestors()
         .find(|dir| dir.join(CONFIG_FILE).is_file())
@@ -33,10 +30,7 @@ pub fn find_root(start: &Path) -> Result<PathBuf, ProjectError> {
 /// further up (a nested project needs `--here`); with none, the git worktree root, or
 /// `start` outside git.
 pub fn init_root(start: &Path, here: bool) -> Result<PathBuf, ProjectError> {
-    let canonical = dunce::canonicalize(start).map_err(|source| ProjectError::Read {
-        path: start.display().to_string(),
-        source,
-    })?;
+    let canonical = dunce::canonicalize(start).map_err(|source| FileError::read(start, source))?;
     if here {
         return Ok(canonical);
     }
@@ -54,19 +48,15 @@ pub fn init_root(start: &Path, here: bool) -> Result<PathBuf, ProjectError> {
 }
 
 /// The text of `<root>/refs.toml`.
-pub fn read_config(root: &Path) -> Result<String, ProjectError> {
-    std::fs::read_to_string(root.join(CONFIG_FILE)).map_err(|source| ProjectError::Read {
-        path: CONFIG_FILE.into(),
-        source,
-    })
+pub fn read_config(root: &Path) -> Result<String, FileError> {
+    std::fs::read_to_string(root.join(CONFIG_FILE))
+        .map_err(|source| FileError::read(CONFIG_FILE, source))
 }
 
 /// Replace `<root>/refs.toml` with `text`, atomically.
-pub fn write_config(root: &Path, text: &str) -> Result<(), ProjectError> {
-    atomic::write(&root.join(CONFIG_FILE), text).map_err(|source| ProjectError::Write {
-        path: CONFIG_FILE.into(),
-        source,
-    })
+pub fn write_config(root: &Path, text: &str) -> Result<(), FileError> {
+    atomic::write(&root.join(CONFIG_FILE), text)
+        .map_err(|source| FileError::write(CONFIG_FILE, source))
 }
 
 /// Find the project from `start`, read and validate its config, and check its output
@@ -126,10 +116,7 @@ fn check_inside(
             Ok(meta) => meta,
             Err(e) if e.kind() == ErrorKind::NotFound => return true,
             Err(source) => {
-                errors.push(ProjectError::Read {
-                    path: relative.into(),
-                    source,
-                });
+                errors.push(FileError::read(relative, source).into());
                 return false;
             }
         };

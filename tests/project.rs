@@ -155,7 +155,7 @@ agents_files = ["AGENTS.md", "CLAUDE.md"]
 
         assert_eq!(
             miette::Diagnostic::code(&*error).unwrap().to_string(),
-            "refs::block::read_failed"
+            "refs::io::read_failed"
         );
     }
 

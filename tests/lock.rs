@@ -57,7 +57,7 @@ mod write {
         let path = dir.path().join("missing").join("refs.lock");
 
         let err = Lock::parse(LOCK).unwrap().write(&path).unwrap_err();
-        assert_eq!(err.code().unwrap().to_string(), "refs::lock::write_failed");
+        assert_eq!(err.code().unwrap().to_string(), "refs::io::write_failed");
     }
 }
 
@@ -126,7 +126,7 @@ mod read {
         std::fs::create_dir(Lock::path(dir.path())).unwrap();
 
         let err = Lock::read(&Lock::path(dir.path())).unwrap_err();
-        assert_eq!(err.code().unwrap().to_string(), "refs::lock::read_failed");
+        assert_eq!(err.code().unwrap().to_string(), "refs::io::read_failed");
     }
 }
 

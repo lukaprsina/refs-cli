@@ -316,6 +316,42 @@ impl Diagnostic for RepoFailed {
     }
 }
 
+/// A file that could not be read or written.
+#[derive(Debug, Error, Diagnostic)]
+pub enum FileError {
+    #[error("could not read {path}")]
+    #[diagnostic(code(refs::io::read_failed))]
+    Read {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("could not write {path}")]
+    #[diagnostic(code(refs::io::write_failed))]
+    Write {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+impl FileError {
+    pub fn read(path: impl AsRef<std::path::Path>, source: std::io::Error) -> Self {
+        FileError::Read {
+            path: path.as_ref().display().to_string(),
+            source,
+        }
+    }
+
+    pub fn write(path: impl AsRef<std::path::Path>, source: std::io::Error) -> Self {
+        FileError::Write {
+            path: path.as_ref().display().to_string(),
+            source,
+        }
+    }
+}
+
 /// A problem reading or writing `refs.lock`.
 #[derive(Debug, Error, Diagnostic)]
 pub enum LockError {
@@ -326,26 +362,13 @@ pub enum LockError {
     )]
     Invalid { message: String },
 
-    #[error("could not read {path}")]
-    #[diagnostic(code(refs::lock::read_failed))]
-    Read {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("could not write {path}")]
-    #[diagnostic(code(refs::lock::write_failed))]
-    Write {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    File(#[from] FileError),
 }
 
-/// A problem with an Agent file. The marker variants mean the markers are not exactly one
-/// BEGIN then one END, so `sync` refuses rather than guess which text belongs to refs;
-/// `Read` and `Write` are I/O failures.
+/// The markers of an Agent file are not exactly one BEGIN then one END, so `sync` refuses
+/// rather than guess which text belongs to refs.
 #[derive(Debug, Error, Diagnostic)]
 pub enum BlockError {
     #[error("a marker has no partner")]
@@ -363,22 +386,6 @@ pub enum BlockError {
     #[error("the markers appear more than once")]
     #[diagnostic(code(refs::block::duplicated))]
     Duplicated,
-
-    #[error("could not read {path}")]
-    #[diagnostic(code(refs::block::read_failed))]
-    Read {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("could not write {path}")]
-    #[diagnostic(code(refs::block::write_failed))]
-    Write {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
 }
 
 /// `plan_lock` was asked for something it must not do.
@@ -451,35 +458,19 @@ pub enum Note {
 pub enum InitError {
     #[error(transparent)]
     #[diagnostic(transparent)]
-    Project(#[from] ProjectError),
-
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Block(#[from] BlockError),
+    File(#[from] FileError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
     Invalid(#[from] ConfigErrors),
 }
 
-/// A problem reading or writing a project file other than `refs.lock` and the Agent files.
+/// A problem with the Project directory or its output paths.
 #[derive(Debug, Error, Diagnostic)]
 pub enum ProjectError {
-    #[error("could not read {path}")]
-    #[diagnostic(code(refs::project::read_failed))]
-    Read {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("could not write {path}")]
-    #[diagnostic(code(refs::project::write_failed))]
-    Write {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    File(#[from] FileError),
 
     #[error("no refs.toml in {start} or any parent directory")]
     #[diagnostic(code(refs::project::no_config), help("create one with `refs init`"))]

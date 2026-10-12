@@ -137,7 +137,7 @@ mod write {
     fn a_failed_write_is_reported_with_a_code() {
         let dir = tempfile::tempdir().unwrap();
         let err = write(&dir.path().join("missing/AGENTS.md"), "x").unwrap_err();
-        assert_eq!(err.code().unwrap().to_string(), "refs::block::write_failed");
+        assert_eq!(err.code().unwrap().to_string(), "refs::io::write_failed");
     }
 }
 
@@ -174,6 +174,6 @@ mod read {
         std::fs::create_dir(dir.path().join("AGENTS.md")).unwrap();
 
         let err = read(&dir.path().join("AGENTS.md")).unwrap_err();
-        assert_eq!(err.code().unwrap().to_string(), "refs::block::read_failed");
+        assert_eq!(err.code().unwrap().to_string(), "refs::io::read_failed");
     }
 }

@@ -6,7 +6,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::diagnostic::ProjectError;
+use crate::diagnostic::FileError;
 use crate::line_ending;
 use crate::plan::Exclude;
 use crate::worktree::Worktree;
@@ -47,30 +47,24 @@ fn read(path: &Path) -> std::io::Result<String> {
 }
 
 /// Whether the Exclude rule for `references_dir` is in place.
-pub fn observe(root: &Path, references_dir: &str) -> Result<Exclude, ProjectError> {
+pub fn observe(root: &Path, references_dir: &str) -> Result<Exclude, FileError> {
     let Some((path, rule)) = locate(root, references_dir) else {
         return Ok(Exclude::NoGit);
     };
     match read(&path) {
         Ok(text) if rule_present(&text, &rule) => Ok(Exclude::Present),
         Ok(_) => Ok(Exclude::Missing),
-        Err(source) => Err(ProjectError::Read {
-            path: path.display().to_string(),
-            source,
-        }),
+        Err(source) => Err(FileError::read(&path, source)),
     }
 }
 
 /// Add the Exclude rule for `references_dir`, unless it is already there. Does nothing
 /// outside a git worktree.
-pub fn ensure(root: &Path, references_dir: &str) -> Result<(), ProjectError> {
+pub fn ensure(root: &Path, references_dir: &str) -> Result<(), FileError> {
     let Some((path, rule)) = locate(root, references_dir) else {
         return Ok(());
     };
-    let write = |source| ProjectError::Write {
-        path: path.display().to_string(),
-        source,
-    };
+    let write = |source| FileError::write(&path, source);
     let text = read(&path).map_err(write)?;
     if rule_present(&text, &rule) {
         return Ok(());

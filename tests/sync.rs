@@ -482,7 +482,7 @@ fn a_failed_agent_file_write_does_not_stop_the_next_file() {
 
     fs::set_permissions(p.path("locked"), fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(report.outcome, Outcome::Failed);
-    assert_eq!(codes(&report), ["refs::block::write_failed"]);
+    assert_eq!(codes(&report), ["refs::io::write_failed"]);
     assert!(p.read("AGENTS.md").unwrap().contains("<!-- BEGIN:refs -->"));
 }
 

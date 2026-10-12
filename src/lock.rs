@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::diagnostic::LockError;
+use crate::diagnostic::{FileError, LockError};
 use crate::source::Pin;
 
 /// The Lock's file name, in the Project root.
@@ -63,10 +63,7 @@ impl Lock {
         match std::fs::read_to_string(path) {
             Ok(text) => Lock::parse(&text).map(Some),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-            Err(source) => Err(LockError::Read {
-                path: path.display().to_string(),
-                source,
-            }),
+            Err(source) => Err(FileError::read(path, source).into()),
         }
     }
 
@@ -99,9 +96,7 @@ impl Lock {
 
     /// Write atomically, so a reader never sees a partial lock.
     pub fn write(&self, path: &Path) -> Result<(), LockError> {
-        crate::atomic::write(path, &self.to_toml()).map_err(|source| LockError::Write {
-            path: path.display().to_string(),
-            source,
-        })
+        crate::atomic::write(path, &self.to_toml())
+            .map_err(|source| FileError::write(path, source).into())
     }
 }
