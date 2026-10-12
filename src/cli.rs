@@ -400,16 +400,9 @@ fn run_config<'a>(
             console.data(&list(config, color));
             return 0;
         }
-        ConfigCommand::Add { repo, flags } if flags.no_sync => {
-            let (repo, _) = match prepare_add(repo, None, root, config, &mut asking, console) {
-                Ok(prepared) => prepared,
-                Err(code) => return code,
-            };
-            return print_report(&sync::edit_only(root, &Edit::Add(&repo)), false, console);
-        }
-        ConfigCommand::Add { repo, .. } => {
-            return with_source(make_source, root, config, console, |source, console| {
-                let prepared = prepare_add(repo, Some(source), root, config, &mut asking, console);
+        ConfigCommand::Add { repo, flags } => {
+            let add = |source: Option<&dyn Source>, console: &mut Console| {
+                let prepared = prepare_add(repo, source, root, config, &mut asking, console);
                 let (repo, asked) = match prepared {
                     Ok(prepared) => prepared,
                     Err(code) => return code,
@@ -420,7 +413,14 @@ fn run_config<'a>(
                     asked,
                 };
                 add(source, root, config, &job, asking.prompter, console)
-            });
+            };
+            return if flags.no_sync {
+                add(None, console)
+            } else {
+                with_source(make_source, root, config, console, |source, console| {
+                    add(Some(source), console)
+                })
+            };
         }
         ConfigCommand::Remove(args) => (&args.flags, Edit::Remove(&args.id)),
         ConfigCommand::Disable(args) => (&args.flags, Edit::Disable(args.target())),
@@ -654,8 +654,7 @@ fn aborted(abort: prompt::Abort, console: &mut Console) -> u8 {
 /// `repo` with what the command line left out, and whether anything was asked: asked for when
 /// there is a prompter, otherwise only a missing URL is a problem (usage, exit 2). On a cancel
 /// nothing has been edited. With `url_asked` the URL was typed at the prompt, which counts as
-/// asking. The `equivalent:` line is printed here unless `Packages::Later`,
-/// when `add` prints it once the packages are known.
+/// asking.
 fn complete_add(
     repo: &AddRepo,
     config: &Config,
@@ -673,13 +672,7 @@ fn complete_add(
         return Ok((repo, false));
     };
     match prompt::fill_add(&mut repo, config, prompter, decided) {
-        Ok(filled) => {
-            let asked = filled.asked || url_asked;
-            if asked && decided.packages == Packages::Now {
-                equivalent(&repo, console);
-            }
-            Ok((repo, asked))
-        }
+        Ok(filled) => Ok((repo, filled.asked || url_asked)),
         Err(abort) => Err(aborted(abort, console)),
     }
 }
@@ -698,10 +691,11 @@ struct AddJob<'r> {
     asked: bool,
 }
 
-/// `refs add` with a sync: the add, then the `packages` read from the new Checkout. When
-/// something was `asked`, the `equivalent:` line comes last, with those `packages`.
+/// `refs add`: the add and its sync, then the `packages` read from the new Checkout (with no
+/// `source`, `--no-sync`, there is neither). When something was `asked`, the `equivalent:`
+/// line comes last, with those `packages`.
 fn add(
-    source: &dyn Source,
+    source: Option<&dyn Source>,
     root: &Path,
     config: &Config,
     job: &AddJob,

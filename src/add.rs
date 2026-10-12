@@ -35,15 +35,21 @@ pub enum Skipped {
 /// Add `repo` to the project at `root` and sync it. Unless `repo` names its `packages`, they
 /// are then read from the Checkout: asked for with the names found as the default when there
 /// is a `prompter`, otherwise the names found are written. `flags` are for the add's own sync.
+/// Without a `source` (`--no-sync`) the repo is only added: there is no Checkout to read, so
+/// the `packages` were asked before (`prompt::fill_add`).
 pub fn run(
-    source: &dyn Source,
+    source: Option<&dyn Source>,
     root: &Path,
     config: &Config,
     repo: &AddRepo,
     flags: &SyncFlags,
     prompter: Option<&mut dyn Prompter>,
 ) -> Added {
-    let first = sync::edit(source, root, &Edit::Add(repo), flags);
+    let edit = Edit::Add(repo);
+    let first = match source {
+        Some(source) => sync::edit(source, root, &edit, flags),
+        None => sync::edit_only(root, &edit),
+    };
     let mut added = Added {
         reports: Vec::new(),
         repo: repo.clone(),
@@ -51,9 +57,9 @@ pub fn run(
     };
     let infer = repo.packages.is_empty() && first.outcome == Outcome::InSync;
     added.reports.push(first);
-    if !infer {
+    let Some(source) = source.filter(|_| infer) else {
         return added;
-    }
+    };
     let id = repo.resolved_id();
     let checkout = root.join(config.settings.references_dir()).join(&id);
     let inferred = infer_packages(&checkout);
