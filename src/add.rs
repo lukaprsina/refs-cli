@@ -1,4 +1,4 @@
-//! `refs add` (ADR 0008, 0009), all but the printing of its reports. First the repo it is asked
+//! `refs add` (ADR 0008, 0009), all but the printing of its reports (it says what it read and decided, and warns, through a `Say`). First the repo it is asked
 //! to add is made ready: a registry or forge shorthand expanded, its version pinned to a tag
 //! (`registry::pin`), and what the command line left out asked for. Then the repo is added and
 //! synced, the new Checkout's Manifests are read for its `packages`, the person confirms them,

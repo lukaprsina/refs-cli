@@ -371,7 +371,6 @@ fn load(start: &Path, console: &mut Console) -> Result<(PathBuf, Config), u8> {
     project::load(start).map_err(|reports| fail_all(reports, console))
 }
 
-/// Who and what a config command may ask: a person, a registry, unless `--offline`.
 fn run_config<'a>(
     command: &ConfigCommand,
     root: &Path,
