@@ -9,7 +9,6 @@
 use std::path::Path;
 
 use crate::config::Config;
-use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit};
 use crate::packages::infer_packages;
 use crate::prompt::{self, Abort, Counting, Prompter};
@@ -32,7 +31,7 @@ impl Asking<'_> {
     }
 
     /// Whether any question has been asked so far.
-    pub fn asked(&self) -> bool {
+    fn asked(&self) -> bool {
         self.prompter.as_ref().is_some_and(Counting::asked)
     }
 }
@@ -41,23 +40,17 @@ impl Asking<'_> {
 #[derive(Debug)]
 pub enum Failure {
     Registry(RegistryError),
-    /// The tags of the remote could not be listed.
-    Source(SourceError),
+    /// What to pin to could not be decided (`registry::pin`).
+    Pin(Stop),
     /// A question ended without an answer.
     Asked(Abort),
-    /// A question had to be asked and there is no one to ask: the message says what to do.
-    Refused(String),
     /// There is no URL and no one to ask for it.
     UrlRequired,
 }
 
 impl From<Stop> for Failure {
     fn from(stop: Stop) -> Failure {
-        match stop {
-            Stop::Source(e) => Failure::Source(e),
-            Stop::Asked(abort) => Failure::Asked(abort),
-            Stop::Refused(why) => Failure::Refused(why),
-        }
+        Failure::Pin(stop)
     }
 }
 
@@ -71,6 +64,9 @@ pub struct Added {
     pub repo: AddRepo,
     /// Why the repo was left without the `packages` it was asked for, if it was.
     pub skipped: Option<Skipped>,
+    /// Whether anything was asked, before the add or after, so the equivalent command line is
+    /// worth printing.
+    pub asked: bool,
 }
 
 /// Why `add` left a repo without `packages` after asking for them.
@@ -97,7 +93,21 @@ pub fn run(
     asking: &mut Asking,
     say: &mut dyn Say,
 ) -> Result<Added, Failure> {
-    let repo = &prepare(repo, source, root, config, asking, say)?;
+    let repo = prepare(repo, source, root, config, asking, say)?;
+    let mut added = sync_and_infer(source, root, config, &repo, flags, asking);
+    added.asked = asking.asked();
+    Ok(added)
+}
+
+/// The add of the prepared `repo` and its sync, then the `packages` (see `run`).
+fn sync_and_infer(
+    source: Option<&dyn Source>,
+    root: &Path,
+    config: &Config,
+    repo: &AddRepo,
+    flags: &SyncFlags,
+    asking: &mut Asking,
+) -> Added {
     let edit = Edit::Add(repo);
     let first = match source {
         Some(source) => sync::edit(source, root, &edit, flags),
@@ -107,11 +117,12 @@ pub fn run(
         reports: Vec::new(),
         repo: repo.clone(),
         skipped: None,
+        asked: false,
     };
     let infer = repo.packages.is_empty() && first.outcome == Outcome::InSync;
     added.reports.push(first);
     let Some(source) = source.filter(|_| infer) else {
-        return Ok(added);
+        return added;
     };
     let id = repo.resolved_id();
     let checkout = root.join(config.settings.references_dir()).join(&id);
@@ -121,13 +132,13 @@ pub fn run(
     let names = match prompter {
         Some(prompter) => match prompt::ask_packages(&inferred, prompter) {
             Ok(names) => names,
-            Err(Abort::Cancelled) => return Ok(added.skip(Skipped::Declined)),
-            Err(Abort::Failed(why)) => return Ok(added.skip(Skipped::PromptFailed(why))),
+            Err(Abort::Cancelled) => return added.skip(Skipped::Declined),
+            Err(Abort::Failed(why)) => return added.skip(Skipped::PromptFailed(why)),
         },
         None => inferred,
     };
     if names.is_empty() && prompted {
-        return Ok(added.skip(Skipped::Declined));
+        return added.skip(Skipped::Declined);
     }
     if !names.is_empty() {
         let flags = SyncFlags {
@@ -141,7 +152,7 @@ pub fn run(
         added.reports.push(sync::edit(source, root, &edit, &flags));
         added.repo.packages = names;
     }
-    Ok(added)
+    added
 }
 
 /// `repo` ready to add: a registry shorthand expanded and its version pinned to a tag, then

@@ -21,7 +21,7 @@ use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::prompt::{self, Counting, Prompter};
-use crate::registry::pin::Say;
+use crate::registry::pin::{Say, Stop};
 use crate::registry::{self, Registry};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
@@ -451,9 +451,9 @@ fn aborted(abort: prompt::Abort, console: &mut Console) -> u8 {
 fn failed(failure: Failure, console: &mut Console) -> u8 {
     match failure {
         Failure::Registry(e) => fail(e, console),
-        Failure::Source(e) => fail(e, console),
-        Failure::Asked(abort) => aborted(abort, console),
-        Failure::Refused(why) => {
+        Failure::Pin(Stop::Source(e)) => fail(e, console),
+        Failure::Asked(abort) | Failure::Pin(Stop::Asked(abort)) => aborted(abort, console),
+        Failure::Pin(Stop::Refused(why)) => {
             console.problem(format_args!("error: {why}"));
             EXIT_ERROR
         }
@@ -493,7 +493,7 @@ fn add(
             code = reported;
         }
     }
-    if asking.asked() {
+    if added.asked {
         equivalent(&added.repo, console);
     }
     if let Some(why) = &added.skipped {
