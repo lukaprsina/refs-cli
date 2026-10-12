@@ -146,20 +146,10 @@ fn run_sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
         Err(report) => return report,
     };
     let stage_one = if flags.check {
-        match old {
-            Some(lock) => StageOne {
-                lock,
-                wrote_lock: false,
-            },
-            // Nothing to plan against: the Lock is what is out of date.
-            None => {
-                let stage_one = StageOne {
-                    lock: Lock::new(vec![]),
-                    wrote_lock: false,
-                };
-                let stage_two = Report::new(check_outcome(None, true));
-                return finish(stage_one, drift, stage_two);
-            }
+        // With no Lock on disk the drift says so, and `plan_and_apply` reports it.
+        StageOne {
+            lock: old.unwrap_or_else(|| Lock::new(vec![])),
+            wrote_lock: false,
         }
     } else {
         match stage_one(source, &active, old, &lock_flags(flags), root) {
