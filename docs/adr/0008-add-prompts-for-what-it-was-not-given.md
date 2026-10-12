@@ -23,7 +23,7 @@ ADR 0005 has `refs` follow uv, and uv never prompts. `refs add` departs from tha
 
 ## Consequences
 
-- The pure core (`edit`, `plan`, `sync`) never prompts. `cli.rs` fills an `AddRepo` before `Edit::Add` runs, and the `url` of `AddRepo` becomes optional on the command line (empty means absent), checked in `cli.rs`.
+- The pure core (`edit`, `plan`, `sync`) never prompts. `add::run` fills an `AddRepo` before `Edit::Add` runs, and the `url` of `AddRepo` becomes optional on the command line (empty means absent), checked in `add::run`; `cli.rs` only prints what it did.
 - Tests script the answers through the `Prompter` trait given to `cli::run_on`, with no pty.
 - `inquire` is a new dependency (default features, for the fuzzy group select).
 - This is the one recorded divergence from uv's no-prompt behaviour, beside those listed in ADR 0005.
