@@ -3,9 +3,9 @@
 
 use std::fs;
 
-use refs_cli::registry::pin::{Choice, Decision, Failed, NoTags, Pinned, Tags, Why, pin};
+use refs_cli::registry::pin::{Choice, Decision, Failed, Pinned, Why, pin};
 use refs_cli::registry::{Ecosystem, Package};
-use refs_cli::source::fake::FakeSource;
+use refs_cli::source::fake::{FakeSource, Method};
 use tempfile::TempDir;
 
 const URL: &str = "https://github.com/o/serde";
@@ -59,7 +59,7 @@ fn settled(pinned: &Pinned) -> Choice {
 }
 
 fn run(version: Option<&str>, dir: &TempDir, source: &FakeSource) -> Pinned {
-    pin(&serde(), version, URL, dir.path(), source).unwrap()
+    pin(&serde(), version, URL, dir.path(), Some(source)).unwrap()
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn a_version_with_no_tag_follows_the_default_branch() {
 #[test]
 fn without_tags_to_list_a_version_is_not_pinned() {
     let dir = project(None);
-    let pinned = pin(&serde(), Some("1.0.150"), URL, dir.path(), &NoTags).unwrap();
+    let pinned = pin(&serde(), Some("1.0.150"), URL, dir.path(), None).unwrap();
     assert_eq!(
         settled(&pinned),
         Choice::DefaultBranch(Why::Unlisted {
@@ -141,7 +141,7 @@ fn a_used_version_with_no_tag_still_names_what_was_read() {
 fn a_package_the_lockfile_lacks_follows_the_default_branch() {
     let dir = project(Some(ONE_SERDE));
     let other = Package::new(Ecosystem::Cargo, "tokio");
-    let pinned = pin(&other, None, URL, dir.path(), &tagged(&[])).unwrap();
+    let pinned = pin(&other, None, URL, dir.path(), Some(&tagged(&[]))).unwrap();
     assert_eq!(
         settled(&pinned),
         Choice::DefaultBranch(Why::NotInLockfile {
@@ -184,29 +184,23 @@ fn another_lockfile_of_the_ecosystem_in_the_same_directory_is_named_as_not_read(
     .unwrap();
     fs::write(dir.path().join("yarn.lock"), "# yarn lockfile v1\n").unwrap();
     let react = Package::new(Ecosystem::Npm, "react");
-    let pinned = pin(&react, None, URL, dir.path(), &NoTags).unwrap();
+    let pinned = pin(&react, None, URL, dir.path(), None).unwrap();
     let read = pinned.read.unwrap();
     assert_eq!(read.file, dir.path().join("pnpm-lock.yaml"));
     assert_eq!(read.ignored, [dir.path().join("yarn.lock")]);
 }
 
-struct Unreachable;
-
-impl Tags for Unreachable {
-    fn remote_tags(
-        &self,
-        _: &str,
-    ) -> Result<Option<Vec<String>>, refs_cli::diagnostic::SourceError> {
-        Err(refs_cli::diagnostic::SourceError::Failed {
-            message: "no route".into(),
-        })
-    }
+fn unreachable() -> FakeSource {
+    let source = FakeSource::new();
+    source.fail(URL, Method::Tags, "no route");
+    source
 }
 
 #[test]
 fn failing_to_list_tags_still_names_what_was_read() {
     let dir = project(Some(ONE_SERDE));
-    let Failed { read, .. } = *pin(&serde(), None, URL, dir.path(), &Unreachable).unwrap_err();
+    let Failed { read, .. } =
+        *pin(&serde(), None, URL, dir.path(), Some(&unreachable())).unwrap_err();
     let read = read.unwrap();
     assert_eq!(read.file, dir.path().join("Cargo.lock"));
     assert_eq!(read.version.as_deref(), Some("1.0.200"));
@@ -215,6 +209,13 @@ fn failing_to_list_tags_still_names_what_was_read() {
 #[test]
 fn failing_to_list_tags_for_a_given_version_read_nothing() {
     let dir = project(Some(ONE_SERDE));
-    let failed = pin(&serde(), Some("1.0.1"), URL, dir.path(), &Unreachable).unwrap_err();
+    let failed = pin(
+        &serde(),
+        Some("1.0.1"),
+        URL,
+        dir.path(),
+        Some(&unreachable()),
+    )
+    .unwrap_err();
     assert_eq!(failed.read, None);
 }

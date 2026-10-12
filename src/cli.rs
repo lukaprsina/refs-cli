@@ -21,7 +21,7 @@ use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::prompt::{self, Decided, Packages, Prompter};
-use crate::registry::pin::{Choice, Decision, NoTags, Read, Tags, Why, pin, pin_version};
+use crate::registry::pin::{Choice, Decision, Read, Why, pin, pin_version};
 use crate::registry::{self, Registry, Requested};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
@@ -401,15 +401,7 @@ fn run_config<'a>(
             return 0;
         }
         ConfigCommand::Add { repo, flags } if flags.no_sync => {
-            let (repo, _) = match prepare_add(
-                repo,
-                &NoTags,
-                Packages::Now,
-                root,
-                config,
-                &mut asking,
-                console,
-            ) {
+            let (repo, _) = match prepare_add(repo, None, root, config, &mut asking, console) {
                 Ok(prepared) => prepared,
                 Err(code) => return code,
             };
@@ -417,15 +409,8 @@ fn run_config<'a>(
         }
         ConfigCommand::Add { repo, .. } => {
             return with_source(make_source, root, config, console, |source, console| {
-                let (repo, asked) = match prepare_add(
-                    repo,
-                    source,
-                    Packages::Later,
-                    root,
-                    config,
-                    &mut asking,
-                    console,
-                ) {
+                let prepared = prepare_add(repo, Some(source), root, config, &mut asking, console);
+                let (repo, asked) = match prepared {
                     Ok(prepared) => prepared,
                     Err(code) => return code,
                 };
@@ -453,13 +438,12 @@ fn run_config<'a>(
 
 /// `repo` ready to add: a registry shorthand expanded and its version pinned to a tag, then
 /// completed (see `complete_add`). The version is the one given, else the one the project's
-/// Package lockfile at `root` says it uses. The tags come from `tags`; `NoTags` (`--no-sync`)
-/// lists none. With `Packages::Later` a sync follows and `add` reads the `packages` from the
-/// new Checkout; with `Packages::Now` they are asked here.
-fn prepare_add<T: Tags + ?Sized>(
+/// Package lockfile at `root` says it uses. The tags come from `source`; without one
+/// (`--no-sync`) none are listed, and no sync follows, so the `packages` are asked here. With a
+/// `source` `add` reads them from the new Checkout.
+fn prepare_add(
     repo: &AddRepo,
-    tags: &T,
-    packages: Packages,
+    source: Option<&dyn Source>,
     root: &Path,
     config: &Config,
     asking: &mut Asking,
@@ -484,6 +468,10 @@ fn prepare_add<T: Tags + ?Sized>(
              use `--ref` and `--paths` to choose a ref and directories"
         ));
     }
+    let packages = match source {
+        Some(_) => Packages::Later,
+        None => Packages::Now,
+    };
     // A registry add has chosen its Ref (a tag, or the default branch), so it is not asked.
     let decided = Decided {
         packages,
@@ -496,7 +484,7 @@ fn prepare_add<T: Tags + ?Sized>(
             &mut repo,
             requested,
             root,
-            tags,
+            source,
             asking.prompter.as_deref_mut(),
             console,
         )?;
@@ -516,18 +504,18 @@ fn prepare_add<T: Tags + ?Sized>(
 /// asked about, or refused without a terminal. A version with no tag is never pinned silently:
 /// with a prompter the person is asked whether to follow the remote's default branch instead,
 /// otherwise it is a warning and the repo follows it. Never a guess.
-fn pin_requested<T: Tags + ?Sized>(
+fn pin_requested(
     repo: &mut AddRepo,
     requested: &Requested,
     root: &Path,
-    tags: &T,
+    source: Option<&dyn Source>,
     prompter: Option<&mut (dyn Prompter + '_)>,
     console: &mut Console,
 ) -> Result<(), u8> {
     let package = &requested.package;
     let name = &package.name;
     let version = requested.version.as_deref();
-    let pinned = match pin(package, version, &repo.url, root, tags) {
+    let pinned = match pin(package, version, &repo.url, root, source) {
         Ok(pinned) => pinned,
         Err(failed) => {
             if let Some(read) = &failed.read {
@@ -545,7 +533,7 @@ fn pin_requested<T: Tags + ?Sized>(
         Decision::Several { file, versions } => {
             let file = file_name(&file, root);
             let version = choose_version(&versions, &file, name, prompter.as_deref_mut(), console)?;
-            pin_version(package, &version, &repo.url, tags).map_err(|e| fail(e, console))?
+            pin_version(package, &version, &repo.url, source).map_err(|e| fail(e, console))?
         }
     };
     match choice {

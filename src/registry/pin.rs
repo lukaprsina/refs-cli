@@ -10,28 +10,6 @@ use super::used::{self, Lookup, Pick};
 use crate::diagnostic::SourceError;
 use crate::source::Source;
 
-/// Where the remote's tags come from. Every `Source` lists them; `NoTags` stands in where
-/// nothing can be listed (`--no-sync`).
-pub trait Tags {
-    /// The remote's tag names, or `None` when this cannot list them.
-    fn remote_tags(&self, url: &str) -> Result<Option<Vec<String>>, SourceError>;
-}
-
-impl<S: Source + ?Sized> Tags for S {
-    fn remote_tags(&self, url: &str) -> Result<Option<Vec<String>>, SourceError> {
-        self.tags(url).map(Some)
-    }
-}
-
-/// Lists no tags.
-pub struct NoTags;
-
-impl Tags for NoTags {
-    fn remote_tags(&self, _: &str) -> Result<Option<Vec<String>>, SourceError> {
-        Ok(None)
-    }
-}
-
 /// The Package lockfile that was read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Read {
@@ -101,20 +79,21 @@ impl Failed {
 
 /// What to pin `package`, in the repo at `url`, to. With a `version` that is the one used;
 /// without, the project at `root` is asked through its Package lockfile (`used::find`, then
-/// `Found::pick`). The tag for the version comes from `tags` (`tag_for`).
-pub fn pin<T: Tags + ?Sized>(
+/// `Found::pick`). The tag for the version is
+/// one of the `source`'s tags (`tag_for`); `--no-sync` has no `source`.
+pub fn pin(
     package: &Package,
     version: Option<&str>,
     url: &str,
     root: &Path,
-    tags: &T,
+    source: Option<&dyn Source>,
 ) -> Result<Pinned, Box<Failed>> {
     let settled = |read, choice| Pinned {
         read,
         decision: Decision::Settled(choice),
     };
     if let Some(version) = version {
-        let choice = pin_version(package, version, url, tags)
+        let choice = pin_version(package, version, url, source)
             .map_err(|error| Failed { read: None, error })?;
         return Ok(settled(None, choice));
     }
@@ -148,7 +127,7 @@ pub fn pin<T: Tags + ?Sized>(
         }
         Pick::One(version) => {
             read.version = Some(version.to_owned());
-            match pin_version(package, version, url, tags) {
+            match pin_version(package, version, url, source) {
                 Ok(choice) => Ok(settled(Some(read), choice)),
                 Err(error) => Err(Failed::new(Some(read), error)),
             }
@@ -157,17 +136,18 @@ pub fn pin<T: Tags + ?Sized>(
 }
 
 /// What to pin `version` of `package`, in the repo at `url`, to: the tag it was released as, if
-/// `tags` lists one.
-pub fn pin_version<T: Tags + ?Sized>(
+/// `source` lists one.
+pub fn pin_version(
     package: &Package,
     version: &str,
     url: &str,
-    tags: &T,
+    source: Option<&dyn Source>,
 ) -> Result<Choice, SourceError> {
     let version = version.to_owned();
-    let Some(tags) = tags.remote_tags(url)? else {
+    let Some(source) = source else {
         return Ok(Choice::DefaultBranch(Why::Unlisted { version }));
     };
+    let tags = source.tags(url)?;
     Ok(match tag_for(&package.name, &version, &tags) {
         Some(tag) => Choice::Tag {
             tag: tag.to_owned(),
