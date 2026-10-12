@@ -20,18 +20,11 @@
 //! forge-shorthand URLs are understood, and a path is cut back to the repository on the hosts
 //! where that is unambiguous.
 
-/// Hosts whose repositories are always `owner/name`, so anything deeper is a page inside one.
-const TWO_SEGMENT_HOSTS: [&str; 3] = ["github.com", "bitbucket.org", "codeberg.org"];
+use super::forge::{self, Depth};
 
 /// Path segments that start a page inside a repository on any host.
 const PAGE_SEGMENTS: [&str; 10] = [
     "tree", "blob", "issues", "pulls", "pull", "wiki", "releases", "commit", "commits", "-",
-];
-
-const SHORTHANDS: [(&str, &str); 3] = [
-    ("github:", "github.com"),
-    ("gitlab:", "gitlab.com"),
-    ("bitbucket:", "bitbucket.org"),
 ];
 
 /// `raw` as an https git URL without `git+`, `.git`, a trailing slash, a fragment or a page
@@ -44,10 +37,8 @@ pub(super) fn clean(raw: &str) -> Option<String> {
 /// `clean`, with the host the URL is on.
 fn cleaned(raw: &str) -> Option<(String, String)> {
     let raw = raw.trim();
-    for (prefix, host) in SHORTHANDS {
-        if let Some(path) = raw.strip_prefix(prefix) {
-            return cleaned(&format!("https://{host}/{path}"));
-        }
+    if let Some((_, url)) = forge::expand_prefix(raw) {
+        return cleaned(&url);
     }
     let raw = raw.strip_prefix("git+").unwrap_or(raw);
     let (scheme, rest) = match raw.split_once("://") {
@@ -72,10 +63,8 @@ fn cleaned(raw: &str) -> Option<(String, String)> {
     if let Some(page) = path.iter().skip(2).position(|s| PAGE_SEGMENTS.contains(s)) {
         path.truncate(page + 2);
     }
-    if TWO_SEGMENT_HOSTS
-        .iter()
-        .any(|h| host.eq_ignore_ascii_case(h))
-    {
+    // On a host whose repositories are always `owner/name`, anything deeper is a page inside one.
+    if forge::on(host).is_some_and(|forge| matches!(forge.depth, Depth::Two)) {
         path.truncate(2);
     }
     let last = path.pop()?;
@@ -99,16 +88,11 @@ pub(super) fn bare_github(raw: &str) -> Option<String> {
     (word(owner) && word(name)).then(|| format!("https://github.com/{owner}/{name}"))
 }
 
-/// Hosts that hold repositories, which makes their URLs trustworthy as a repository where a
-/// registry field may as well hold a documentation site (crates.io `homepage`, PyPI `Homepage`).
-const FORGES: [&str; 4] = ["github.com", "gitlab.com", "bitbucket.org", "codeberg.org"];
-
-/// `clean`, but only for a repository on a forge. The host is compared whole, so
-/// `github.com.attacker.example` and a `github.com` in the path do not pass.
-pub(super) fn forge(raw: &str) -> Option<String> {
+/// `clean`, but only for a repository on a forge, whose URLs are trustworthy as a repository
+/// where a registry field may as well hold a documentation site (crates.io `homepage`, PyPI
+/// `Homepage`). The host is compared whole, so `github.com.attacker.example` and a `github.com`
+/// in the path do not pass.
+pub(super) fn on_forge(raw: &str) -> Option<String> {
     let (host, url) = cleaned(raw)?;
-    FORGES
-        .iter()
-        .any(|forge| host.eq_ignore_ascii_case(forge))
-        .then_some(url)
+    forge::on(&host).map(|_| url)
 }

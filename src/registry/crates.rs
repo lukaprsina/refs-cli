@@ -3,8 +3,17 @@
 
 use serde::Deserialize;
 
-use super::url::{clean, forge};
-use super::{Answer, Found, parse};
+use super::url::{clean, on_forge};
+use super::used::Format;
+use super::{Answer, Found, Spec, parse};
+
+pub(super) const SPEC: Spec = Spec {
+    prefix: "cargo:",
+    registry: "crates.io",
+    url: "https://crates.io/api/v1/crates/{name}?include=",
+    found,
+    lockfiles: &[("Cargo.lock", Format::CargoLock)],
+};
 
 #[derive(Deserialize)]
 struct Document {
@@ -27,7 +36,7 @@ pub fn found(body: &str) -> Answer {
             .repository
             .as_deref()
             .and_then(clean)
-            .or_else(|| entry.homepage.as_deref().and_then(forge))
+            .or_else(|| entry.homepage.as_deref().and_then(on_forge))
     });
     Ok(url.map(|url| Found {
         url,

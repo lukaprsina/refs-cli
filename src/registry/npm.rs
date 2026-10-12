@@ -4,7 +4,21 @@
 use serde::Deserialize;
 
 use super::url::{bare_github, clean};
-use super::{Answer, Found, parse};
+use super::used::Format;
+use super::{Answer, Found, Spec, parse};
+
+pub(super) const SPEC: Spec = Spec {
+    prefix: "npm:",
+    registry: "npm",
+    url: "https://registry.npmjs.org/{name}/latest",
+    found,
+    lockfiles: &[
+        ("pnpm-lock.yaml", Format::Pnpm),
+        ("yarn.lock", Format::Yarn),
+        ("package-lock.json", Format::PackageLock),
+        ("bun.lock", Format::BunLock),
+    ],
+};
 
 #[derive(Deserialize)]
 struct Document {

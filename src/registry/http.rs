@@ -1,4 +1,4 @@
-//! The real `Registry`: the three registries over HTTPS.
+//! The real `Registry`: the registries of `Ecosystem::spec` over HTTPS.
 //!
 //! After changing `get`, run `refs add npm:`, `cargo:` and `pypi:` by hand against the real
 //! registries (`--no-sync` is enough).
@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use reqwest::blocking::Client;
 
-use super::{Answer, Ecosystem, Found, Package, Registry, RegistryError, crates, npm, pypi};
+use super::{Found, Package, Registry, RegistryError};
 
 /// crates.io answers 403 to a request without a User-Agent that says who is asking.
 const USER_AGENT: &str = concat!(
@@ -57,7 +57,7 @@ pub fn interpret(package: &Package, status: u16, body: &str) -> Result<Found, Re
         }
         _ => {}
     }
-    match reader(package().ecosystem)(body) {
+    match (package().ecosystem.spec().found)(body) {
         Ok(Some(found)) => Ok(found),
         Ok(None) => Err(RegistryError::NoRepository { package: package() }),
         Err(why) => Err(RegistryError::Malformed {
@@ -67,25 +67,10 @@ pub fn interpret(package: &Package, status: u16, body: &str) -> Result<Found, Re
     }
 }
 
-/// An adapter: reads a registry's document for where the package lives.
-type Adapter = fn(&str) -> Answer;
-
 /// The URL of the document that holds the repository: the cheapest one the registry serves.
 pub fn request_url(package: &Package) -> String {
-    let name = encode(&package.name);
-    match package.ecosystem {
-        Ecosystem::Npm => format!("https://registry.npmjs.org/{name}/latest"),
-        Ecosystem::Cargo => format!("https://crates.io/api/v1/crates/{name}?include="),
-        Ecosystem::Pypi => format!("https://pypi.org/pypi/{name}/json"),
-    }
-}
-
-fn reader(ecosystem: Ecosystem) -> Adapter {
-    match ecosystem {
-        Ecosystem::Npm => npm::found,
-        Ecosystem::Cargo => crates::found,
-        Ecosystem::Pypi => pypi::found,
-    }
+    let spec = package.ecosystem.spec();
+    spec.url.replace("{name}", &encode(&package.name))
 }
 
 /// `text` as one URL path segment: everything but unreserved characters is percent-encoded,

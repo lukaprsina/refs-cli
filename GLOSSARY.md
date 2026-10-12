@@ -43,7 +43,7 @@ A name published on a Registry: the ecosystem and the name together (`npm:@scope
 _Avoid_: Release, Dependency
 
 **Forge**:
-A code host (GitHub, GitLab) that `add` names with a prefix (`gh:`, `gl:`) and the path of a repository on it; the Repo that is stored has the https URL, never the prefix. It asks nothing, unlike a Registry.
+A code host (GitHub, GitLab, Bitbucket, Codeberg) that `add` names with a prefix (`gh:`, `gl:`, `bitbucket:`; Codeberg has none yet) and the path of a repository on it; the Repo that is stored has the https URL, never the prefix. It asks nothing, unlike a Registry.
 _Avoid_: Registry, Provider
 
 **Start**:

@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{Ecosystem, Package};
+use super::Package;
 use crate::worktree::candidate_dirs;
 
 mod bun;
@@ -80,26 +80,6 @@ fn distinct(found: Vec<Used>) -> Vec<Used> {
     distinct
 }
 
-impl Format {
-    /// The Package lockfiles of `ecosystem`, as file name and format, in the order they are
-    /// preferred when a directory holds more than one.
-    fn of(ecosystem: Ecosystem) -> &'static [(&'static str, Format)] {
-        match ecosystem {
-            Ecosystem::Cargo => &[("Cargo.lock", Format::CargoLock)],
-            Ecosystem::Npm => &[
-                ("pnpm-lock.yaml", Format::Pnpm),
-                ("yarn.lock", Format::Yarn),
-                ("package-lock.json", Format::PackageLock),
-                ("bun.lock", Format::BunLock),
-            ],
-            Ecosystem::Pypi => &[
-                ("uv.lock", Format::UvLock),
-                ("poetry.lock", Format::PoetryLock),
-            ],
-        }
-    }
-}
-
 /// The Package lockfile a project uses and the versions of one package in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Found {
@@ -154,7 +134,7 @@ pub enum Lookup {
 /// whether or not it has the package; in it, the first of the ecosystem's Package lockfiles that
 /// exists.
 pub fn find(package: &Package, project_dir: &Path) -> Lookup {
-    let formats = Format::of(package.ecosystem);
+    let formats = package.ecosystem.spec().lockfiles;
     for dir in candidate_dirs(project_dir) {
         let mut present = formats
             .iter()

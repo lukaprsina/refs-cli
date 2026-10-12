@@ -5,8 +5,20 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use super::url::{clean, forge};
-use super::{Answer, Found, parse};
+use super::url::{clean, on_forge};
+use super::used::Format;
+use super::{Answer, Found, Spec, parse};
+
+pub(super) const SPEC: Spec = Spec {
+    prefix: "pypi:",
+    registry: "PyPI",
+    url: "https://pypi.org/pypi/{name}/json",
+    found,
+    lockfiles: &[
+        ("uv.lock", Format::UvLock),
+        ("poetry.lock", Format::PoetryLock),
+    ],
+};
 
 #[derive(Deserialize)]
 struct Document {
@@ -42,8 +54,8 @@ pub fn found(body: &str) -> Answer {
     let url = SOURCE_LABELS
         .iter()
         .find_map(|label| by_label(label).and_then(clean))
-        .or_else(|| by_label("homepage").and_then(forge))
-        .or_else(|| document.info.home_page.as_deref().and_then(forge));
+        .or_else(|| by_label("homepage").and_then(on_forge))
+        .or_else(|| document.info.home_page.as_deref().and_then(on_forge));
     Ok(url.map(|url| Found {
         url,
         directory: None,

@@ -25,26 +25,38 @@ pub enum Ecosystem {
     Pypi,
 }
 
+/// What an ecosystem is to refs. Each adapter module (`npm`, `crates`, `pypi`) holds its own.
+struct Spec {
+    /// The shorthand prefix.
+    prefix: &'static str,
+    /// The registry's name in a message.
+    registry: &'static str,
+    /// The URL of the document that holds the repository, the cheapest one the registry
+    /// serves, with `{name}` for the package's name.
+    url: &'static str,
+    /// Reads that document.
+    found: fn(&str) -> Answer,
+    /// The ecosystem's Package lockfiles, as file name and format, in the order they are
+    /// preferred when a directory holds more than one.
+    lockfiles: &'static [(&'static str, used::Format)],
+}
+
 impl Ecosystem {
-    /// Every ecosystem, for finding the one a shorthand names. Add a new one here too.
+    /// Every ecosystem, for finding the one a shorthand names.
     const ALL: [Ecosystem; 3] = [Ecosystem::Npm, Ecosystem::Cargo, Ecosystem::Pypi];
 
-    /// The shorthand prefix.
-    fn prefix(self) -> &'static str {
+    /// Add a new ecosystem here and in `ALL`, with an adapter module that holds its `SPEC`.
+    fn spec(self) -> &'static Spec {
         match self {
-            Ecosystem::Npm => "npm:",
-            Ecosystem::Cargo => "cargo:",
-            Ecosystem::Pypi => "pypi:",
+            Ecosystem::Npm => &npm::SPEC,
+            Ecosystem::Cargo => &crates::SPEC,
+            Ecosystem::Pypi => &pypi::SPEC,
         }
     }
 
     /// The registry's name in a message.
     pub fn registry(self) -> &'static str {
-        match self {
-            Ecosystem::Npm => "npm",
-            Ecosystem::Cargo => "crates.io",
-            Ecosystem::Pypi => "PyPI",
-        }
+        self.spec().registry
     }
 }
 
@@ -118,7 +130,7 @@ pub enum RegistryError {
 
     #[error(
         "`{}{}` needs the network, which `--offline` forbids",
-        .package.ecosystem.prefix(), .package.name
+        .package.ecosystem.spec().prefix, .package.name
     )]
     #[diagnostic(
         code(refs::registry::offline),
@@ -187,7 +199,7 @@ pub fn is_shorthand(url: &str) -> bool {
 fn parse_shorthand(url: &str) -> Option<(Ecosystem, &str, Option<&str>)> {
     let (ecosystem, rest) = Ecosystem::ALL
         .into_iter()
-        .find_map(|ecosystem| Some((ecosystem, url.strip_prefix(ecosystem.prefix())?)))?;
+        .find_map(|ecosystem| Some((ecosystem, url.strip_prefix(ecosystem.spec().prefix)?)))?;
     Some(match rest.rfind('@').filter(|&at| at > 0) {
         Some(at) => (ecosystem, &rest[..at], Some(&rest[at + 1..])),
         None => (ecosystem, rest, None),
