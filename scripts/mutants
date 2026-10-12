@@ -7,6 +7,18 @@ cd "$(dirname "$0")/.."
 host=${1:?usage: scripts/mutants user@host [--fetch | cargo-mutants args]}
 shift
 
+# Some tests rely on permission bits (root ignores them), so everything runs as an
+# unprivileged user, created on first use when given root@host.
+if [ "${host%%@*}" = root ]; then
+    ssh "$host" 'id -u mutants >/dev/null 2>&1 || {
+        useradd -m -s /bin/bash mutants
+        echo "mutants ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/mutants
+        install -d -m 700 -o mutants -g mutants /home/mutants/.ssh
+        install -m 600 -o mutants -g mutants /root/.ssh/authorized_keys /home/mutants/.ssh/authorized_keys
+    }'
+    host=mutants@${host#*@}
+fi
+
 if [ "${1:-}" = "--fetch" ]; then
     mkdir -p mutants-results
     scp "$host:mutants-*.tgz" mutants-results/
