@@ -492,7 +492,7 @@ fn add(
             code = reported;
         }
     }
-    if added.asked {
+    if added.interactive {
         equivalent(&added.repo, console);
     }
     if let Some(why) = &added.skipped {

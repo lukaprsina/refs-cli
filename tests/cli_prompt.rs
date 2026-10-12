@@ -214,6 +214,58 @@ fn no_input_asks_nothing() {
 }
 
 #[test]
+fn the_equivalent_command_is_printed_with_a_terminal_even_when_nothing_was_asked() {
+    let dir = project();
+    let mut script = Script::new([]);
+
+    let run = refs(
+        dir.path(),
+        &[
+            "add",
+            "https://github.com/o/lib",
+            "--no-sync",
+            "--id",
+            "lib",
+            "--group",
+            "core",
+            "--ref",
+            "main",
+            "--description",
+            "A lib",
+            "--paths",
+            "docs",
+            "--start",
+            "docs/a.md",
+        ],
+        Some(&mut script),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(script.asked.is_empty());
+    assert!(
+        run.err
+            .contains("equivalent: refs add https://github.com/o/lib"),
+        "{}",
+        run.err
+    );
+}
+
+#[test]
+fn no_input_prints_no_equivalent_command() {
+    let dir = project();
+    let mut script = Script::new([]);
+
+    let run = refs(
+        dir.path(),
+        &["add", "https://github.com/o/lib", "--no-input", "--no-sync"],
+        Some(&mut script),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(!run.err.contains("equivalent:"), "{}", run.err);
+}
+
+#[test]
 fn without_a_terminal_nothing_is_asked_and_a_missing_url_is_a_usage_error() {
     let dir = project();
 

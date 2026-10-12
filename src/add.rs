@@ -68,8 +68,9 @@ pub struct Added {
     pub repo: AddRepo,
     /// Why the repo was left without the `packages` it was asked for, if it was.
     pub skipped: Option<Skipped>,
-    /// Whether there was someone to ask, so the equivalent command line is worth printing.
-    pub asked: bool,
+    /// Whether there was someone to ask, whether or not a question came up, so the equivalent
+    /// command line is worth printing.
+    pub interactive: bool,
 }
 
 /// Why `add` left a repo without `packages` after asking for them.
@@ -98,7 +99,7 @@ pub fn run(
 ) -> Result<Added, Failure> {
     let repo = prepare(repo, source, root, config, asking, say)?;
     let mut added = sync_and_infer(source, root, config, &repo, flags, asking);
-    added.asked = asking.prompter.is_some();
+    added.interactive = asking.prompter.is_some();
     Ok(added)
 }
 
@@ -120,7 +121,7 @@ fn sync_and_infer(
         reports: Vec::new(),
         repo: repo.clone(),
         skipped: None,
-        asked: false,
+        interactive: false,
     };
     let infer = repo.packages.is_empty() && first.outcome == Outcome::InSync;
     added.reports.push(first);
