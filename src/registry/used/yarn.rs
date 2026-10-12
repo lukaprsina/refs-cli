@@ -22,7 +22,7 @@
 //! moved to `tests/registry_used.rs`.
 
 use super::Used;
-use super::yaml::{
+use super::npm_spec::{
     clean_value, is_registry_version, split_pkg_spec, strip_peer_suffix, trim_quotes,
 };
 

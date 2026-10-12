@@ -6,7 +6,7 @@
 
 use serde_json::Value;
 
-use super::yaml::{is_registry_version, split_pkg_spec};
+use super::npm_spec::{is_registry_version, split_pkg_spec};
 use super::{DEPENDENCY_GROUPS, Used};
 
 /// `text` without the commas that precede a closing `}` or `]`, which `serde_json` refuses.

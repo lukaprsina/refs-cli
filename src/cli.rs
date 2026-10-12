@@ -584,14 +584,6 @@ fn add(
     asking: &mut Asking,
     console: &mut Console,
 ) -> u8 {
-    if source.is_none() && repo.packages.is_empty() {
-        // The hint to run `refs sync` comes last, so this is said before the edit's report.
-        console.status(format_args!(
-            "no packages for `{}`; set them in {}",
-            repo.resolved_id(),
-            project::CONFIG_FILE
-        ));
-    }
     let added = crate::add::run(source, root, config, repo, flags, asking.prompter());
     let mut code = 0;
     for report in &added.reports {

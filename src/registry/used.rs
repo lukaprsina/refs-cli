@@ -8,12 +8,12 @@ use crate::worktree::candidate_dirs;
 
 mod bun;
 mod cargo;
+mod npm_spec;
 mod package_lock;
 mod pnpm;
 mod poetry;
 mod python;
 mod uv;
-mod yaml;
 mod yarn;
 
 /// The dependency groups of a `package.json`, which the npm formats that record the project's own

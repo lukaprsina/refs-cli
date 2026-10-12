@@ -171,11 +171,6 @@ paths = ["src", "docs"]
         "{}",
         run.err
     );
-    assert!(
-        run.err.contains("no packages for `solid-router`"),
-        "{}",
-        run.err
-    );
 }
 
 #[test]

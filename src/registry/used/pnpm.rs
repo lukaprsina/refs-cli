@@ -6,7 +6,7 @@
 use serde_yaml_ng::Value;
 
 use super::Used;
-use super::yaml::{is_registry_version, split_pkg_spec, strip_peer_suffix};
+use super::npm_spec::{is_registry_version, split_pkg_spec, strip_peer_suffix};
 
 const DEP_GROUPS: [&str; 3] = ["dependencies", "devDependencies", "optionalDependencies"];
 
