@@ -36,6 +36,8 @@ mkdir -p .config
 {
     echo '[profile.default]'
     echo 'fail-fast = false'
+    # Each job runs its own test processes; letting all of them use every core makes the tests time out.
+    echo 'test-threads = 4'
 } > .config/nextest.toml
 # Check on a couple of mutants that nextest keeps going after a failure before spending an hour.
 rm -rf ~/preflight
