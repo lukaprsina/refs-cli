@@ -6,8 +6,12 @@ JOBS=${JOBS:-4}
 REPO_URL=${REPO_URL:-https://github.com/lukaprsina/refs-cli}
 
 if ! command -v cargo >/dev/null; then
-    sudo apt-get update
-    sudo apt-get install -y build-essential git pkg-config tmux
+    if command -v dnf >/dev/null; then
+        sudo dnf install -y gcc git pkgconf-pkg-config tmux
+    else
+        sudo apt-get update
+        sudo apt-get install -y build-essential git pkg-config tmux
+    fi
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 fi
 . "$HOME/.cargo/env"
@@ -26,9 +30,21 @@ echo "mutants: $(cargo mutants --list | wc -l)"
 mkdir -p ~/tmp
 export TMPDIR=~/tmp
 rm -rf ~/results
-# Run every test against every mutant, so the logs show all the tests that fail on it,
-# not just the first one.
-export NEXTEST_NO_FAIL_FAST=1
+# Run every test against every mutant, so the logs show all the tests that fail on it, not
+# just the first one. The profile is untracked and is copied into each mutant's build tree.
+mkdir -p .config
+{
+    echo '[profile.default]'
+    echo 'fail-fast = false'
+} > .config/nextest.toml
+# Check on a couple of mutants that nextest keeps going after a failure before spending an hour.
+rm -rf ~/preflight
+cargo mutants --test-tool nextest -j 1 --output ~/preflight --file src/tooling.rs --re 'delete !' >/dev/null || true
+logs=$(ls ~/preflight/mutants.out/log/src__*.log) || { echo "preflight made no mutant logs" >&2; exit 1; }
+if grep -q Cancelling $logs; then
+    echo "nextest still stops at the first failure; refusing to run" >&2
+    exit 1
+fi
 # A nonzero exit only means some mutants were missed.
 cargo mutants --test-tool nextest -j "$JOBS" --output ~/results "$@" || true
 
