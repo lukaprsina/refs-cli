@@ -213,13 +213,6 @@ fn states(h: &impl Harness) -> Vec<(&'static str, Observed)> {
     ]
 }
 
-fn contract<H: Harness>(new: impl Fn() -> H) {
-    inspect_rows(&new);
-    remove_rows(&new);
-    materialise_rows(&new);
-    tags_rows(&new);
-}
-
 /// `tags` lists the names of the remote's tags, sorted, with an annotated tag once and by its
 /// own name (not the `^{}` of its commit), and nothing for a remote with no tags.
 fn tags_rows<H: Harness>(new: &impl Fn() -> H) {
@@ -301,12 +294,36 @@ fn materialise_rows<H: Harness>(new: &impl Fn() -> H) {
     }
 }
 
-#[test]
-fn the_fake_meets_the_contract() {
-    contract(FakeHarness::new);
+/// Each group of rows is its own test, so the harness-heavy ones run side by side.
+macro_rules! meets_the_contract {
+    ($($module:ident: $new:expr,)*) => {$(
+        mod $module {
+            use super::*;
+
+            #[test]
+            fn inspect() {
+                inspect_rows(&$new);
+            }
+
+            #[test]
+            fn remove() {
+                remove_rows(&$new);
+            }
+
+            #[test]
+            fn materialise() {
+                materialise_rows(&$new);
+            }
+
+            #[test]
+            fn tags() {
+                tags_rows(&$new);
+            }
+        }
+    )*};
 }
 
-#[test]
-fn git_meets_the_contract() {
-    contract(GitHarness::new);
+meets_the_contract! {
+    the_fake_meets_the_contract: FakeHarness::new,
+    git_meets_the_contract: GitHarness::new,
 }

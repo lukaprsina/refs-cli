@@ -24,4 +24,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: scripts/check
         shell: bash
-      - run: cargo test --quiet --locked
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run --locked

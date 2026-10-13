@@ -1,0 +1,6 @@
+# The mutants profile is what scripts/mutants-remote selects: every test runs against every
+# mutant (so the logs list all the tests that fail on it), and each job gets 4 test threads
+# so that parallel jobs do not make the tests time out.
+[profile.mutants]
+fail-fast = false
+test-threads = 4

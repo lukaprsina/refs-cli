@@ -457,12 +457,32 @@ mod materialise {
         let p = dir.path();
         git(p, &["init", "-q", "-b", "main"]);
         git(p, &["config", "uploadpack.allowFilter", "true"]);
-        fs::create_dir_all(p.join("many")).unwrap();
+        // One fast-import stream is much quicker than thousands of files and an `add`.
+        let mut stream = String::from(
+            "commit refs/heads/main
+committer t <t@t> 0 +0000
+data 4
+many
+",
+        );
         for i in 0..FILES {
-            fs::write(p.join(format!("many/{i}.txt")), i.to_string()).unwrap();
+            let body = i.to_string();
+            stream += &format!(
+                "M 100644 inline many/{i}.txt
+data {}
+{body}
+",
+                body.len()
+            );
         }
-        git(p, &["add", "."]);
-        git(p, &["commit", "-q", "-m", "many"]);
+        let mut import = Command::new("git")
+            .args(["fast-import", "--quiet"])
+            .current_dir(p)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::io::Write::write_all(&mut import.stdin.take().unwrap(), stream.as_bytes()).unwrap();
+        assert!(import.wait().unwrap().success());
         let sha = git(p, &["rev-parse", "HEAD"]);
         let remote = Remote { dir, sha };
         let env = Env::new();

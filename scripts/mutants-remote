@@ -30,15 +30,9 @@ echo "mutants: $(cargo mutants --list | wc -l)"
 mkdir -p ~/tmp
 export TMPDIR=~/tmp
 rm -rf ~/results
-# Run every test against every mutant, so the logs show all the tests that fail on it, not
-# just the first one. The profile is untracked and is copied into each mutant's build tree.
-mkdir -p .config
-{
-    echo '[profile.default]'
-    echo 'fail-fast = false'
-    # Each job runs its own test processes; letting all of them use every core makes the tests time out.
-    echo 'test-threads = 4'
-} > .config/nextest.toml
+# The tracked mutants profile in .config/nextest.toml runs every test against every mutant,
+# so the logs show all the tests that fail on it, not just the first one.
+export NEXTEST_PROFILE=mutants
 # Check on a couple of mutants that nextest keeps going after a failure before spending an hour.
 rm -rf ~/preflight
 cargo mutants --test-tool nextest -j 1 --output ~/preflight --file src/tooling.rs --re 'delete !' >/dev/null || true
