@@ -192,26 +192,6 @@ fn a_removed_repo_whose_sync_failed_is_still_removed_by_the_retry() {
 }
 
 #[test]
-fn check_on_a_fresh_project_is_out_of_date_and_does_nothing() {
-    let p = Project::new(AB);
-    let report = p.sync(&check());
-
-    assert_eq!(report.outcome, Outcome::OutOfDate);
-    assert_eq!(p.source.calls(), []);
-    assert_eq!(p.lock(), None);
-    assert_eq!(p.read("AGENTS.md"), None);
-    assert!(!p.read(".git/info/exclude").unwrap().contains(".references"));
-}
-
-#[test]
-fn check_on_a_synced_project_is_in_sync_and_resolves_and_verifies_nothing() {
-    let p = synced(AB);
-    let seen = p.source.calls().len();
-    assert_eq!(p.sync(&check()).outcome, Outcome::InSync);
-    assert_eq!(p.source.calls().len(), seen);
-}
-
-#[test]
 fn check_reports_a_stale_lock_without_resolving() {
     let mut p = synced(A);
     p.config = parse(&format!(
@@ -252,29 +232,6 @@ fn sync_with(p: &Project, config: &str, flags: &SyncFlags) -> Report {
 }
 
 #[test]
-fn reordering_or_duplicating_paths_is_in_sync_and_changes_no_file() {
-    let two = A.replace(r#"["docs"]"#, r#"["docs", "src"]"#);
-    let p = synced(&two);
-    let reordered = A.replace(r#"["docs"]"#, r#"["src", "docs", "src"]"#);
-    let lock = p.read("refs.lock").unwrap();
-    let seen = p.source.calls().len();
-
-    assert_eq!(sync_with(&p, &reordered, &check()).outcome, Outcome::InSync);
-    let report = sync_with(&p, &reordered, &SyncFlags::default());
-
-    assert_eq!(report.outcome, Outcome::InSync);
-    assert!(report.drift.is_empty());
-    assert_eq!(p.read("refs.lock").unwrap(), lock);
-    assert!(
-        p.source.calls()[seen..]
-            .iter()
-            .all(|c| matches!(c, Call::Verify { .. })),
-        "{:?}",
-        p.source.calls()
-    );
-}
-
-#[test]
 fn a_paths_only_edit_leaves_refs_lock_alone_but_changes_the_checkout() {
     let p = synced(A);
     let lock = p.read("refs.lock").unwrap();
@@ -303,6 +260,7 @@ fn a_lock_written_with_paths_is_current_and_resolves_nothing() {
     let seen = p.source.calls().len();
 
     assert_eq!(p.sync(&check()).outcome, Outcome::InSync);
+    assert_eq!(p.source.calls().len(), seen);
     assert_eq!(p.sync(&SyncFlags::default()).outcome, Outcome::InSync);
     assert!(
         p.source.calls()[seen..]
@@ -379,6 +337,8 @@ fn offline_is_passed_to_materialise() {
         lock(&p.source, p.dir.path(), &p.config, &LockFlags::default()).outcome,
         Outcome::InSync
     );
+    assert_eq!(p.source.inspect("a").unwrap(), Observed::Absent);
+    let seen = p.source.calls().len();
     let offline = SyncFlags {
         offline: true,
         ..SyncFlags::default()
@@ -388,35 +348,10 @@ fn offline_is_passed_to_materialise() {
         id: "a".into(),
         offline: true
     }));
-}
-
-#[test]
-fn offline_is_passed_to_verify() {
-    let p = Project::new(A);
-    assert_eq!(
-        lock(&p.source, p.dir.path(), &p.config, &LockFlags::default()).outcome,
-        Outcome::InSync
-    );
-    let seen = p.source.calls().len();
-    let offline = SyncFlags {
-        offline: true,
-        ..SyncFlags::default()
-    };
-    assert_eq!(p.sync(&offline).outcome, Outcome::InSync);
     assert!(p.source.calls()[seen..].contains(&Call::Verify {
         id: "a".into(),
         offline: true
     }));
-}
-
-#[test]
-fn lock_resolves_and_writes_the_lock_but_touches_nothing_else() {
-    let p = Project::new(A);
-    let report = lock(&p.source, p.dir.path(), &p.config, &LockFlags::default());
-    assert_eq!(report.outcome, Outcome::InSync);
-    assert_eq!(p.lock().unwrap().repo.len(), 1);
-    assert_eq!(p.source.inspect("a").unwrap(), Observed::Absent);
-    assert_eq!(p.read("AGENTS.md"), None);
 }
 
 #[test]

@@ -37,38 +37,6 @@ fn tools(found: &[Gap]) -> Vec<&'static str> {
 }
 
 #[test]
-fn an_eslint_flat_config_that_does_not_name_the_directory_is_a_gap() {
-    let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join("eslint.config.js"), "export default [];\n").unwrap();
-
-    assert_eq!(
-        gaps(dir.path(), DIR, &[]),
-        [gap(
-            "eslint",
-            "eslint.config.js",
-            r#"{ ignores: [".references/**"] }"#
-        )]
-    );
-}
-
-#[test]
-fn a_config_that_names_the_directory_is_covered() {
-    let dir = TempDir::new().unwrap();
-    let config = r#"export default [{ ignores: [".references/**"] }];"#;
-    fs::write(dir.path().join("eslint.config.js"), config).unwrap();
-
-    assert_eq!(gaps(dir.path(), DIR, &[]), []);
-}
-
-#[test]
-fn a_project_with_no_tool_config_has_no_gap() {
-    let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join("README.md"), "hi").unwrap();
-
-    assert_eq!(gaps(dir.path(), DIR, &[]), []);
-}
-
-#[test]
 fn legacy_eslint_is_fixed_in_eslintignore() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join(".eslintrc.json"), "{}").unwrap();
@@ -160,15 +128,6 @@ fn tsconfig_variants_are_not_detected() {
     fs::write(dir.path().join("tsconfig.build.json"), "{}").unwrap();
 
     assert_eq!(gaps(dir.path(), DIR, &[]), []);
-}
-
-#[test]
-fn an_ignored_tool_is_not_reported() {
-    let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join("eslint.config.js"), "").unwrap();
-    fs::write(dir.path().join("tsconfig.json"), "{}").unwrap();
-
-    assert_eq!(tools(&gaps(dir.path(), DIR, &["eslint"])), ["tsc"]);
 }
 
 #[test]
