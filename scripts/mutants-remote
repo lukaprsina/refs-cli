@@ -26,9 +26,12 @@ echo "mutants: $(cargo mutants --list | wc -l)"
 mkdir -p ~/tmp
 export TMPDIR=~/tmp
 rm -rf ~/results
+# Run every test against every mutant, so the logs show all the tests that fail on it,
+# not just the first one.
+export NEXTEST_NO_FAIL_FAST=1
 # A nonzero exit only means some mutants were missed.
 cargo mutants --test-tool nextest -j "$JOBS" --output ~/results "$@" || true
 
 out=~/mutants-$(git rev-parse --short HEAD).tgz
-tar czf "$out" -C ~/results/mutants.out --exclude=log --exclude=lock.json .
+tar czf "$out" -C ~/results/mutants.out --exclude=lock.json .
 echo "done: $out"
