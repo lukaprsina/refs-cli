@@ -25,7 +25,8 @@ if [ "${1:-}" = "--fetch" ]; then
     exit 0
 fi
 
-scp scripts/mutants-remote "$host:mutants-remote"
+# Windows checkouts may have CRLF line endings, which bash cannot run.
+tr -d '\r' < scripts/mutants-remote | ssh "$host" 'cat > mutants-remote'
 ssh "$host" "tmux new -d -s mutants 'JOBS=${JOBS:-4} bash mutants-remote $* 2>&1 | tee run.log'"
 echo "started; follow with: ssh $host tmux attach -t mutants"
 echo "then fetch with:      scripts/mutants $host --fetch"
