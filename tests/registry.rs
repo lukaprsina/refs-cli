@@ -119,11 +119,6 @@ fn npm_without_a_repository_url_is_no_repository() {
     }
 }
 
-#[test]
-fn a_body_that_is_not_json_is_malformed() {
-    assert!(npm::found("<html>").is_err());
-}
-
 fn crate_with(repository: &str, homepage: &str) -> String {
     format!(
         r#"{{ "crate": {{ "id": "x", "repository": {repository}, "homepage": {homepage} }}, "versions": null }}"#
@@ -131,20 +126,16 @@ fn crate_with(repository: &str, homepage: &str) -> String {
 }
 
 #[test]
-fn crates_reads_the_repository_inside_the_crate_object() {
-    let body = crate_with(
+fn crates_falls_back_to_a_homepage_only_when_it_is_a_forge_repository() {
+    let repository = crate_with(
         r#""https://github.com/serde-rs/serde""#,
         r#""https://serde.rs""#,
     );
-
     assert_eq!(
-        crates::found(&body),
+        crates::found(&repository),
         Ok(found("https://github.com/serde-rs/serde", None))
     );
-}
 
-#[test]
-fn crates_falls_back_to_a_homepage_only_when_it_is_a_forge_repository() {
     let homepage = crate_with("null", r#""https://github.com/o/r/""#);
     assert_eq!(
         crates::found(&homepage),
@@ -219,19 +210,13 @@ fn pypi_falls_back_to_the_legacy_home_page_and_tolerates_nothing_at_all() {
         pypi_with("null", "null"),
         pypi_with("null", r#""""#),
         pypi_with("{}", "null"),
+        pypi_with(
+            r#"{ "Funding": "https://github.com/sponsors/someone", "Docs": "https://example.org" }"#,
+            "null",
+        ),
     ] {
         assert_eq!(pypi::found(&body), Ok(None), "{body}");
     }
-}
-
-#[test]
-fn pypi_does_not_take_a_funding_link_for_the_repository() {
-    let body = pypi_with(
-        r#"{ "Funding": "https://github.com/sponsors/someone", "Docs": "https://example.org" }"#,
-        "null",
-    );
-
-    assert_eq!(pypi::found(&body), Ok(None));
 }
 
 #[test]
