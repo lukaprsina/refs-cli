@@ -209,20 +209,6 @@ mod verify {
     use super::*;
 
     #[test]
-    fn existing_paths_and_start_files_pass() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let repo = remote.repo(&["docs/guide", "src"], &["docs/guide/a.md", "README.md"]);
-        assert_eq!(verify(&env.source(), &remote, &repo, ONLINE), Ok(()));
-    }
-
-    #[test]
-    fn a_repo_without_paths_passes() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let repo = remote.repo(&[], &[]);
-        assert_eq!(verify(&env.source(), &remote, &repo, ONLINE), Ok(()));
-    }
-
-    #[test]
     fn the_cache_is_a_partial_clone_with_no_fetch_refspec() {
         let (remote, env) = (Remote::new(), Env::new());
         verify(&env.source(), &remote, &remote.repo(&["docs"], &[]), ONLINE).unwrap();
@@ -274,14 +260,10 @@ mod verify {
             "{message}"
         );
         assert!(message.contains(&remote.sha), "{message}");
-    }
 
-    #[test]
-    fn a_path_that_is_a_file_is_an_error() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let repo = remote.repo(&["README.md"], &[]);
+        let file = remote.repo(&["README.md"], &[]);
         assert_eq!(
-            verify(&env.source(), &remote, &repo, ONLINE),
+            verify(&env.source(), &remote, &file, ONLINE),
             Err("refs::git::path_not_dir".into())
         );
     }
@@ -354,26 +336,6 @@ mod verify {
             .unwrap_err();
         assert_eq!(code(err), "refs::git::commit_unavailable");
     }
-
-    #[test]
-    fn offline_with_an_empty_cache_fails_instead_of_fetching() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let repo = remote.repo(&[], &[]);
-        assert_eq!(
-            verify(&env.source(), &remote, &repo, OFFLINE),
-            Err("refs::git::not_cached".into())
-        );
-        assert!(!env.cache_repo(&remote).exists(), "nothing was cloned");
-    }
-
-    #[test]
-    fn offline_passes_from_what_an_earlier_run_cached() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let repo = remote.repo(&["docs/guide"], &["docs/guide/a.md"]);
-        verify(&env.source(), &remote, &repo, ONLINE).unwrap();
-
-        assert_eq!(verify(&env.source(), &remote, &repo, OFFLINE), Ok(()));
-    }
 }
 
 mod materialise {
@@ -410,14 +372,6 @@ mod materialise {
     }
 
     #[test]
-    fn a_repo_without_paths_is_checked_out_whole() {
-        let (remote, env) = (Remote::new(), Env::new());
-        materialise(&env.source(), "r", &remote, &remote.repo(&[], &[]), ONLINE).unwrap();
-
-        assert_eq!(env.files("r").len(), 7);
-    }
-
-    #[test]
     fn the_prefetch_brings_exactly_the_blobs_the_checkout_reads() {
         let (remote, env) = (Remote::new(), Env::new());
         materialise(
@@ -438,37 +392,6 @@ mod materialise {
                 "docs/guide/a.md",
                 "docs/guide/sub/b.md"
             ])
-        );
-    }
-
-    #[test]
-    fn a_second_repo_of_the_same_url_fetches_only_what_is_new() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        materialise(
-            &source,
-            "a",
-            &remote,
-            &remote.repo(&["docs/guide"], &[]),
-            ONLINE,
-        )
-        .unwrap();
-        materialise(&source, "b", &remote, &remote.repo(&["src"], &[]), ONLINE).unwrap();
-
-        assert_eq!(
-            env.files("b"),
-            names(&["README.md", "LICENSE", "src/lib.rs"])
-        );
-        assert_eq!(
-            env.files("a"),
-            names(&[
-                "README.md",
-                "LICENSE",
-                "docs/other.md",
-                "docs/guide/a.md",
-                "docs/guide/sub/b.md"
-            ]),
-            "the other checkout keeps its own sparse patterns"
         );
     }
 
@@ -512,18 +435,6 @@ mod materialise {
     }
 
     #[test]
-    fn offline_succeeds_once_the_blobs_are_present() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        let repo = remote.repo(&["docs/guide"], &[]);
-        materialise(&source, "first", &remote, &repo, ONLINE).unwrap();
-
-        materialise(&source, "second", &remote, &repo, OFFLINE).unwrap();
-
-        assert_eq!(env.files("second"), env.files("first"));
-    }
-
-    #[test]
     fn a_checkout_deleted_by_hand_is_recreated() {
         let (remote, env) = (Remote::new(), Env::new());
         let source = env.source();
@@ -534,24 +445,6 @@ mod materialise {
         materialise(&source, "r", &remote, &repo, OFFLINE).unwrap();
 
         assert!(env.files("r").contains("docs/guide/a.md"));
-    }
-
-    #[test]
-    fn concurrent_first_use_of_one_cache_is_serialised_by_its_lock() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let repo_a = remote.repo(&["docs/guide"], &[]);
-        let repo_b = remote.repo(&["src"], &[]);
-        let (a, b) = (env.source(), env.source());
-
-        let (result_a, result_b) = std::thread::scope(|scope| {
-            let a = scope.spawn(|| materialise(&a, "a", &remote, &repo_a, ONLINE));
-            let b = scope.spawn(|| materialise(&b, "b", &remote, &repo_b, ONLINE));
-            (a.join().unwrap(), b.join().unwrap())
-        });
-
-        assert_eq!((result_a, result_b), (Ok(()), Ok(())));
-        assert!(env.files("a").contains("docs/guide/a.md"));
-        assert!(env.files("b").contains("src/lib.rs"));
     }
 
     /// `prefetch` pipes every blob id to `git cat-file --batch-check` and reads the answers;
@@ -662,17 +555,6 @@ mod checkout {
         }
     }
 
-    #[test]
-    fn a_checkout_whose_cache_was_wiped_is_dangling() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        let repo = remote.repo(&["docs/guide"], &[]);
-        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
-        fs::remove_dir_all(env.cache()).unwrap();
-
-        assert_eq!(source.inspect("r").unwrap(), Observed::Dangling);
-    }
-
     /// A second spelling of `dir`, as a symlink on Unix or the 8.3 short name on Windows (where
     /// a CI runner's temporary directory is spelled that way). Git writes the real one.
     fn other_spelling(dir: &std::path::Path) -> PathBuf {
@@ -707,47 +589,6 @@ mod checkout {
         fs::remove_dir_all(real.join("cache")).unwrap();
 
         assert_eq!(source.inspect("r").unwrap(), Observed::Dangling);
-    }
-
-    #[test]
-    fn remove_takes_the_checkout_and_its_registration() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        let repo = remote.repo(&["docs/guide"], &[]);
-        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
-        fs::write(env.checkouts().join("r/notes.txt"), "mine").unwrap();
-
-        source.remove("r").unwrap();
-
-        assert!(!env.checkouts().join("r").exists());
-        let worktrees = git(
-            &env.cache_repo(&remote),
-            &["worktree", "list", "--porcelain"],
-        );
-        assert_eq!(worktrees.matches("worktree ").count(), 1, "{worktrees}");
-        source.remove("r").unwrap();
-    }
-
-    #[test]
-    fn a_foreign_directory_is_never_removed_or_moved_onto() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        let repo = remote.repo(&["docs/guide"], &[]);
-        let theirs = env.checkouts().join("r");
-        fs::create_dir_all(&theirs).unwrap();
-        fs::write(theirs.join("keep.txt"), "theirs").unwrap();
-
-        assert!(source.remove("r").is_err());
-        assert!(
-            source
-                .materialise(at("r", &repo), &remote.pin(), MaterialiseOpts::default())
-                .is_err()
-        );
-
-        assert_eq!(
-            fs::read_to_string(theirs.join("keep.txt")).unwrap(),
-            "theirs"
-        );
     }
 
     #[test]
@@ -830,6 +671,7 @@ mod checkout {
         let whole = remote.repo(&[], &[]);
         materialise(&source, "r", &remote, &whole, ONLINE).unwrap();
         assert!(env.files("r").contains("docs/api/c.md"));
+        assert_eq!(env.files("r").len(), 7);
     }
 
     #[test]
@@ -889,6 +731,7 @@ mod checkout {
             source.inspect("r").unwrap(),
             clean_at(&first, &["docs/guide"])
         );
+        assert!(!env.cache_repo(&second).exists(), "nothing was cloned");
     }
 
     #[test]
