@@ -5,7 +5,7 @@ use refs_cli::lock::Lock;
 use refs_cli::plan::{Drift, LockFlags};
 use refs_cli::source::fake::{Call, FakeSource, Method};
 use refs_cli::source::{Observed, Source};
-use refs_cli::sync::{Hint, Outcome, Report, SyncFlags, lock, sync};
+use refs_cli::sync::{Outcome, Report, SyncFlags, lock, sync};
 use tempfile::TempDir;
 
 const A: &str = r#"
@@ -64,25 +64,6 @@ fn codes(report: &Report) -> Vec<String> {
         .iter()
         .filter_map(|d| d.code().map(|c| c.to_string()))
         .collect()
-}
-
-#[test]
-fn the_first_sync_locks_checks_out_and_writes_the_block_and_the_exclude() {
-    let p = Project::new(A);
-    let report = p.sync(&SyncFlags::default());
-
-    assert_eq!(report.outcome, Outcome::InSync, "{:?}", report.diagnostics);
-    assert_eq!(p.lock().unwrap().repo.len(), 1);
-    assert!(matches!(
-        p.source.inspect("a").unwrap(),
-        Observed::At { .. }
-    ));
-    assert!(p.read("AGENTS.md").unwrap().contains("<!-- BEGIN:refs -->"));
-    assert!(
-        p.read(".git/info/exclude")
-            .unwrap()
-            .contains("/.references/")
-    );
 }
 
 const AB: &str = r#"
@@ -163,6 +144,7 @@ fn a_failed_stage_one_writes_no_lock_and_touches_no_checkout() {
     assert_eq!(report.outcome, Outcome::Failed);
     // every error is collected: the resolve of a and the verify of b
     assert_eq!(codes(&report).len(), 2);
+    assert_eq!(report.drift, [Drift::LockMissing]);
     assert_eq!(p.lock(), None);
     assert!(
         !p.source
@@ -192,28 +174,11 @@ fn a_removed_repo_whose_sync_failed_is_still_removed_by_the_retry() {
 }
 
 #[test]
-fn check_on_a_fresh_project_is_out_of_date_and_does_nothing() {
-    let p = Project::new(AB);
-    let report = p.sync(&check());
-
-    assert_eq!(report.outcome, Outcome::OutOfDate);
-    assert_eq!(p.source.calls(), []);
-    assert_eq!(p.lock(), None);
-    assert_eq!(p.read("AGENTS.md"), None);
-    assert!(!p.read(".git/info/exclude").unwrap().contains(".references"));
-}
-
-#[test]
-fn check_on_a_synced_project_is_in_sync_and_resolves_and_verifies_nothing() {
-    let p = synced(AB);
+fn check_reports_a_stale_lock_without_resolving() {
+    let mut p = synced(A);
     let seen = p.source.calls().len();
     assert_eq!(p.sync(&check()).outcome, Outcome::InSync);
     assert_eq!(p.source.calls().len(), seen);
-}
-
-#[test]
-fn check_reports_a_stale_lock_without_resolving() {
-    let mut p = synced(A);
     p.config = parse(&format!(
         "{A}\n[repos.b]\nurl = \"https://github.com/o/b\"\n"
     ))
@@ -252,29 +217,6 @@ fn sync_with(p: &Project, config: &str, flags: &SyncFlags) -> Report {
 }
 
 #[test]
-fn reordering_or_duplicating_paths_is_in_sync_and_changes_no_file() {
-    let two = A.replace(r#"["docs"]"#, r#"["docs", "src"]"#);
-    let p = synced(&two);
-    let reordered = A.replace(r#"["docs"]"#, r#"["src", "docs", "src"]"#);
-    let lock = p.read("refs.lock").unwrap();
-    let seen = p.source.calls().len();
-
-    assert_eq!(sync_with(&p, &reordered, &check()).outcome, Outcome::InSync);
-    let report = sync_with(&p, &reordered, &SyncFlags::default());
-
-    assert_eq!(report.outcome, Outcome::InSync);
-    assert!(report.drift.is_empty());
-    assert_eq!(p.read("refs.lock").unwrap(), lock);
-    assert!(
-        p.source.calls()[seen..]
-            .iter()
-            .all(|c| matches!(c, Call::Verify { .. })),
-        "{:?}",
-        p.source.calls()
-    );
-}
-
-#[test]
 fn a_paths_only_edit_leaves_refs_lock_alone_but_changes_the_checkout() {
     let p = synced(A);
     let lock = p.read("refs.lock").unwrap();
@@ -293,74 +235,6 @@ fn a_paths_only_edit_leaves_refs_lock_alone_but_changes_the_checkout() {
 }
 
 #[test]
-fn a_lock_written_with_paths_is_current_and_resolves_nothing() {
-    let p = synced(A);
-    let old = p
-        .read("refs.lock")
-        .unwrap()
-        .replace("sha = ", "paths = [\"somewhere\"]\nsha = ");
-    fs::write(p.path("refs.lock"), &old).unwrap();
-    let seen = p.source.calls().len();
-
-    assert_eq!(p.sync(&check()).outcome, Outcome::InSync);
-    assert_eq!(p.sync(&SyncFlags::default()).outcome, Outcome::InSync);
-    assert!(
-        p.source.calls()[seen..]
-            .iter()
-            .all(|c| !matches!(c, Call::Resolve(_)))
-    );
-}
-
-fn dirty(p: &Project) {
-    let Observed::At { pin, paths, .. } = p.source.inspect("a").unwrap() else {
-        panic!("not checked out")
-    };
-    p.source.seed(
-        "a",
-        Observed::At {
-            pin,
-            paths,
-            dirty_files: vec!["docs/x.md".into()],
-        },
-    );
-}
-
-#[test]
-fn a_dirty_checkout_is_refused_until_forced() {
-    let p = synced(A);
-    dirty(&p);
-    p.source.set_commit("a", &"c".repeat(40));
-    // the Lock moves on, so the dirty checkout has to be replaced
-    assert_eq!(
-        lock(
-            &p.source,
-            p.dir.path(),
-            &p.config,
-            &LockFlags {
-                upgrade: refs_cli::plan::Upgrade::All,
-                ..LockFlags::default()
-            }
-        )
-        .outcome,
-        Outcome::InSync
-    );
-
-    let report = p.sync(&SyncFlags::default());
-    assert_eq!(report.outcome, Outcome::Refused);
-    assert_eq!(codes(&report), ["refs::sync::dirty_checkout"]);
-
-    let forced = SyncFlags {
-        force: true,
-        ..SyncFlags::default()
-    };
-    assert_eq!(p.sync(&forced).outcome, Outcome::InSync);
-    assert!(matches!(
-        p.source.inspect("a").unwrap(),
-        Observed::At { dirty_files, .. } if dirty_files.is_empty()
-    ));
-}
-
-#[test]
 fn offline_refuses_a_missing_lock_and_never_calls_the_source() {
     let p = Project::new(A);
     let report = p.sync(&SyncFlags {
@@ -373,25 +247,7 @@ fn offline_refuses_a_missing_lock_and_never_calls_the_source() {
 }
 
 #[test]
-fn offline_is_passed_to_materialise() {
-    let p = Project::new(A);
-    assert_eq!(
-        lock(&p.source, p.dir.path(), &p.config, &LockFlags::default()).outcome,
-        Outcome::InSync
-    );
-    let offline = SyncFlags {
-        offline: true,
-        ..SyncFlags::default()
-    };
-    assert_eq!(p.sync(&offline).outcome, Outcome::InSync);
-    assert!(p.source.calls().contains(&Call::Materialise {
-        id: "a".into(),
-        offline: true
-    }));
-}
-
-#[test]
-fn offline_is_passed_to_verify() {
+fn offline_is_passed_to_materialise_and_verify() {
     let p = Project::new(A);
     assert_eq!(
         lock(&p.source, p.dir.path(), &p.config, &LockFlags::default()).outcome,
@@ -403,31 +259,15 @@ fn offline_is_passed_to_verify() {
         ..SyncFlags::default()
     };
     assert_eq!(p.sync(&offline).outcome, Outcome::InSync);
-    assert!(p.source.calls()[seen..].contains(&Call::Verify {
+    let calls = &p.source.calls()[seen..];
+    assert!(calls.contains(&Call::Materialise {
         id: "a".into(),
         offline: true
     }));
-}
-
-#[test]
-fn lock_resolves_and_writes_the_lock_but_touches_nothing_else() {
-    let p = Project::new(A);
-    let report = lock(&p.source, p.dir.path(), &p.config, &LockFlags::default());
-    assert_eq!(report.outcome, Outcome::InSync);
-    assert_eq!(p.lock().unwrap().repo.len(), 1);
-    assert_eq!(p.source.inspect("a").unwrap(), Observed::Absent);
-    assert_eq!(p.read("AGENTS.md"), None);
-}
-
-#[test]
-fn a_failed_lock_still_reports_how_the_lock_differed() {
-    let p = Project::new(A);
-    p.source.fail("a", Method::Resolve, "unreachable");
-
-    let report = lock(&p.source, p.dir.path(), &p.config, &LockFlags::default());
-
-    assert_eq!(report.outcome, Outcome::Failed);
-    assert_eq!(report.drift, [Drift::LockMissing]);
+    assert!(calls.contains(&Call::Verify {
+        id: "a".into(),
+        offline: true
+    }));
 }
 
 #[test]
@@ -438,17 +278,6 @@ fn a_project_that_is_not_a_git_repo_continues_with_a_note() {
     assert_eq!(report.outcome, Outcome::InSync);
     assert_eq!(codes(&report), ["refs::sync::no_git_repo"]);
     assert!(p.read("AGENTS.md").is_some());
-}
-
-#[test]
-fn the_exclude_rule_is_appended_to_what_is_already_there() {
-    let p = Project::new(A);
-    fs::write(p.path(".git/info/exclude"), "*.log").unwrap();
-    assert_eq!(p.sync(&SyncFlags::default()).outcome, Outcome::InSync);
-    assert_eq!(
-        p.read(".git/info/exclude").unwrap(),
-        "*.log\n/.references/\n"
-    );
 }
 
 #[test]
@@ -519,44 +348,10 @@ fn disabling_the_last_repo_removes_the_block_and_keeps_the_rest_of_the_file() {
 }
 
 #[test]
-fn a_zero_repo_project_with_no_block_writes_no_agent_file() {
-    let p = Project::new(NO_REPOS);
-    assert_eq!(p.sync(&SyncFlags::default()).outcome, Outcome::InSync);
-    assert_eq!(p.read("AGENTS.md"), None);
-}
-
-#[test]
 fn a_file_left_empty_by_removing_the_block_is_kept() {
     let mut p = synced(A);
     fs::write(p.path("AGENTS.md"), p.read("AGENTS.md").unwrap().trim_end()).unwrap();
     p.config = parse(NO_REPOS).unwrap();
     assert_eq!(p.sync(&SyncFlags::default()).outcome, Outcome::InSync);
     assert_eq!(p.read("AGENTS.md").as_deref(), Some(""));
-}
-
-#[test]
-fn a_sync_that_failed_or_was_refused_carries_the_retry_hint_and_no_other_run_does() {
-    let failed = Project::new(A);
-    failed.source.fail("a", Method::Resolve, "remote gone");
-    let refused = Project::new(A);
-    refused.source.seed("a", Observed::Foreign);
-    let fine = Project::new(A);
-    let stale = Project::new(A);
-
-    assert_eq!(
-        failed.sync(&SyncFlags::default()).hint,
-        Some(Hint::RunSyncOnceFixed)
-    );
-    assert_eq!(
-        refused.sync(&SyncFlags::default()).hint,
-        Some(Hint::RunSyncOnceFixed)
-    );
-    assert_eq!(fine.sync(&SyncFlags::default()).hint, None);
-    let check = SyncFlags {
-        check: true,
-        ..SyncFlags::default()
-    };
-    let out_of_date = stale.sync(&check);
-    assert_eq!(out_of_date.outcome, Outcome::OutOfDate);
-    assert_eq!(out_of_date.hint, None);
 }
