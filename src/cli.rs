@@ -645,7 +645,7 @@ fn update(updater: &dyn Updater, check: bool, console: &mut Console) -> u8 {
     }
 }
 
-const REMINDERS: &str = "Add a repo with `refs add <url>`.
+const REMINDERS: &str = "Add a repo with `refs add`, e.g. `refs add gh:owner/repo`.
 Linters, formatters and type checkers are yours to configure: exclude the references dir from them.
 Claude Code reads AGENTS.md only when there is no CLAUDE.md; to use CLAUDE.md, list it in `agents_files`.";
 

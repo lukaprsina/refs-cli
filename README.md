@@ -37,15 +37,27 @@ refs init
 refs add
 ```
 
-In a terminal `refs add` asks for what you didn't pass: the URL (or a shorthand such as `gh:owner/repo` or `npm:name`), id, group (type to filter, or a new name to create one), ref, paths, start and description. It then locks the repo and syncs, reads the package names from the new checkout's manifests (`package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`) and asks you to confirm them, and prints the equivalent command line:
+In a terminal `refs add` asks for what you didn't pass: the URL (or a shorthand such as `gh:owner/repo` or `npm:name`), then id, group (type to filter, or a new name to create one), ref, description, paths and start. It then locks the repo and syncs, reads the package names from the new checkout's manifests (`package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`) and asks you to confirm them. That second write re-renders `refs.toml` and `AGENTS.md`, which is why both appear twice in the output. It ends by printing the equivalent command line:
 
 ```text
-> Repository URL https://github.com/solidjs/solid
+$ refs add gh:solidjs/solid
 > Id solid
 > Link to a group? Yes
-? Group (type to filter, or a new name to create one)
-  solidjs-2
-[↑↓ to move, tab to autocomplete, enter to submit]
+> Group (none yet; a new one will be created) solidjs-2
+> Ref (empty: the remote's default branch) next
+> Description (one line on what the repo is) Solid 2.0 core packages and 2.0 design docs
+> Customize paths and start? Yes
+> Paths to check out (space-separated) packages documentation
+> Files to read first (space-separated) documentation/solid-2.0/MIGRATION.md
+> Packages (space-separated) solid-js @solidjs/web @solidjs/signals
+updated refs.toml
+created group `solidjs-2`
+updated refs.lock
+created checkout `solid`
+updated AGENTS.md
+updated refs.toml
+updated AGENTS.md
+equivalent: refs add https://github.com/solidjs/solid --group solidjs-2 --ref next --description "Solid 2.0 core packages and 2.0 design docs" --paths packages documentation --packages solid-js @solidjs/web @solidjs/signals --start documentation/solid-2.0/MIGRATION.md
 ```
 
 Flags skip the questions. Without a terminal, or with `--no-input`, nothing is asked, so scripts pass a URL and flags.

@@ -8,23 +8,28 @@ use crate::exclude;
 use crate::project;
 
 /// The `refs.toml` a new Project starts with: every key commented out, no repos.
-const TEMPLATE: &str = r##"# Reference repos for coding agents. Add one with `refs add <url>`.
+const TEMPLATE: &str = r##"# Reference repos for coding agents. Add one with `refs add`.
+
+# tooling_ignore = ["tsc"]           # optional; tools to leave out of the tooling notes: prettier, eslint, oxlint, tsc
 
 # [settings]
 # agents_files = ["AGENTS.md"]
 # references_dir = ".references"
 
-# [groups.solid]
-# name = "SolidJS"
+# [groups.solidjs-2]
+# name = "SolidJS 2.0"
 # description = "What the group is for"
+# enabled = true
 
 # [repos.solid]
 # url = "https://github.com/solidjs/solid"
-# group = "solid"
-# ref = "main"
-# paths = ["packages/solid/src"]
-# packages = ["solid-js"]
-# start = ["README.md"]
+# group = "solidjs-2"
+# ref = "next"
+# description = "One line on what the repo is"
+# paths = ["packages", "documentation"]
+# packages = ["solid-js", "@solidjs/web", "@solidjs/signals"]
+# start = ["documentation/solid-2.0/MIGRATION.md"]
+# enabled = true
 "##;
 
 /// What `init` did, for the caller to report.

@@ -275,7 +275,7 @@ fn the_binary_init_reports_on_stderr_without_a_sync_hint_and_a_second_run_change
         "{}",
         first.stderr
     );
-    assert!(first.stderr.contains("refs add <url>"), "{}", first.stderr);
+    assert!(first.stderr.contains("refs add`"), "{}", first.stderr);
     assert!(!first.stderr.contains("refs sync"), "{}", first.stderr);
     let template = fs::read_to_string(b.dir.path().join("refs.toml")).unwrap();
     assert!(!template.contains("refs sync"), "{template}");
