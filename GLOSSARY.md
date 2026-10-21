@@ -85,7 +85,7 @@ The readable copy of a Repo's Paths at its locked commit, placed in the project'
 _Avoid_: Clone, mirror, vendor
 
 **Cache**:
-The machine-wide store of fetched Repo history that Checkouts are made from.
+The machine-wide store of the commits fetched for Repos that Checkouts are made from.
 _Avoid_: Store, registry
 
 ### Telling the agent
@@ -117,7 +117,7 @@ _Avoid_: Header line, listing, item
 ### Keeping in sync
 
 **Dangling checkout**:
-A Checkout whose Cache history is gone, for example because the Cache was wiped. It is a generated copy, so it is rebuilt, not refused.
+A Checkout whose Cache entry is gone, for example because the Cache was wiped. It is a generated copy, so it is rebuilt, not refused.
 _Avoid_: Broken, orphaned
 
 **Foreign directory**:

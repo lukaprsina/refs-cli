@@ -4,7 +4,7 @@ Config parsing, the active set, locking, Entry building, rendering, Agent-file s
 
 ## Consequences
 
-- `add` lists a remote's tags to turn a version into a Version tag. It takes the `Source` as an `Option`: `--no-sync` has none, and so lists no tags. It is not a second kind of seam to the project's data.
+- `add` asks the `Source` about a remote that is not in the config yet, by URL: its tags (to turn a version into a Version tag), and its tree and Manifests (`outline` and `read`, ADR 0011). It takes the `Source` as an `Option`: `--no-sync` has none, and so asks nothing. This is not a second kind of seam to the project's data.
 
 - Only `source` code interprets the pin.
 - `GitSource` keeps a few real-git contract tests, because those pin down facts about git that a fake would only restate (no fetch refspec in bare clones, per-worktree sparse config, blobless fetch). Pure parts of it (ref preference, URL normalisation, `ls-remote` parsing) are tested as data.
