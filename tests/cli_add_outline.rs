@@ -136,8 +136,12 @@ fn packages_given_with_a_terminal_still_outline_the_repo() {
 }
 
 #[test]
-fn a_registry_add_offline_and_no_sync_do_not_outline() {
-    for args in [&["npm:foo"][..], &[URL, "--offline"], &[URL, "--no-sync"]] {
+fn offline_and_no_sync_do_not_outline() {
+    for args in [
+        &[URL, "--offline"][..],
+        &[URL, "--no-sync"],
+        &["npm:foo", "--no-sync"],
+    ] {
         for terminal in [true, false] {
             let dir = project();
             let source = FakeSource::new();

@@ -1179,3 +1179,226 @@ fn a_forge_shorthand_that_names_no_repository_is_refused() {
     );
     assert!(run.err.contains("--ref"), "{}", run.err);
 }
+
+/// A monorepo tree: the registry's package in `packages/foo`, a sibling, and a root Manifest.
+fn monorepo(source: &FakeSource) {
+    source.set_tree(
+        FOO,
+        &"b".repeat(40),
+        &[
+            (
+                "package.json",
+                r#"{"name":"workspace","description":"The workspace"}"#,
+            ),
+            ("README.md", ""),
+            ("packages/foo/package.json", r#"{"name":"foo-js"}"#),
+            ("packages/foo/README.md", ""),
+            ("packages/bar/package.json", r#"{"name":"bar-js"}"#),
+            ("packages/bar/README.md", ""),
+        ],
+    );
+}
+
+fn in_monorepo(directory: Option<&str>) -> FakeRegistry {
+    FakeRegistry::new().with(Ecosystem::Npm, "foo-js", found(FOO, directory))
+}
+
+#[test]
+fn the_registrys_directory_is_picked_by_default_and_enter_keeps_it() {
+    let source = FakeSource::new();
+    monorepo(&source);
+    let registry = in_monorepo(Some("packages/foo"));
+    let args = ["npm:foo-js", "--id", "foo"];
+
+    let declined = project();
+    let mut no = Script::takes_defaults(false);
+    let run = add_asking(declined.path(), &registry, &source, &args, Some(&mut no));
+    assert_eq!(run.code, 0, "{}", run.err);
+
+    let accepted = project();
+    let mut yes = Script::takes_defaults(true);
+    let run = add_asking(accepted.path(), &registry, &source, &args, Some(&mut yes));
+    assert_eq!(run.code, 0, "{}", run.err);
+
+    assert_eq!(yes.preselected[0], ["packages/foo"]);
+    assert!(yes.offered[0].contains(&"packages/bar".to_owned()));
+    assert_eq!(config_text(accepted.path()), config_text(declined.path()));
+    assert!(config_text(accepted.path()).contains("paths = [\"packages/foo\"]"));
+}
+
+#[test]
+fn start_offers_the_docs_the_registrys_directory_will_check_out() {
+    let source = FakeSource::new();
+    monorepo(&source);
+    let mut yes = Script::takes_defaults(true);
+
+    let dir = project();
+    let args = ["npm:foo-js", "--id", "foo"];
+    let run = add_asking(
+        dir.path(),
+        &in_monorepo(Some("packages/foo")),
+        &source,
+        &args,
+        Some(&mut yes),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(yes.offered[1], ["README.md", "packages/foo/README.md"]);
+}
+
+#[test]
+fn a_registry_add_with_no_directory_opens_the_paths_picker_with_nothing_picked() {
+    let source = FakeSource::new();
+    monorepo(&source);
+    let mut yes = Script::takes_defaults(true);
+
+    let dir = project();
+    let args = ["npm:foo-js", "--id", "foo"];
+    let run = add_asking(
+        dir.path(),
+        &in_monorepo(None),
+        &source,
+        &args,
+        Some(&mut yes),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(yes.offered[0].contains(&"packages/foo".to_owned()));
+    assert!(yes.preselected[0].is_empty());
+}
+
+#[test]
+fn a_directory_past_the_pickers_cap_is_still_offered_and_picked() {
+    let source = FakeSource::new();
+    let mut files: Vec<(String, &str)> =
+        (0..5_100).map(|i| (format!("d{i:04}/x.txt"), "")).collect();
+    files.push(("a/b/c/deep/x.txt".to_owned(), ""));
+    let files: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), *t)).collect();
+    source.set_tree(FOO, &"b".repeat(40), &files);
+    let mut yes = Script::takes_defaults(true);
+
+    let dir = project();
+    let run = add_asking(
+        dir.path(),
+        &in_monorepo(Some("a/b/c/deep")),
+        &source,
+        &["npm:foo-js", "--id", "foo"],
+        Some(&mut yes),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(yes.offered[0].contains(&"a/b/c/deep".to_owned()));
+    assert!(config_text(dir.path()).contains("paths = [\"a/b/c/deep\"]"));
+}
+
+#[test]
+fn the_named_package_is_written_not_the_ones_the_manifests_name() {
+    let source = FakeSource::new();
+    monorepo(&source);
+
+    let dir = project();
+    let args = ["npm:foo-js", "--id", "foo"];
+    let mut no = Script::takes_defaults(false);
+    let run = add_asking(
+        dir.path(),
+        &in_monorepo(Some("packages/foo")),
+        &source,
+        &args,
+        Some(&mut no),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    let config = config_text(dir.path());
+    assert!(config.contains("packages = [\"foo-js\"]"), "{config}");
+}
+
+#[test]
+fn the_registrys_description_wins_then_the_root_manifests_then_it_is_asked() {
+    let source = FakeSource::new();
+    monorepo(&source);
+    let described = |description: Option<&str>| {
+        FakeRegistry::new().with(
+            Ecosystem::Npm,
+            "foo-js",
+            Found {
+                description: description.map(Into::into),
+                ..found(FOO, Some("packages/foo"))
+            },
+        )
+    };
+    let args = ["npm:foo-js", "--id", "foo"];
+
+    let dir = project();
+    let registry = described(Some("The package"));
+    let mut no = Script::takes_defaults(false);
+    add_asking(dir.path(), &registry, &source, &args, Some(&mut no));
+    assert!(config_text(dir.path()).contains("description = \"The package\""));
+
+    let dir = project();
+    let mut no = Script::takes_defaults(false);
+    add_asking(dir.path(), &described(None), &source, &args, Some(&mut no));
+    assert!(config_text(dir.path()).contains("description = \"The workspace\""));
+
+    let bare = FakeSource::new();
+    let dir = project();
+    let mut no = Script::takes_defaults(false);
+    add_asking(dir.path(), &described(None), &bare, &args, Some(&mut no));
+    assert_eq!(no.asked_about("Description").len(), 1);
+}
+
+#[test]
+fn a_bad_pinned_tag_fails_before_any_question_and_edits_nothing() {
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["foo-js-1.2.3"]);
+    source.fail(FOO, Method::Outline, "no such ref: foo-js-1.2.3");
+    let mut script = Script::new([]);
+
+    let dir = project();
+    let run = add_asking(
+        dir.path(),
+        &in_monorepo(None),
+        &source,
+        &["npm:foo-js@1.2.3"],
+        Some(&mut script),
+    );
+
+    assert_ne!(run.code, 0);
+    assert!(run.err.contains("no such ref"), "{}", run.err);
+    assert!(script.questions().is_empty(), "{:?}", script.questions());
+    assert_eq!(config_text(dir.path()), "");
+}
+
+#[test]
+fn the_summary_shows_the_tag_the_repo_was_looked_at_in() {
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["foo-js-1.2.3"]);
+    monorepo(&source);
+
+    let dir = project();
+    let run = add_asking(
+        dir.path(),
+        &in_monorepo(None),
+        &source,
+        &["npm:foo-js@1.2.3", "--id", "foo"],
+        Some(&mut Script::takes_defaults(false)),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(run.err.contains("foo-js-1.2.3 (bbbbbbb)"), "{}", run.err);
+}
+
+#[test]
+fn a_registry_add_with_no_one_to_ask_does_not_look_at_the_repo() {
+    let source = FakeSource::new();
+
+    let dir = project();
+    let run = add(
+        dir.path(),
+        &in_monorepo(Some("packages/foo")),
+        &source,
+        &["npm:foo-js", "--id", "foo"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(!source.calls().contains(&Call::Outline(FOO.into())));
+}

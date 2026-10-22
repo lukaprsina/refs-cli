@@ -61,6 +61,9 @@ pub struct Known<'a> {
     pub described: Option<&'a str>,
     /// What the repo was looked at for, when it was: the commit and the paths of its tree.
     pub looked_at: Option<&'a Outline>,
+    /// Whether the `paths` of the repo are the registry's, to be picked from with those ticked,
+    /// and not given on the command line.
+    pub paths_proposed: bool,
     /// The packages the Manifests give for a Checkout of these `paths`, when they were read.
     pub packages_for: Option<&'a PackagesFor<'a>>,
 }
@@ -98,7 +101,7 @@ pub fn fill_add(
         description_open = false;
     }
     let (paths_open, start_open, packages_open) = (
-        repo.paths.is_empty(),
+        repo.paths.is_empty() || known.paths_proposed,
         repo.start.is_empty(),
         repo.packages.is_empty(),
     );
@@ -129,7 +132,7 @@ pub fn fill_add(
             repo.description = non_empty(answer);
         }
         if paths_open {
-            repo.paths = ask_paths(prompter, listed, say)?;
+            repo.paths = ask_paths(prompter, listed, &repo.paths, say)?;
             if packages_open {
                 repo.packages = packages_for(&repo.paths);
             }
@@ -178,10 +181,12 @@ fn summary(repo: &AddRepo, id: &str, pin: Option<&Pin>) -> Vec<String> {
     .to_vec()
 }
 
-/// The directories to check out: picked from those of the `listed` repo, else typed.
+/// The directories to check out: picked from those of the `listed` repo with `current` ticked,
+/// else typed.
 fn ask_paths(
     prompter: &mut dyn Prompter,
     listed: Option<&[String]>,
+    current: &[String],
     say: &mut dyn Say,
 ) -> Result<Vec<String>, Abort> {
     let Some(listed) = listed else {
@@ -193,7 +198,7 @@ fn ask_paths(
         prompter,
         say,
         message,
-        dirs,
+        (dirs, current),
         left,
         ("directories", "--paths"),
     )?;
@@ -213,19 +218,28 @@ fn ask_start(
     };
     let (files, left) = listing::start_files(listed, paths);
     let message = "Files to read first (type to filter; none selected: none)";
+    let files = (files, &[][..]);
     pick_capped(prompter, say, message, files, left, ("files", "--start"))
 }
 
-/// A selection from `options`, of which `left` more were cut off: said, with the `flag` that
-/// names them. Nothing is asked when there are none.
+/// A selection from `options`, with `ticked` ticked, of which `left` more were cut off: said, with
+/// the `flag` that names them. A ticked one is offered even if it was cut off. Nothing is asked
+/// when there are none.
 fn pick_capped(
     prompter: &mut dyn Prompter,
     say: &mut dyn Say,
     message: &str,
-    options: Vec<String>,
+    (mut options, ticked): (Vec<String>, &[String]),
     left: usize,
     (noun, flag): (&str, &str),
 ) -> Result<Vec<String>, Abort> {
+    let cut: Vec<String> = ticked
+        .iter()
+        .filter(|t| !options.contains(t))
+        .cloned()
+        .collect();
+    options.extend(cut);
+    options.sort();
     if options.is_empty() {
         return Ok(vec![]);
     }
@@ -236,7 +250,7 @@ fn pick_capped(
             shown + left
         ));
     }
-    prompter.pick(message, &options, &[])
+    prompter.pick(message, &options, ticked)
 }
 
 fn ask_words(prompter: &mut dyn Prompter, message: &str) -> Result<Vec<String>, Abort> {

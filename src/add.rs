@@ -103,6 +103,7 @@ fn prepare(
     {
         repo.url = prompt::ask_url(prompter).map_err(Failure::Asked)?;
     }
+    let paths_given = !repo.paths.is_empty();
     let expanded =
         registry::expand(&repo, asking.registry, asking.offline).map_err(Failure::Registry)?;
     if let Some(ignored) = &expanded.ignored {
@@ -114,6 +115,8 @@ fn prepare(
     }
     // A registry add has chosen its Ref (a tag, or the default branch), so it is not asked.
     let ref_settled = expanded.requested.is_some();
+    // The directory the registry gave is where the paths picker starts, unlike one from `--paths`.
+    let paths_proposed = ref_settled && !paths_given;
     let registry_description = expanded.description;
     let mut repo = expanded.repo;
     // A `ref` given with a version was refused by `expand`; without one it is kept as it is.
@@ -133,8 +136,7 @@ fn prepare(
     // Looking at the repo comes before the rest of the questions, so that a bad URL or ref
     // fails before they are asked and with nothing edited.
     let looks = source.filter(|_| {
-        !ref_settled
-            && !repo.url.is_empty()
+        !repo.url.is_empty()
             && !asking.offline
             && (asking.prompter.is_some() || repo.packages.is_empty())
     });
@@ -146,8 +148,11 @@ fn prepare(
         let looked = source
             .outline(&repo.url, git_ref)
             .map_err(Failure::Source)?;
-        manifests = read_manifests(source, &repo, &looked, say)?;
-        described = infer(&manifests).description;
+        // A registry add that names its package and describes it has no use for the Manifests.
+        if repo.packages.is_empty() || (described.is_none() && repo.description.is_none()) {
+            manifests = read_manifests(source, &repo, &looked, say)?;
+            described = described.or(infer(&manifests).description);
+        }
         outline = Some(looked);
     }
     // Only the Manifests a Checkout of `paths` will hold count. None is fetched again.
@@ -173,6 +178,7 @@ fn prepare(
     let known = Known {
         described: described.as_deref(),
         looked_at: outline.as_ref(),
+        paths_proposed: paths_proposed && outline.is_some(),
         packages_for: outline.is_some().then_some(&packages_for as &PackagesFor),
     };
     prompt::fill_add(&mut repo, config, prompter, &known, say).map_err(Failure::Asked)?;
