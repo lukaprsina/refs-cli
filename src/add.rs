@@ -172,7 +172,7 @@ fn prepare(
     };
     let known = Known {
         described: described.as_deref(),
-        looked_at: outline.as_ref().map(|o| (&o.pin, &o.paths[..])),
+        looked_at: outline.as_ref(),
         packages_for: outline.is_some().then_some(&packages_for as &PackagesFor),
     };
     prompt::fill_add(&mut repo, config, prompter, &known, say).map_err(Failure::Asked)?;

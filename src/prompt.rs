@@ -7,7 +7,7 @@ use crate::edit::{AddRepo, id_from_url};
 use crate::listing;
 use crate::registry;
 use crate::registry::pin::Say;
-use crate::source::Pin;
+use crate::source::{Outline, Pin};
 
 /// Why a question went unanswered. Nothing has been edited yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +55,7 @@ pub struct Known<'a> {
     /// The description to start from: the registry's, else the root Manifest's.
     pub described: Option<&'a str>,
     /// What the repo was looked at for, when it was: the commit and the paths of its tree.
-    pub looked_at: Option<(&'a Pin, &'a [String])>,
+    pub looked_at: Option<&'a Outline>,
     /// The packages the Manifests give for a Checkout of these `paths`, when they were read.
     pub packages_for: Option<&'a PackagesFor<'a>>,
 }
@@ -105,12 +105,12 @@ pub fn fill_add(
     let open =
         id_open || description_open || group_open || paths_open || start_open || packages_open;
     if open {
-        for line in summary(repo, &id, known.looked_at.map(|(pin, _)| pin)) {
+        for line in summary(repo, &id, known.looked_at.map(|o| &o.pin)) {
             say.status(line);
         }
     }
     if open && prompter.confirm("Customize?")? {
-        let listed = known.looked_at.map(|(_, paths)| paths);
+        let listed = known.looked_at.map(|o| &o.paths[..]);
         if id_open {
             id = prompter.text("Id", Some(&id), &taken)?;
         }
