@@ -120,7 +120,7 @@ impl Cache {
                     sha: sha.into(),
                 });
             } else {
-                self.create_entry(url, &name)?;
+                self.init_repo(url, &name)?;
             }
             if !url_file.exists() {
                 crate::atomic::write(&url_file, &format!("{url}\n"))
@@ -170,7 +170,7 @@ impl Cache {
     /// Create an empty bare repository that knows `url` (and has no fetch refspec) in a
     /// temporary directory and rename it, so one that died half way is never mistaken for a
     /// Cache repository. Commits arrive later, one Pin at a time (`Repo::ensure_commit`).
-    fn create_entry(&self, url: &str, name: &str) -> Result<(), SourceError> {
+    fn init_repo(&self, url: &str, name: &str) -> Result<(), SourceError> {
         let tmp = self.root.join(format!("{name}.tmp"));
         let dir = self.root.join(name);
         if tmp.exists() {
