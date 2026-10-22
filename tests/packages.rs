@@ -145,3 +145,61 @@ fn a_sparse_checkout_gives_the_manifests_it_has() {
         ["@solidjs/web", "solid-monorepo-docs"]
     );
 }
+
+#[test]
+fn subpath_export_shims_with_invalid_npm_names_are_not_packages() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "package.json", r#"{ "name": "solid-js" }"#);
+    for shim in ["solid-js/h", "solid-js/web", "solid-js/store"] {
+        write(
+            dir.path(),
+            &format!("{shim}/package.json"),
+            &format!(r#"{{ "name": "{shim}" }}"#),
+        );
+    }
+    write(
+        dir.path(),
+        "packages/web/package.json",
+        r#"{ "name": "@solidjs/web" }"#,
+    );
+    write(dir.path(), "a/package.json", r#"{ "name": "_hidden" }"#);
+    write(dir.path(), "b/package.json", r#"{ "name": "@scope/.dot" }"#);
+    write(dir.path(), "c/package.json", r#"{ "name": " spaced" }"#);
+    write(
+        dir.path(),
+        "d/package.json",
+        r#"{ "name": "node_modules" }"#,
+    );
+    // Legacy names that npm still serves stay.
+    write(dir.path(), "e/package.json", r#"{ "name": "JSONStream" }"#);
+    assert_eq!(
+        infer_packages(dir.path()),
+        ["@solidjs/web", "JSONStream", "solid-js"]
+    );
+}
+
+#[test]
+fn a_cargo_package_that_is_not_published_is_not_a_package() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "Cargo.toml",
+        "[package]\nname = \"lib\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        dir.path(),
+        "xtask/Cargo.toml",
+        "[package]\nname = \"xtask\"\npublish = false\n",
+    );
+    write(
+        dir.path(),
+        "none/Cargo.toml",
+        "[package]\nname = \"none\"\npublish = []\n",
+    );
+    write(
+        dir.path(),
+        "private/Cargo.toml",
+        "[package]\nname = \"elsewhere\"\npublish = [\"my-registry\"]\n",
+    );
+    assert_eq!(infer_packages(dir.path()), ["elsewhere", "lib"]);
+}

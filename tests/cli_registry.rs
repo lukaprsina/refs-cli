@@ -13,7 +13,7 @@ use refs_cli::update::Unmanaged;
 use tempfile::TempDir;
 
 mod common;
-use common::script::Script;
+use common::script::{Answer, Script};
 
 struct Run {
     code: u8,
@@ -34,6 +34,7 @@ fn found(url: &str, directory: Option<&str>) -> Found {
     Found {
         url: url.into(),
         directory: directory.map(Into::into),
+        description: None,
     }
 }
 
@@ -449,6 +450,45 @@ fn a_version_with_no_tag_asks_and_continues_on_yes() {
 }
 
 #[test]
+fn a_registry_add_offers_the_registrys_description_and_it_can_be_cleared() {
+    let registry = FakeRegistry::new().with(
+        Ecosystem::Npm,
+        "foo-js",
+        Found {
+            description: Some("Reactive UI".into()),
+            ..found(FOO, None)
+        },
+    );
+    let args = ["npm:foo-js", "--id", "foo", "--group", "g", "--no-sync"];
+
+    let dir = project();
+    let mut kept = Script::new([Answer::Text(""), Answer::Yes(false)]);
+    let run = add_asking(
+        dir.path(),
+        &registry,
+        &FakeSource::new(),
+        &args,
+        Some(&mut kept),
+    );
+    assert_eq!(run.code, 0, "{}", run.err);
+    let asked = kept.asked_about("Description");
+    assert_eq!(asked[0].1.as_deref(), Some("Reactive UI"), "{asked:?}");
+    assert!(config_text(dir.path()).contains("description = \"Reactive UI\""));
+
+    let dir = project();
+    let mut cleared = Script::new([Answer::Clear, Answer::Yes(false)]);
+    let run = add_asking(
+        dir.path(),
+        &registry,
+        &FakeSource::new(),
+        &args,
+        Some(&mut cleared),
+    );
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(!config_text(dir.path()).contains("description"));
+}
+
+#[test]
 fn a_bare_registry_add_does_not_ask_for_the_ref() {
     let dir = project();
     let source = FakeSource::new();
@@ -524,7 +564,6 @@ fn no_sync_lists_no_tags_and_says_the_version_is_not_pinned() {
 fn a_version_that_is_empty_or_not_a_version_is_refused_before_the_registry_is_asked() {
     for shorthand in [
         "npm:foo-js@",
-        "npm:foo-js@latest",
         "npm:foo-js@^1.2.0",
         "npm:foo-js@>=1",
         "npm:foo-js@*",
@@ -544,6 +583,30 @@ fn a_version_that_is_empty_or_not_a_version_is_refused_before_the_registry_is_as
         );
         assert!(registry.calls().is_empty(), "{shorthand}");
         assert_eq!(config_text(dir.path()), "", "{shorthand}");
+    }
+}
+
+#[test]
+fn a_tag_in_place_of_a_version_is_refused_with_the_ref_form() {
+    for tag in ["next", "latest", "beta-2"] {
+        let dir = project();
+        let registry = foo_registry();
+
+        let run = add(
+            dir.path(),
+            &registry,
+            &FakeSource::new(),
+            &[&format!("npm:foo-js@{tag}")],
+        );
+
+        assert_eq!(run.code, 1, "{tag}: {}", run.err);
+        assert!(
+            run.err.contains(&format!("`{tag}` looks like a tag"))
+                && run.err.contains(&format!("npm:foo-js --ref {tag}")),
+            "{tag}: {}",
+            run.err
+        );
+        assert!(registry.calls().is_empty(), "{tag}");
     }
 }
 

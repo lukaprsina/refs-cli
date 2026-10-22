@@ -83,12 +83,20 @@ pub struct Found {
     pub url: String,
     /// The package's directory inside the repo, when the registry knows it (npm only).
     pub directory: Option<String>,
+    /// What the registry says the package is, when it says (a blank is nothing).
+    pub description: Option<String>,
 }
 
 /// What an adapter makes of a registry's document: where the package lives, `None` when the
 /// document names no repository that can be used, or why the body is not the document the
 /// registry is known to send.
 pub type Answer = Result<Option<Found>, String>;
+
+/// `text` unless it is missing or only whitespace.
+fn non_blank(text: Option<String>) -> Option<String> {
+    text.map(|text| text.trim().to_owned())
+        .filter(|text| !text.is_empty())
+}
 
 /// The registry's document in `body`, or why it is not the one the registry is known to send.
 fn parse<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, String> {
@@ -161,6 +169,13 @@ pub enum RegistryError {
     )]
     BadVersion { shorthand: String, why: String },
 
+    #[error("`{tag}` looks like a tag, not a version")]
+    #[diagnostic(
+        code(refs::registry::tag_not_version),
+        help("to follow it, write `{bare} --ref {tag}`")
+    )]
+    TagNotVersion { tag: String, bare: String },
+
     #[error(
         "{} gives `{url}` for `{}`, which cannot be used: {problem}",
         .package.ecosystem.registry(), .package.name
@@ -226,6 +241,15 @@ fn exact_version(version: &str) -> Result<&str, &'static str> {
     }
 }
 
+/// Whether `version` is a word such as `next` or `beta-2`, which a person means as a ref.
+fn looks_like_tag(version: &str) -> bool {
+    let word = |c: char| c.is_ascii_alphanumeric() || "-_.".contains(c);
+    let v_number = version
+        .strip_prefix('v')
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+    version.starts_with(|c: char| c.is_ascii_alphabetic()) && !v_number && version.chars().all(word)
+}
+
 /// The package a shorthand named, and its version if the shorthand gave one, for finding the
 /// tag it was released as.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,6 +264,8 @@ pub struct Requested {
 pub struct Expanded {
     pub repo: AddRepo,
     pub requested: Option<Requested>,
+    /// The registry's description of the package, to start the description question from.
+    pub description: Option<String>,
     /// The path a forge shorthand had after the repository, which was dropped.
     pub ignored: Option<String>,
 }
@@ -268,6 +294,7 @@ pub fn expand(
         return Ok(Expanded {
             repo: expanded,
             requested: None,
+            description: None,
             ignored: named.ignored,
         });
     }
@@ -275,14 +302,21 @@ pub fn expand(
         return Ok(Expanded {
             repo: repo.clone(),
             requested: None,
+            description: None,
             ignored: None,
         });
     };
     let version = version
         .map(|version| {
-            exact_version(version).map_err(|why| RegistryError::BadVersion {
-                shorthand: repo.url.clone(),
-                why: why.to_owned(),
+            exact_version(version).map_err(|why| match looks_like_tag(version) {
+                true => RegistryError::TagNotVersion {
+                    tag: version.to_owned(),
+                    bare: format!("{}{name}", ecosystem.spec().prefix),
+                },
+                false => RegistryError::BadVersion {
+                    shorthand: repo.url.clone(),
+                    why: why.to_owned(),
+                },
             })
         })
         .transpose()?;
@@ -317,6 +351,7 @@ pub fn expand(
             package,
             version: version.map(str::to_owned),
         }),
+        description: found.description,
         ignored: None,
     })
 }

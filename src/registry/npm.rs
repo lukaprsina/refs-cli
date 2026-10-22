@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use super::url::{bare_github, clean};
 use super::used::{bun, package_lock, pnpm, yarn};
-use super::{Answer, Found, Spec, parse};
+use super::{Answer, Found, Spec, non_blank, parse};
 
 pub(super) const SPEC: Spec = Spec {
     prefix: "npm:",
@@ -22,6 +22,7 @@ pub(super) const SPEC: Spec = Spec {
 
 #[derive(Deserialize)]
 struct Document {
+    description: Option<String>,
     repository: Option<Repository>,
 }
 
@@ -56,5 +57,6 @@ pub fn found(body: &str) -> Answer {
         directory: directory
             .map(|d| d.trim().trim_end_matches('/').to_owned())
             .filter(|d| !d.is_empty()),
+        description: non_blank(document.description),
     }))
 }

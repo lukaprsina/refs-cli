@@ -31,8 +31,7 @@ fn walk(dir: &Path, names: &mut BTreeSet<String>) {
 }
 
 /// Directories that hold dependencies, build output, examples or test fixtures, and dot
-/// directories: their Manifests are not packages the Repo documents. (Private npm Manifests
-/// are skipped by `package_json`.)
+/// directories: their Manifests are not packages the Repo documents.
 fn skipped(dir: &str) -> bool {
     const SKIPPED: [&str; 8] = [
         "node_modules",
@@ -58,17 +57,54 @@ fn reader(file: &str) -> Option<fn(&str) -> Option<String>> {
     }
 }
 
-/// The `name` of a package that can be published: a `"private": true` one is never imported.
+/// The `name` of a package that can be installed: a `"private": true` one is never imported,
+/// and a name npm would refuse is a subpath-export shim (`solid-js/h`), not a package.
 fn package_json(text: &str) -> Option<String> {
     let json: serde_json::Value = serde_json::from_str(text).ok()?;
     if json["private"].as_bool() == Some(true) {
         return None;
     }
-    json["name"].as_str().map(str::to_owned)
+    json["name"]
+        .as_str()
+        .filter(|name| valid_npm_name(name))
+        .map(str::to_owned)
 }
 
+/// Whether npm accepts `name` for a package that is already published, after
+/// `validate-npm-package-name`: its errors, not its warnings (capitals and old names stay).
+fn valid_npm_name(name: &str) -> bool {
+    let url_friendly = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_.!~*'()".contains(c))
+    };
+    let package = match name.strip_prefix('@') {
+        Some(scoped) => match scoped.split_once('/') {
+            Some((scope, package)) if url_friendly(scope) => package,
+            _ => return false,
+        },
+        None => name,
+    };
+    url_friendly(package)
+        && !name.starts_with(['.', '-', '_'])
+        && !package.starts_with('.')
+        && !["node_modules", "favicon.ico"].contains(&name.to_lowercase().as_str())
+}
+
+/// The `name` of a Cargo package, unless `publish` rules out every registry.
 fn cargo_toml(text: &str) -> Option<String> {
-    toml_name(text, "package")
+    let toml: toml::Table = text.parse().ok()?;
+    let package = toml.get("package")?;
+    let unpublished = match package.get("publish") {
+        Some(toml::Value::Boolean(publish)) => !publish,
+        Some(toml::Value::Array(registries)) => registries.is_empty(),
+        _ => false,
+    };
+    if unpublished {
+        return None;
+    }
+    package.get("name")?.as_str().map(str::to_owned)
 }
 
 fn pyproject_toml(text: &str) -> Option<String> {

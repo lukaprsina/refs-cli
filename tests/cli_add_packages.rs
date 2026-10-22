@@ -80,7 +80,7 @@ fn add_foo(
 fn the_confirm_defaults_to_the_inferred_names_and_the_answer_is_written() {
     let dir = project_with_checkout_of_foo("package.json", r#"{ "name": "foo-js" }"#);
     let source = FakeSource::new();
-    let mut script = Script::new([Answer::Yes(false), Answer::Text("")]);
+    let mut script = Script::new([Answer::Text(""), Answer::Text("")]);
 
     let run = add_foo(dir.path(), &source, &[], Some(&mut script));
 
@@ -100,7 +100,7 @@ fn the_confirm_defaults_to_the_inferred_names_and_the_answer_is_written() {
 fn the_equivalent_command_includes_the_confirmed_packages() {
     let dir = project_with_checkout_of_foo("package.json", r#"{ "name": "foo-js" }"#);
     let source = FakeSource::new();
-    let mut script = Script::new([Answer::Yes(false), Answer::Text("")]);
+    let mut script = Script::new([Answer::Text(""), Answer::Text("")]);
 
     let run = add_foo(dir.path(), &source, &[], Some(&mut script));
 
@@ -116,7 +116,7 @@ fn the_equivalent_command_includes_the_confirmed_packages() {
 fn a_cancel_at_the_confirm_leaves_the_repo_added_without_packages_and_says_so() {
     let dir = project_with_checkout_of_foo("package.json", r#"{ "name": "foo-js" }"#);
     let source = FakeSource::new();
-    let mut script = Script::new([Answer::Yes(false), Answer::Cancel]);
+    let mut script = Script::new([Answer::Text(""), Answer::Cancel]);
 
     let run = add_foo(dir.path(), &source, &[], Some(&mut script));
 
@@ -146,7 +146,7 @@ fn without_a_terminal_the_inferred_names_are_written() {
 fn a_miss_asks_with_no_default_and_an_empty_answer_writes_nothing() {
     let dir = project_with_checkout_of_foo("README.md", "# foo");
     let source = FakeSource::new();
-    let mut script = Script::new([Answer::Yes(false), Answer::Text("")]);
+    let mut script = Script::new([Answer::Text(""), Answer::Text("")]);
 
     let run = add_foo(dir.path(), &source, &[], Some(&mut script));
 
@@ -164,7 +164,7 @@ fn a_miss_asks_with_no_default_and_an_empty_answer_writes_nothing() {
 fn a_failing_terminal_is_reported_as_such_and_the_repo_stays_added() {
     let dir = project_with_checkout_of_foo("package.json", r#"{ "name": "foo-js" }"#);
     let source = FakeSource::new();
-    let mut script = Script::new([Answer::Yes(false), Answer::Fail("no tty")]);
+    let mut script = Script::new([Answer::Text(""), Answer::Fail("no tty")]);
 
     let run = add_foo(dir.path(), &source, &[], Some(&mut script));
 
@@ -197,7 +197,7 @@ fn asking_only_for_packages_still_prints_the_equivalent_command() {
 fn explicit_packages_and_no_sync_infer_nothing() {
     let dir = project_with_checkout_of_foo("package.json", r#"{ "name": "foo-js" }"#);
     let source = FakeSource::new();
-    let mut script = Script::new([Answer::Yes(false)]);
+    let mut script = Script::new([Answer::Text("")]);
     let run = add_foo(
         dir.path(),
         &source,

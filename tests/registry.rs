@@ -25,6 +25,14 @@ fn found(url: &str, directory: Option<&str>) -> Option<Found> {
     Some(Found {
         url: url.into(),
         directory: directory.map(Into::into),
+        description: None,
+    })
+}
+
+fn described(found: Option<Found>, description: &str) -> Option<Found> {
+    found.map(|found| Found {
+        description: Some(description.into()),
+        ..found
     })
 }
 
@@ -217,6 +225,38 @@ fn pypi_falls_back_to_the_legacy_home_page_and_tolerates_nothing_at_all() {
     ] {
         assert_eq!(pypi::found(&body), Ok(None), "{body}");
     }
+}
+
+#[test]
+fn each_registry_gives_its_own_description_and_an_empty_one_is_none() {
+    let repository = r#"{ "url": "https://github.com/o/r" }"#;
+    let npm = format!(r#"{{ "description": "Reactive UI", "repository": {repository} }}"#);
+    assert_eq!(
+        npm::found(&npm),
+        Ok(described(
+            found("https://github.com/o/r", None),
+            "Reactive UI"
+        ))
+    );
+    let krate = r#"{ "crate": { "description": "Serialization", "repository": "https://github.com/o/r" } }"#;
+    assert_eq!(
+        crates::found(krate),
+        Ok(described(
+            found("https://github.com/o/r", None),
+            "Serialization"
+        ))
+    );
+    let pypi = r#"{ "info": { "summary": "Imaging", "project_urls": { "Source": "https://github.com/o/r" } } }"#;
+    assert_eq!(
+        pypi::found(pypi),
+        Ok(described(found("https://github.com/o/r", None), "Imaging"))
+    );
+
+    let empty = npm_with(repository).replace(r#""x""#, r#""x", "description": """#);
+    assert_eq!(
+        npm::found(&empty),
+        Ok(found("https://github.com/o/r", None))
+    );
 }
 
 #[test]

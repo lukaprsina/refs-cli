@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use super::url::{clean, on_forge};
 use super::used::cargo;
-use super::{Answer, Found, Spec, parse};
+use super::{Answer, Found, Spec, non_blank, parse};
 
 pub(super) const SPEC: Spec = Spec {
     prefix: "cargo:",
@@ -23,6 +23,7 @@ struct Document {
 
 #[derive(Deserialize)]
 struct Entry {
+    description: Option<String>,
     repository: Option<String>,
     homepage: Option<String>,
 }
@@ -31,15 +32,17 @@ struct Entry {
 /// repository on a forge.
 pub fn found(body: &str) -> Answer {
     let document: Document = parse(body)?;
-    let url = document.krate.and_then(|entry| {
-        entry
-            .repository
-            .as_deref()
-            .and_then(clean)
-            .or_else(|| entry.homepage.as_deref().and_then(on_forge))
-    });
+    let Some(entry) = document.krate else {
+        return Ok(None);
+    };
+    let url = entry
+        .repository
+        .as_deref()
+        .and_then(clean)
+        .or_else(|| entry.homepage.as_deref().and_then(on_forge));
     Ok(url.map(|url| Found {
         url,
         directory: None,
+        description: non_blank(entry.description),
     }))
 }

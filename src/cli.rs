@@ -15,7 +15,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::add::{Asking, Failure, Skipped};
 use crate::config::Config;
-use crate::diagnostic::SourceError;
+use crate::diagnostic::{Note, ProjectError, SourceError};
 use crate::edit::{AddRepo, Edit, Target};
 use crate::list::list;
 use crate::plan::{LockFlags, Upgrade};
@@ -331,7 +331,7 @@ pub fn run_on<'a>(
     match cli.command {
         Command::Init(args) => init(start, args.here, &mut console),
         Command::Update(args) => update(outside.updater, args.check, &mut console),
-        Command::Config(command) => match load(start, &mut console) {
+        Command::Config(command) => match load_for(&command, start, &mut console) {
             Ok((root, config)) => {
                 let prompter = outside.prompter.filter(|_| !cli.no_input);
                 run_config(
@@ -368,6 +368,24 @@ pub fn run_on<'a>(
 /// returned.
 fn load(start: &Path, console: &mut Console) -> Result<(PathBuf, Config), u8> {
     project::load(start).map_err(|reports| fail_all(reports, console))
+}
+
+/// `load`, except that an `add` with no `refs.toml` anywhere up gets the place `refs init`
+/// would set one up and an empty config: the edit creates the file (ADR 0005).
+fn load_for(
+    command: &ConfigCommand,
+    start: &Path,
+    console: &mut Console,
+) -> Result<(PathBuf, Config), u8> {
+    let no_config = matches!(
+        project::find_root(start),
+        Err(ProjectError::NoConfig { .. })
+    );
+    if !(matches!(command, ConfigCommand::Add { .. }) && no_config) {
+        return load(start, console);
+    }
+    let root = project::init_root(start, false).map_err(|e| fail(e, console))?;
+    Ok((root, Config::default()))
 }
 
 fn run_config<'a>(
@@ -601,6 +619,9 @@ fn init(start: &Path, here: bool, console: &mut Console) -> u8 {
         .and_then(|root| crate::init::init(&root).map_err(miette::Report::new));
     match result {
         Ok(done) => {
+            if !done.in_git {
+                console.report(miette::Report::new(Note::NoGitRepo));
+            }
             if done.config_created {
                 console.status(format_args!("created {}", project::CONFIG_FILE));
                 console.status(REMINDERS);
@@ -692,6 +713,7 @@ fn print_report(report: &Report, check: bool, console: &mut Console) -> u8 {
     for change in &report.changes {
         match change {
             Changed::Config => console.status(format_args!("updated {}", project::CONFIG_FILE)),
+            Changed::ConfigCreated(path) => console.status(format_args!("created {path}")),
             Changed::Group(group) => console.status(format_args!("created group `{group}`")),
             Changed::Lock => console.status(format_args!("updated {}", crate::lock::FILE)),
             Changed::Checkout { id, how } => {

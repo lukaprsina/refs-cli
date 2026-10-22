@@ -32,6 +32,8 @@ pub struct SyncFlags {
 pub enum Changed {
     /// `refs.toml` was written (only an edit does).
     Config,
+    /// `refs.toml` did not exist, and the edit created it at this path.
+    ConfigCreated(String),
     /// The edit created this Group in `refs.toml`.
     Group(String),
     /// `refs.lock` was written.
@@ -226,6 +228,8 @@ fn rejected(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
 /// An edit applied to the text of `<root>/refs.toml` and parsed, but not yet written: the
 /// config a sync runs against.
 struct Applied {
+    /// The path of `refs.toml` when the edit starts it from nothing.
+    created: Option<String>,
     before: String,
     after: String,
     config: Config,
@@ -234,9 +238,14 @@ struct Applied {
 
 impl Applied {
     fn read(root: &Path, edit: &Edit) -> Result<Applied, Report> {
-        let before = project::read_config(root).map_err(rejected)?;
+        let created = !root.join(project::CONFIG_FILE).exists();
+        let before = match created {
+            true => String::new(),
+            false => project::read_config(root).map_err(rejected)?,
+        };
         let applied = edit.apply(&before).map_err(rejected)?;
         Ok(Applied {
+            created: created.then(|| root.join(project::CONFIG_FILE).display().to_string()),
             before,
             after: applied.text,
             config: applied.config,
@@ -251,7 +260,10 @@ impl Applied {
     /// `report` of a run that came after the edit was written: what the edit did is said
     /// first.
     fn written(self, mut report: Report) -> Report {
-        let mut edit = vec![Changed::Config];
+        let mut edit = vec![match self.created {
+            Some(path) => Changed::ConfigCreated(path),
+            None => Changed::Config,
+        }];
         edit.extend(self.group_created.map(Changed::Group));
         report.changes.splice(0..0, edit);
         report

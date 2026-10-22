@@ -9,23 +9,25 @@ use refs_cli::prompt::{Abort, Prompter};
 pub enum Answer {
     Text(&'static str),
     Yes(bool),
+    /// Empties a prefilled box, as selecting it all and deleting would.
+    Clear,
     Cancel,
     Fail(&'static str),
 }
 
-/// Answers the questions in order from a queue, and records them. An empty text answer takes the
-/// default. A text answer that fails validation is recorded as a rejection and the next answer is
+/// Answers the questions in order from a queue, and records them. An empty text answer is Enter on
+/// the prefilled `initial` value; `Answer::Clear` is an empty box. A text answer that fails validation is recorded as a rejection and the next answer is
 /// tried, as a terminal would re-ask.
 ///
 /// Once the queue is empty it panics, unless the script `takes_defaults`: then every text takes
-/// its default, every suggestion is left empty, and every yes-or-no gets one fixed answer.
+/// its initial value, every suggestion is left empty, and every yes-or-no gets one fixed answer.
 /// `picking` answers the text questions that mention a word, whatever the queue holds.
 #[derive(Default)]
 pub struct Script {
     answers: VecDeque<Answer>,
     defaults: Option<bool>,
     pick: Option<(&'static str, Option<&'static str>)>,
-    /// Every question with the default it came with.
+    /// Every question with the initial value it came with.
     pub asked: Vec<(String, Option<String>)>,
     pub rejected: Vec<String>,
     pub suggested: Vec<Vec<String>>,
@@ -47,7 +49,7 @@ impl Script {
         }
     }
 
-    /// Answers the text questions that mention `word` with `answer` (the default when `None`);
+    /// Answers the text questions that mention `word` with `answer` (the initial value when `None`);
     /// an answer that fails validation cancels.
     pub fn picking(mut self, word: &'static str, answer: Option<&'static str>) -> Script {
         self.pick = Some((word, answer));
@@ -65,9 +67,9 @@ impl Script {
         self.asked.iter().filter(mentions).collect()
     }
 
-    fn next(&mut self, message: &str, default: Option<&str>) -> Option<Answer> {
+    fn next(&mut self, message: &str, initial: Option<&str>) -> Option<Answer> {
         self.asked
-            .push((message.to_owned(), default.map(str::to_owned)));
+            .push((message.to_owned(), initial.map(str::to_owned)));
         match self.answers.pop_front() {
             None if self.defaults.is_some() => None,
             None => panic!("no answer left for {message:?}"),
@@ -80,23 +82,24 @@ impl Prompter for Script {
     fn text(
         &mut self,
         message: &str,
-        default: Option<&str>,
+        initial: Option<&str>,
         validate: &dyn Fn(&str) -> Result<(), String>,
     ) -> Result<String, Abort> {
         if let Some((word, answer)) = self.pick
             && message.contains(word)
         {
             self.asked
-                .push((message.to_owned(), default.map(str::to_owned)));
-            let answer = answer.or(default).unwrap_or("").to_owned();
+                .push((message.to_owned(), initial.map(str::to_owned)));
+            let answer = answer.or(initial).unwrap_or("").to_owned();
             return validate(&answer).map(|()| answer).map_err(|why| {
                 self.rejected.push(why);
                 Abort::Cancelled
             });
         }
         loop {
-            let answer = match self.next(message, default) {
-                None | Some(Answer::Text("")) => default.unwrap_or("").to_owned(),
+            let answer = match self.next(message, initial) {
+                None | Some(Answer::Text("")) => initial.unwrap_or("").to_owned(),
+                Some(Answer::Clear) => String::new(),
                 Some(Answer::Text(text)) => text.to_owned(),
                 Some(Answer::Cancel) => return Err(Abort::Cancelled),
                 Some(Answer::Fail(why)) => return Err(Abort::Failed(why.to_owned())),
@@ -130,7 +133,9 @@ impl Prompter for Script {
             None => Ok(self.defaults.unwrap_or(false)),
             Some(Answer::Yes(yes)) => Ok(yes),
             Some(Answer::Cancel) => Err(Abort::Cancelled),
-            Some(Answer::Text(_) | Answer::Fail(_)) => panic!("{message:?} is a confirm question"),
+            Some(Answer::Text(_) | Answer::Clear | Answer::Fail(_)) => {
+                panic!("{message:?} is a confirm question")
+            }
         }
     }
 }

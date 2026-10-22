@@ -188,6 +188,7 @@ fn prepare(
     }
     // A registry add has chosen its Ref (a tag, or the default branch), so it is not asked.
     let ref_settled = expanded.requested.is_some();
+    let registry_description = expanded.description;
     let mut repo = expanded.repo;
     // A `ref` given with a version was refused by `expand`; without one it is kept as it is.
     if let (None, Some(requested)) = (&repo.git_ref, &expanded.requested) {
@@ -203,7 +204,14 @@ fn prepare(
             false => Ok(repo),
         };
     };
-    prompt::fill_add(&mut repo, config, prompter, ref_settled).map_err(Failure::Asked)?;
+    prompt::fill_add(
+        &mut repo,
+        config,
+        prompter,
+        ref_settled,
+        registry_description.as_deref(),
+    )
+    .map_err(Failure::Asked)?;
     Ok(repo)
 }
 

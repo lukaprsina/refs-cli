@@ -36,6 +36,8 @@ const TEMPLATE: &str = r##"# Reference repos for coding agents. Add one with `re
 #[derive(Debug)]
 pub struct Initialised {
     pub config_created: bool,
+    /// Whether the Project is in a git worktree, so the exclude rule could be written.
+    pub in_git: bool,
 }
 
 /// Set up the Project at `root`: create `refs.toml` if absent and exclude `references_dir`
@@ -47,6 +49,9 @@ pub fn init(root: &Path) -> Result<Initialised, InitError> {
         project::write_config(root, TEMPLATE)?;
     }
     let config: Config = config::parse(&project::read_config(root)?)?;
-    exclude::ensure(root, config.settings.references_dir())?;
-    Ok(Initialised { config_created })
+    let in_git = exclude::ensure(root, config.settings.references_dir())?;
+    Ok(Initialised {
+        config_created,
+        in_git,
+    })
 }

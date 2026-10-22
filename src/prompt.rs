@@ -15,19 +15,19 @@ pub enum Abort {
     Failed(String),
 }
 
-/// Asks one question and gives the answer. A prompter re-asks until `validate` accepts, and
-/// gives `default` for an empty answer.
+/// Asks one question and gives the answer. A prompter re-asks until `validate` accepts.
 pub trait Prompter {
-    /// A line of text. `Ok("")` means the person left it empty and there is no default.
+    /// A line of text, which the person edits from `initial` when there is one. The answer is
+    /// what is in the box: `Ok("")` means it is empty, and a person can clear a prefilled value.
     fn text(
         &mut self,
         message: &str,
-        default: Option<&str>,
+        initial: Option<&str>,
         validate: &dyn Fn(&str) -> Result<(), String>,
     ) -> Result<String, Abort>;
 
     /// A line of text that may be one of `suggestions` (narrowed as the person types) or
-    /// something new. The answer is not an empty string unless `validate` allows it.
+    /// something new. The answer may be empty if `validate` allows it.
     fn suggest(
         &mut self,
         message: &str,
@@ -46,18 +46,20 @@ pub trait Prompter {
 ///
 /// The packages are not asked here: `add` reads them from the new Checkout and asks then (ADR
 /// 0009), see `ask_packages`. With `ref_settled` the `ref` is not asked either: a registry add
-/// has chosen it (a tag, or the default branch).
+/// has chosen it (a tag, or the default branch). The description question starts from
+/// `described`, the registry's own.
 pub fn fill_add(
     repo: &mut AddRepo,
     config: &Config,
     prompter: &mut dyn Prompter,
     ref_settled: bool,
+    described: Option<&str>,
 ) -> Result<(), Abort> {
     if repo.id.is_none() {
-        let default = id_from_url(&repo.url).to_lowercase();
+        let suggested = id_from_url(&repo.url).to_lowercase();
         let taken = |id: &str| valid_id(id, config);
-        let id = prompter.text("Id", Some(&default), &taken)?;
-        repo.id = Some(id).filter(|id| *id != default);
+        let id = prompter.text("Id", Some(&suggested), &taken)?;
+        repo.id = Some(id).filter(|id| *id != suggested);
     }
     if repo.group.is_none() {
         repo.group = ask_group(config, prompter)?;
@@ -66,7 +68,8 @@ pub fn fill_add(
         repo.git_ref = ask_optional(prompter, "Ref (empty: the remote's default branch)")?;
     }
     if repo.description.is_none() {
-        repo.description = ask_optional(prompter, "Description (one line on what the repo is)")?;
+        let message = "Description (one line on what the repo is)";
+        repo.description = non_empty(prompter.text(message, described, &|_| Ok(()))?);
     }
     if (repo.paths.is_empty() || repo.start.is_empty())
         && prompter.confirm("Customize paths and start?")?
@@ -84,31 +87,28 @@ pub fn fill_add(
     Ok(())
 }
 
-/// The packages of a repo that has just been checked out, with `inferred` as the default. The
+/// The packages of a repo that has just been checked out, with `inferred` to start from. The
 /// answer is split on whitespace; an empty one is none.
 pub fn ask_packages(
     inferred: &[String],
     prompter: &mut dyn Prompter,
 ) -> Result<Vec<String>, Abort> {
-    let default = inferred.join(" ");
-    let default = Some(default.as_str()).filter(|d| !d.is_empty());
-    let answer = prompter.text("Packages (space-separated)", default, &|_| Ok(()))?;
+    let initial = inferred.join(" ");
+    let initial = Some(initial.as_str()).filter(|d| !d.is_empty());
+    let answer = prompter.text("Packages (space-separated)", initial, &|_| Ok(()))?;
     Ok(answer.split_whitespace().map(str::to_owned).collect())
 }
 
-/// Whether to file the repo under a group, and which: one that exists or a new one, by name.
+/// The group to file the repo under: one that exists or a new one, by name. Empty is none.
 fn ask_group(config: &Config, prompter: &mut dyn Prompter) -> Result<Option<String>, Abort> {
-    if !prompter.confirm("Link to a group?")? {
-        return Ok(None);
-    }
     let existing: Vec<String> = config.groups.keys().map(|id| id.as_ref().clone()).collect();
     let message = if existing.is_empty() {
-        "Group (none yet; a new one will be created)"
+        "Group (none yet; Enter for none, or a name to create one)"
     } else {
-        "Group (type to filter, or a new name to create one)"
+        "Group (Enter for none; type to filter, or a new name to create one)"
     };
     let name = prompter.suggest(message, &existing, &|name| valid_group(name, &existing))?;
-    Ok(Some(name))
+    Ok(non_empty(name))
 }
 
 /// A free-text question that `config::parse` checks later; empty means absent.
@@ -157,7 +157,7 @@ fn valid_id(id: &str, config: &Config) -> Result<(), String> {
 
 fn valid_group(name: &str, existing: &[String]) -> Result<(), String> {
     if name.is_empty() {
-        return Err("enter a name, or press Esc to cancel".into());
+        return Ok(());
     }
     if !config::is_heading_safe(name) {
         return Err("a group name may not contain markup or control characters".into());
@@ -218,12 +218,12 @@ impl Prompter for Terminal {
     fn text(
         &mut self,
         message: &str,
-        default: Option<&str>,
+        initial: Option<&str>,
         validate: &dyn Fn(&str) -> Result<(), String>,
     ) -> Result<String, Abort> {
         let mut question = inquire::Text::new(message).with_validator(validator(validate));
-        if let Some(default) = default {
-            question = question.with_default(default);
+        if let Some(initial) = initial {
+            question = question.with_initial_value(initial);
         }
         question.prompt().map_err(abort)
     }

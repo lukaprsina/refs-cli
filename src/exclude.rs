@@ -59,16 +59,16 @@ pub fn observe(root: &Path, references_dir: &str) -> Result<Exclude, FileError> 
 }
 
 /// Add the Exclude rule for `references_dir`, unless it is already there. Does nothing
-/// outside a git worktree.
-pub fn ensure(root: &Path, references_dir: &str) -> Result<(), FileError> {
+/// outside a git worktree; it gives whether there was one.
+pub fn ensure(root: &Path, references_dir: &str) -> Result<bool, FileError> {
     let Some((path, rule)) = locate(root, references_dir) else {
-        return Ok(());
+        return Ok(false);
     };
     let write = |source| FileError::write(&path, source);
     let text = read(&path).map_err(write)?;
-    if rule_present(&text, &rule) {
-        return Ok(());
+    if !rule_present(&text, &rule) {
+        std::fs::create_dir_all(path.parent().expect("a file has a parent")).map_err(write)?;
+        crate::atomic::write(&path, &with_rule(&text, &rule)).map_err(write)?;
     }
-    std::fs::create_dir_all(path.parent().expect("a file has a parent")).map_err(write)?;
-    crate::atomic::write(&path, &with_rule(&text, &rule)).map_err(write)
+    Ok(true)
 }

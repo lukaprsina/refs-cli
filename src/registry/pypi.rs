@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use super::url::{clean, on_forge};
 use super::used::{poetry, uv};
-use super::{Answer, Found, Spec, parse};
+use super::{Answer, Found, Spec, non_blank, parse};
 
 pub(super) const SPEC: Spec = Spec {
     prefix: "pypi:",
@@ -24,6 +24,7 @@ struct Document {
 
 #[derive(Deserialize)]
 struct Info {
+    summary: Option<String>,
     project_urls: Option<BTreeMap<String, String>>,
     home_page: Option<String>,
 }
@@ -56,5 +57,6 @@ pub fn found(body: &str) -> Answer {
     Ok(url.map(|url| Found {
         url,
         directory: None,
+        description: non_blank(document.info.summary),
     }))
 }
