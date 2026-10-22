@@ -4,6 +4,8 @@
 
 use std::collections::BTreeSet;
 
+use crate::listing;
+
 /// The most Manifests `add` reads, shallowest first.
 const MAX_MANIFESTS: usize = 200;
 
@@ -18,30 +20,15 @@ pub struct Inferred {
     pub description: Option<String>,
 }
 
-/// The Manifests among the outline's `paths` that a Checkout of `chosen` (the Repo's `paths`;
-/// empty is the whole repo) will hold, at most `MAX_MANIFESTS` of them, shallowest first, and how
-/// many more there were. Under cone mode a Checkout holds the files at the root, the files along
-/// the way to a chosen path, and everything under it. (A submodule is listed like a file, but no
-/// Manifest is one.)
+/// The Manifests among the outline's `paths` that a Checkout of `chosen` will hold (see
+/// `listing::held`), at most `MAX_MANIFESTS` of them, shallowest first, and how many more there
+/// were. (A submodule is listed like a file, but no Manifest is one.)
 pub fn manifest_paths(paths: &[String], chosen: &[String]) -> (Vec<String>, usize) {
-    let within = |path: &str, dir: &str| {
-        path == dir || path.strip_prefix(dir).is_some_and(|r| r.starts_with('/'))
-    };
-    let mut found: Vec<&String> = paths
-        .iter()
-        .filter(|path| {
-            let (dir, file) = path.rsplit_once('/').unwrap_or(("", path));
-            reader(file).is_some()
-                && !dir.split('/').any(skipped)
-                && (chosen.is_empty()
-                    || dir.is_empty()
-                    || chosen.iter().any(|c| within(dir, c) || within(c, dir)))
-        })
-        .collect();
-    found.sort_by_key(|path| (path.matches('/').count(), *path));
-    let left = found.len().saturating_sub(MAX_MANIFESTS);
-    found.truncate(MAX_MANIFESTS);
-    (found.into_iter().cloned().collect(), left)
+    let found = paths.iter().filter(|path| {
+        let file = path.rsplit('/').next().unwrap_or(path);
+        reader(file).is_some() && listing::held(path, chosen)
+    });
+    listing::shallowest(found.cloned().collect(), MAX_MANIFESTS)
 }
 
 /// What the Manifests among `files` (path and text) say.
@@ -72,22 +59,6 @@ pub fn infer(files: &[(String, String)]) -> Inferred {
 struct Manifest {
     name: Option<String>,
     description: Option<String>,
-}
-
-/// Directories that hold dependencies, build output, examples or test fixtures, and dot
-/// directories: their Manifests are not packages the Repo documents.
-fn skipped(dir: &str) -> bool {
-    const SKIPPED: [&str; 8] = [
-        "node_modules",
-        "target",
-        "vendor",
-        "dist",
-        "examples",
-        "fixtures",
-        "test",
-        "tests",
-    ];
-    dir.starts_with('.') || SKIPPED.contains(&dir)
 }
 
 /// The reader for a Manifest's file name, if it is one.

@@ -140,6 +140,7 @@ fn prepare(
     });
     let mut described = registry_description;
     let mut manifests = Vec::new();
+    let mut listed = None;
     let mut inferring = false;
     if let Some(source) = looks {
         let git_ref = repo.git_ref.as_deref().unwrap_or("HEAD");
@@ -153,6 +154,7 @@ fn prepare(
             repo.packages = inferred.packages;
         }
         described = inferred.description;
+        listed = Some(outline.paths);
     }
     let Some(prompter) = asking.prompter() else {
         return match repo.url.is_empty() {
@@ -161,7 +163,16 @@ fn prepare(
         };
     };
     let paths = repo.paths.clone();
-    prompt::fill_add(&mut repo, config, prompter, described.as_deref()).map_err(Failure::Asked)?;
+    let listed = listed.as_deref();
+    prompt::fill_add(
+        &mut repo,
+        config,
+        prompter,
+        described.as_deref(),
+        listed,
+        say,
+    )
+    .map_err(Failure::Asked)?;
     if inferring && repo.paths != paths {
         // Narrowed by the answers: only the Manifests the Checkout will hold count. None is
         // fetched again.

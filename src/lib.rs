@@ -10,6 +10,7 @@ pub mod exclude;
 pub mod init;
 mod line_ending;
 pub mod list;
+pub mod listing;
 pub mod lock;
 pub mod packages;
 pub mod plan;

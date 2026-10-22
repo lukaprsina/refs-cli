@@ -257,8 +257,8 @@ fn paths_answered_at_the_prompt_narrow_the_packages() {
         Answer::Text(""),
         Answer::Text(""),
         Answer::Yes(true),
-        Answer::Text("packages/web"),
-        Answer::Text(""),
+        Answer::Pick(&["packages/web"]),
+        Answer::Pick(&[]),
     ]);
 
     let run = add_foo(dir.path(), &source, &[], Some(&mut script));

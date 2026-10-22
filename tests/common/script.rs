@@ -9,6 +9,8 @@ use refs_cli::prompt::{Abort, Prompter};
 pub enum Answer {
     Text(&'static str),
     Yes(bool),
+    /// Selects these options in a `pick`; each must be one of those offered.
+    Pick(&'static [&'static str]),
     /// Empties a prefilled box, as selecting it all and deleting would.
     Clear,
     Cancel,
@@ -31,6 +33,8 @@ pub struct Script {
     pub asked: Vec<(String, Option<String>)>,
     pub rejected: Vec<String>,
     pub suggested: Vec<Vec<String>>,
+    /// The options of every `pick`.
+    pub offered: Vec<Vec<String>>,
 }
 
 impl Script {
@@ -103,7 +107,7 @@ impl Prompter for Script {
                 Some(Answer::Text(text)) => text.to_owned(),
                 Some(Answer::Cancel) => return Err(Abort::Cancelled),
                 Some(Answer::Fail(why)) => return Err(Abort::Failed(why.to_owned())),
-                Some(Answer::Yes(_)) => panic!("{message:?} is a text question"),
+                Some(Answer::Yes(_) | Answer::Pick(_)) => panic!("{message:?} is a text question"),
             };
             match validate(&answer) {
                 Ok(()) => return Ok(answer),
@@ -133,9 +137,24 @@ impl Prompter for Script {
             None => Ok(self.defaults.unwrap_or(false)),
             Some(Answer::Yes(yes)) => Ok(yes),
             Some(Answer::Cancel) => Err(Abort::Cancelled),
-            Some(Answer::Text(_) | Answer::Clear | Answer::Fail(_)) => {
+            Some(Answer::Text(_) | Answer::Clear | Answer::Fail(_) | Answer::Pick(_)) => {
                 panic!("{message:?} is a confirm question")
             }
+        }
+    }
+
+    fn pick(&mut self, message: &str, options: &[String]) -> Result<Vec<String>, Abort> {
+        self.offered.push(options.to_vec());
+        match self.next(message, None) {
+            None => Ok(vec![]),
+            Some(Answer::Pick(chosen)) => {
+                for one in chosen {
+                    assert!(options.iter().any(|o| o == one), "{one:?} is not offered");
+                }
+                Ok(chosen.iter().map(|o| o.to_string()).collect())
+            }
+            Some(Answer::Cancel) => Err(Abort::Cancelled),
+            Some(_) => panic!("{message:?} is a pick question"),
         }
     }
 }

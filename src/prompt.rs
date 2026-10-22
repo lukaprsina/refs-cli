@@ -4,7 +4,9 @@
 
 use crate::config::{self, Config};
 use crate::edit::{AddRepo, id_from_url};
+use crate::listing;
 use crate::registry;
+use crate::registry::pin::Say;
 
 /// Why a question went unanswered. Nothing has been edited yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +39,10 @@ pub trait Prompter {
 
     /// Yes or no, defaulting to no.
     fn confirm(&mut self, message: &str) -> Result<bool, Abort>;
+
+    /// Any number of `options`, narrowed as the person types. Selecting none is allowed: the
+    /// message says what that means.
+    fn pick(&mut self, message: &str, options: &[String]) -> Result<Vec<String>, Abort>;
 }
 
 /// Complete `repo` by asking for each value it does not have, except the URL and the `ref`,
@@ -47,12 +53,15 @@ pub trait Prompter {
 ///
 /// The packages are not asked here: `add` reads them from the repo's Manifests before this
 /// (ADR 0011). TODO(#67): the customize step asks for them again, prefilled. The description
-/// question starts from `described`: the registry's, else the root Manifest's.
+/// question starts from `described`: the registry's, else the root Manifest's. The `paths` and
+/// `start` are picked from the repo's `listed` paths when it was looked at, else typed.
 pub fn fill_add(
     repo: &mut AddRepo,
     config: &Config,
     prompter: &mut dyn Prompter,
     described: Option<&str>,
+    listed: Option<&[String]>,
+    say: &mut dyn Say,
 ) -> Result<(), Abort> {
     if repo.id.is_none() {
         let suggested = id_from_url(&repo.url).to_lowercase();
@@ -70,17 +79,80 @@ pub fn fill_add(
     if (repo.paths.is_empty() || repo.start.is_empty())
         && prompter.confirm("Customize paths and start?")?
     {
-        for (list, message) in [
-            (&mut repo.paths, "Paths to check out (space-separated)"),
-            (&mut repo.start, "Files to read first (space-separated)"),
-        ] {
-            if list.is_empty() {
-                let answer = ask_optional(prompter, message)?.unwrap_or_default();
-                *list = answer.split_whitespace().map(str::to_owned).collect();
-            }
+        if repo.paths.is_empty() {
+            repo.paths = ask_paths(prompter, listed, say)?;
+        }
+        if repo.start.is_empty() {
+            repo.start = ask_start(prompter, listed, &repo.paths, say)?;
         }
     }
     Ok(())
+}
+
+/// The directories to check out: picked from those of the `listed` repo, else typed.
+fn ask_paths(
+    prompter: &mut dyn Prompter,
+    listed: Option<&[String]>,
+    say: &mut dyn Say,
+) -> Result<Vec<String>, Abort> {
+    let Some(listed) = listed else {
+        return ask_words(prompter, "Paths to check out (space-separated)");
+    };
+    let (dirs, left) = listing::directories(listed);
+    let message = "Paths to check out (type to filter; none selected: the whole repo)";
+    let picked = pick_capped(
+        prompter,
+        say,
+        message,
+        dirs,
+        left,
+        ("directories", "--paths"),
+    )?;
+    Ok(listing::drop_children(picked))
+}
+
+/// The files to read first: picked from the docs files the Checkout of `paths` will hold, else
+/// typed.
+fn ask_start(
+    prompter: &mut dyn Prompter,
+    listed: Option<&[String]>,
+    paths: &[String],
+    say: &mut dyn Say,
+) -> Result<Vec<String>, Abort> {
+    let Some(listed) = listed else {
+        return ask_words(prompter, "Files to read first (space-separated)");
+    };
+    let (files, left) = listing::start_files(listed, paths);
+    let message = "Files to read first (type to filter; none selected: none)";
+    pick_capped(prompter, say, message, files, left, ("files", "--start"))
+}
+
+/// A selection from `options`, of which `left` more were cut off: said, with the `flag` that
+/// names them. Nothing is asked when there are none.
+fn pick_capped(
+    prompter: &mut dyn Prompter,
+    say: &mut dyn Say,
+    message: &str,
+    options: Vec<String>,
+    left: usize,
+    (noun, flag): (&str, &str),
+) -> Result<Vec<String>, Abort> {
+    if options.is_empty() {
+        return Ok(vec![]);
+    }
+    if left > 0 {
+        let shown = options.len();
+        say.status(format!(
+            "listed {shown} of {} {noun}; name the others with `{flag}`",
+            shown + left
+        ));
+    }
+    prompter.pick(message, &options)
+}
+
+fn ask_words(prompter: &mut dyn Prompter, message: &str) -> Result<Vec<String>, Abort> {
+    let answer = ask_optional(prompter, message)?.unwrap_or_default();
+    Ok(answer.split_whitespace().map(str::to_owned).collect())
 }
 
 /// The group to file the repo under: one that exists or a new one, by name. Empty is none.
@@ -234,6 +306,13 @@ impl Prompter for Terminal {
     fn confirm(&mut self, message: &str) -> Result<bool, Abort> {
         inquire::Confirm::new(message)
             .with_default(false)
+            .prompt()
+            .map_err(abort)
+    }
+
+    fn pick(&mut self, message: &str, options: &[String]) -> Result<Vec<String>, Abort> {
+        inquire::MultiSelect::new(message, options.to_vec())
+            .with_page_size(15)
             .prompt()
             .map_err(abort)
     }
