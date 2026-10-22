@@ -32,11 +32,16 @@ impl Worktree {
             return None;
         };
         (inside == "true").then(|| Worktree {
-            top: PathBuf::from(top),
-            common_dir: PathBuf::from(common),
+            top: native(top),
+            common_dir: native(common),
             prefix: prefix.to_string(),
         })
     }
+}
+
+/// `path` as git printed it, with this platform's separators (git prints `/` on Windows).
+fn native(path: &str) -> PathBuf {
+    Path::new(path).components().collect()
 }
 
 /// The directories a tool's config or Package lockfile for the project at `project_dir` may sit in,

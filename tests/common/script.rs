@@ -22,7 +22,7 @@ pub enum Answer {
 /// tried, as a terminal would re-ask.
 ///
 /// Once the queue is empty it panics, unless the script `takes_defaults`: then every text takes
-/// its initial value, every suggestion is left empty, and every yes-or-no gets one fixed answer.
+/// its initial value, every suggestion is left empty, and every pick keeps its preselection, and every yes-or-no gets one fixed answer.
 /// `picking` answers the text questions that mention a word, whatever the queue holds.
 #[derive(Default)]
 pub struct Script {
@@ -35,6 +35,8 @@ pub struct Script {
     pub suggested: Vec<Vec<String>>,
     /// The options of every `pick`.
     pub offered: Vec<Vec<String>>,
+    /// The options every `pick` began with ticked.
+    pub preselected: Vec<Vec<String>>,
 }
 
 impl Script {
@@ -143,10 +145,16 @@ impl Prompter for Script {
         }
     }
 
-    fn pick(&mut self, message: &str, options: &[String]) -> Result<Vec<String>, Abort> {
+    fn pick(
+        &mut self,
+        message: &str,
+        options: &[String],
+        selected: &[String],
+    ) -> Result<Vec<String>, Abort> {
         self.offered.push(options.to_vec());
+        self.preselected.push(selected.to_vec());
         match self.next(message, None) {
-            None => Ok(vec![]),
+            None => Ok(selected.to_vec()),
             Some(Answer::Pick(chosen)) => {
                 for one in chosen {
                     assert!(options.iter().any(|o| o == one), "{one:?} is not offered");

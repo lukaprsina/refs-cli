@@ -453,6 +453,10 @@ impl Say for Console<'_> {
     fn warning(&mut self, line: String) {
         self.problem(format_args!("warning: {line}"));
     }
+
+    fn shown(&mut self, line: String) {
+        self.problem(line);
+    }
 }
 
 /// Say why a question ended without an answer, and give the exit code.

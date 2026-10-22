@@ -86,6 +86,11 @@ fn in_a_git_worktree_it_goes_to_the_top_from_a_subdirectory() {
     assert!(dir.path().join("refs.toml").is_file());
     assert!(!sub.join("refs.toml").exists());
     assert!(!run.err.contains("not a git repository"), "{}", run.err);
+    let created = run.err.lines().find(|l| l.starts_with("created ")).unwrap();
+    assert!(
+        !(created.contains('/') && created.contains('\\')),
+        "mixed separators: {created}"
+    );
 }
 
 #[test]

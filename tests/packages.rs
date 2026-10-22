@@ -227,3 +227,26 @@ fn at_most_200_manifests_are_chosen_shallowest_first_and_the_rest_counted() {
     assert_eq!(left, 50);
     assert!(chosen.iter().take(100).all(|p| p.starts_with('p')));
 }
+
+#[test]
+fn napi_platform_packages_under_a_package_are_not_packages() {
+    assert_eq!(
+        packages(&[
+            (
+                "packages/compiler/package.json",
+                r#"{ "name": "@solidjs/compiler" }"#
+            ),
+            (
+                "packages/compiler/npm/darwin-arm64/package.json",
+                r#"{ "name": "@solidjs/compiler-darwin-arm64" }"#
+            ),
+            (
+                "packages/compiler/npm/wasm32-wasi/package.json",
+                r#"{ "name": "@solidjs/compiler-wasm32-wasi" }"#
+            ),
+            // An `npm` directory with no Manifest above it is just a directory.
+            ("tools/npm/cli/package.json", r#"{ "name": "cli" }"#),
+        ]),
+        ["@solidjs/compiler", "cli"]
+    );
+}

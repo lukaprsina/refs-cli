@@ -40,7 +40,9 @@ pub fn infer(files: &[(String, String)]) -> Inferred {
         let Some(manifest) = reader(file).map(|read| read(text)) else {
             continue;
         };
-        names.extend(manifest.name);
+        if !platform_package(path, files) {
+            names.extend(manifest.name);
+        }
         if !path.contains('/') {
             root.push((file, manifest.description));
         }
@@ -52,6 +54,23 @@ pub fn infer(files: &[(String, String)]) -> Inferred {
         packages: names.into_iter().collect(),
         description,
     }
+}
+
+/// Whether `path` is a napi-rs platform package, `<package>/npm/<platform>/package.json` with a
+/// `package.json` above the `npm`: it holds a binary for one platform and is not imported by name.
+fn platform_package(path: &str, files: &[(String, String)]) -> bool {
+    let Some((npm, _platform)) = path
+        .strip_suffix("/package.json")
+        .and_then(|dir| dir.rsplit_once('/'))
+    else {
+        return false;
+    };
+    let owner = match npm.strip_suffix("npm") {
+        Some("") => "package.json".to_owned(),
+        Some(owner) if owner.ends_with('/') => format!("{owner}package.json"),
+        _ => return false,
+    };
+    files.iter().any(|(file, _)| *file == owner)
 }
 
 /// What one Manifest says. The `name` is absent when it is not a package that can be imported.

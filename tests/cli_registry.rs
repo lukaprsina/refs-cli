@@ -481,7 +481,6 @@ fn a_registry_add_offers_the_registrys_description_and_it_can_be_cleared() {
         Answer::Clear,
         Answer::Text(""),
         Answer::Text(""),
-        Answer::Text(""),
     ]);
     let run = add_asking(
         dir.path(),

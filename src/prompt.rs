@@ -41,9 +41,14 @@ pub trait Prompter {
     /// Yes or no, defaulting to no.
     fn confirm(&mut self, message: &str) -> Result<bool, Abort>;
 
-    /// Any number of `options`, narrowed as the person types. Selecting none is allowed: the
-    /// message says what that means.
-    fn pick(&mut self, message: &str, options: &[String]) -> Result<Vec<String>, Abort>;
+    /// Any number of `options`, narrowed as the person types, with those in `selected` ticked
+    /// to begin with. Selecting none is allowed: the message says what that means.
+    fn pick(
+        &mut self,
+        message: &str,
+        options: &[String],
+        selected: &[String],
+    ) -> Result<Vec<String>, Abort>;
 }
 
 /// The package names for a Checkout of the given `paths`.
@@ -101,12 +106,13 @@ pub fn fill_add(
     if packages_open {
         repo.packages = packages_for(&repo.paths);
     }
+    let summed = repo.packages.len();
     let group_open = repo.group.is_none();
     let open =
         id_open || description_open || group_open || paths_open || start_open || packages_open;
     if open {
         for line in summary(repo, &id, known.looked_at.map(|o| &o.pin)) {
-            say.status(line);
+            say.shown(line);
         }
     }
     if open && prompter.confirm("Customize?")? {
@@ -131,11 +137,14 @@ pub fn fill_add(
         if start_open {
             repo.start = ask_start(prompter, listed, &repo.paths, say)?;
         }
-        if packages_open {
-            let current = repo.packages.join(" ");
-            let answer =
-                prompter.text("Packages (space-separated)", Some(&current), &|_| Ok(()))?;
-            repo.packages = answer.split_whitespace().map(str::to_owned).collect();
+        if packages_open && !repo.packages.is_empty() {
+            if let Some(left) = summed.checked_sub(repo.packages.len()).filter(|n| *n > 0) {
+                say.shown(format!(
+                    "packages: left out {left} of {summed} that are outside the chosen paths; name others with `--packages`"
+                ));
+            }
+            let message = "Packages (type to filter; none selected: none)";
+            repo.packages = prompter.pick(message, &repo.packages, &repo.packages)?;
         }
     }
     repo.id = Some(id).filter(|id| *id != suggested);
@@ -227,7 +236,7 @@ fn pick_capped(
             shown + left
         ));
     }
-    prompter.pick(message, &options)
+    prompter.pick(message, &options, &[])
 }
 
 fn ask_words(prompter: &mut dyn Prompter, message: &str) -> Result<Vec<String>, Abort> {
@@ -390,8 +399,17 @@ impl Prompter for Terminal {
             .map_err(abort)
     }
 
-    fn pick(&mut self, message: &str, options: &[String]) -> Result<Vec<String>, Abort> {
+    fn pick(
+        &mut self,
+        message: &str,
+        options: &[String],
+        selected: &[String],
+    ) -> Result<Vec<String>, Abort> {
+        let ticked: Vec<usize> = (0..options.len())
+            .filter(|&i| selected.contains(&options[i]))
+            .collect();
         inquire::MultiSelect::new(message, options.to_vec())
+            .with_default(&ticked)
             .with_page_size(15)
             .with_scorer(&path_scorer())
             .prompt()

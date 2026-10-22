@@ -132,7 +132,7 @@ fn yes_and_then_enter_for_every_question_writes_what_no_writes() {
             "Description (one line on what the repo is)",
             "Paths to check out (type to filter; none selected: the whole repo)",
             "Files to read first (type to filter; none selected: none)",
-            "Packages (space-separated)",
+            "Packages (type to filter; none selected: none)",
         ]
     );
     assert_eq!(config_text(yes.path()), config_text(no.path()));
@@ -148,20 +148,54 @@ fn narrowing_paths_narrows_the_packages_and_the_start_candidates() {
         Answer::Text(""),
         Answer::Pick(&["packages"]),
         Answer::Pick(&["packages/web/GUIDE.md"]),
-        Answer::Text(""),
+        Answer::Pick(&["root-js", "web-js"]),
     ]);
 
     let run = add_foo(dir.path(), &monorepo(), &[], Some(&mut script));
 
     assert_eq!(run.code, 0, "{}", run.err);
     assert_eq!(script.offered[1], ["packages/web/GUIDE.md"]);
-    let packages = script.asked_about("Packages");
-    assert_eq!(packages[0].1.as_deref(), Some("root-js web-js"));
+    assert_eq!(script.preselected[2], ["root-js", "web-js"]);
     let config = config_text(dir.path());
     assert!(
         config.contains(r#"packages = ["root-js", "web-js"]"#),
         "{config}"
     );
+}
+
+#[test]
+fn narrowing_paths_says_how_many_packages_were_left_out_even_when_quiet() {
+    let dir = project();
+    let mut script = Script::new([
+        Answer::Yes(true),
+        Answer::Text(""),
+        Answer::Text(""),
+        Answer::Text(""),
+        Answer::Pick(&["packages"]),
+        Answer::Pick(&[]),
+        Answer::Pick(&["root-js", "web-js"]),
+    ]);
+
+    let run = add_foo(dir.path(), &monorepo(), &["-q"], Some(&mut script));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        run.err.contains(
+            "packages: left out 1 of 3 that are outside the chosen paths; name others with `--packages`"
+        ),
+        "{}",
+        run.err
+    );
+}
+
+#[test]
+fn choosing_paths_that_hold_every_package_says_nothing_about_packages() {
+    let dir = project();
+    let mut script = Script::takes_defaults(true);
+
+    let run = add_foo(dir.path(), &monorepo(), &[], Some(&mut script));
+
+    assert!(!run.err.contains("left out"), "{}", run.err);
 }
 
 #[test]
@@ -174,7 +208,7 @@ fn a_cleared_description_and_packages_are_written_as_none() {
         Answer::Clear,
         Answer::Pick(&[]),
         Answer::Pick(&[]),
-        Answer::Clear,
+        Answer::Pick(&[]),
     ]);
 
     let run = add_foo(dir.path(), &monorepo(), &[], Some(&mut script));
@@ -265,6 +299,18 @@ fn no_input_prints_no_summary_and_asks_nothing() {
     assert_eq!(run.code, 0, "{}", run.err);
     assert!(script.asked.is_empty());
     assert!(!run.err.contains("(everything)"), "{}", run.err);
+}
+
+#[test]
+fn the_summary_is_shown_even_when_quiet() {
+    let dir = project();
+    let mut script = Script::new([Answer::Yes(false)]);
+
+    let run = add_foo(dir.path(), &monorepo(), &["-q"], Some(&mut script));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(run.err.contains("(everything)"), "{}", run.err);
+    assert!(!run.err.contains("equivalent:"), "{}", run.err);
 }
 
 #[test]

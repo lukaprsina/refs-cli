@@ -19,6 +19,8 @@ pub trait Say {
     fn status(&mut self, line: String);
     /// Something the person should see even when the run is quiet.
     fn warning(&mut self, line: String);
+    /// What a question is about: shown even when the run is quiet.
+    fn shown(&mut self, line: String);
 }
 
 /// Why `pin` could not say what to pin to.

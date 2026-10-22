@@ -68,7 +68,7 @@ fn add_foo(
 }
 
 /// The answers for a yes at `Customize?`: the description (none is found in these repos), then
-/// id and group left as offered, the pick answers, and the packages left as offered.
+/// id and group left as offered, then the pick answers (no Manifests, so no packages).
 fn customizing(picks: impl IntoIterator<Item = Answer>) -> Script {
     let first = [
         Answer::Text(""),
@@ -76,8 +76,7 @@ fn customizing(picks: impl IntoIterator<Item = Answer>) -> Script {
         Answer::Text(""),
         Answer::Text(""),
     ];
-    let last = [Answer::Text("")];
-    Script::new(first.into_iter().chain(picks).chain(last))
+    Script::new(first.into_iter().chain(picks))
 }
 
 #[test]

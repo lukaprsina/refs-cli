@@ -51,6 +51,9 @@ impl Say for Lines {
     fn warning(&mut self, line: String) {
         self.0.push(format!("warning: {line}"));
     }
+    fn shown(&mut self, line: String) {
+        self.0.push(format!("shown: {line}"));
+    }
 }
 
 fn serde() -> Package {

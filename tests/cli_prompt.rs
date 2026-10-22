@@ -74,7 +74,6 @@ fn a_bare_add_asks_for_everything_and_writes_the_answers() {
         Answer::Text("core"),
         Answer::Text("src docs"),
         Answer::Text(""),
-        Answer::Text(""),
     ]);
 
     let run = refs(dir.path(), &["add", "--no-sync"], Some(&mut script));
@@ -141,7 +140,6 @@ fn a_bad_answer_is_asked_again() {
         Answer::Text("solid"), // taken
         Answer::Text("Not Valid"),
         Answer::Text("router"),
-        Answer::Text(""),
         Answer::Text(""),
         Answer::Text(""),
         Answer::Text(""),
@@ -264,12 +262,12 @@ fn without_a_terminal_nothing_is_asked_and_a_missing_url_is_a_usage_error() {
 }
 
 /// The answers for `add` with a ref, no sync and a description to ask for: the description, yes
-/// at `Customize?`, id and the paths, start and packages left as offered, and `group` for the
+/// at `Customize?`, id and the paths and start left as offered, and `group` for the
 /// group.
 fn group_answered(group: &'static str) -> Script {
     let (empty, yes) = (Answer::Text(""), Answer::Yes(true));
     let answers = [empty, yes, Answer::Text(""), Answer::Text(group)];
-    let rest = [Answer::Text(""), Answer::Text(""), Answer::Text("")];
+    let rest = [Answer::Text(""), Answer::Text("")];
     Script::new(answers.into_iter().chain(rest))
 }
 
@@ -385,7 +383,6 @@ fn a_case_only_different_group_name_is_asked_again() {
         Answer::Text(""),
         Answer::Text("Core"),
         Answer::Text("core"),
-        Answer::Text(""),
         Answer::Text(""),
         Answer::Text(""),
     ]);
