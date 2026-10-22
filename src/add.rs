@@ -11,7 +11,7 @@ use std::path::Path;
 use crate::config::Config;
 use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit};
-use crate::packages::{Inferred, infer, manifest_paths};
+use crate::packages::{infer, manifest_paths};
 use crate::prompt::{self, Abort, Prompter};
 use crate::registry::pin::{Say, Stop, pin};
 use crate::registry::{self, Registry, RegistryError};
@@ -85,9 +85,10 @@ pub fn run(
 }
 
 /// `repo` ready to add: a registry shorthand expanded and its version pinned to a tag, the repo
-/// looked at for its `packages` and description, then what the command line left out asked for. The version is the one given, else the one the
-/// project's Package lockfile at `root` says it uses. The tags come from `source`. Only a
-/// missing URL is a problem without a prompter. On a cancel nothing has been edited.
+/// looked at for its `packages` and description, then what the command line left out asked
+/// for. The version is the one given, else the one the project's Package lockfile at `root` says
+/// it uses. The tags come from `source`. Only a missing URL is a problem without a prompter. On a
+/// cancel nothing has been edited.
 fn prepare(
     repo: &AddRepo,
     source: Option<&dyn Source>,
@@ -138,13 +139,17 @@ fn prepare(
             && (asking.prompter.is_some() || repo.packages.is_empty())
     });
     let mut described = registry_description;
+    let mut manifests = Vec::new();
+    let mut inferring = false;
     if let Some(source) = looks {
         let git_ref = repo.git_ref.as_deref().unwrap_or("HEAD");
         let outline = source
             .outline(&repo.url, git_ref)
             .map_err(Failure::Source)?;
-        let inferred = read_manifests(source, &repo, &outline, say)?;
-        if repo.packages.is_empty() {
+        manifests = read_manifests(source, &repo, &outline, say)?;
+        let inferred = infer(&manifests);
+        inferring = repo.packages.is_empty();
+        if inferring {
             repo.packages = inferred.packages;
         }
         described = inferred.description;
@@ -155,11 +160,20 @@ fn prepare(
             false => Ok(repo),
         };
     };
+    let paths = repo.paths.clone();
     prompt::fill_add(&mut repo, config, prompter, described.as_deref()).map_err(Failure::Asked)?;
+    if inferring && repo.paths != paths {
+        // Narrowed by the answers: only the Manifests the Checkout will hold count. None is
+        // fetched again.
+        let read: Vec<String> = manifests.iter().map(|(path, _)| path.clone()).collect();
+        let held = manifest_paths(&read, &repo.paths).0;
+        manifests.retain(|(path, _)| held.contains(path));
+        repo.packages = infer(&manifests).packages;
+    }
     Ok(repo)
 }
 
-/// What the Manifests of the `outline`d repo that `repo` will check out say. The Lock records
+/// The Manifests (path and text) of the `outline`d repo that `repo` will check out say. The Lock records
 /// what the sync resolves, which is another commit than this one if upstream moved in between:
 /// accepted.
 fn read_manifests(
@@ -167,17 +181,13 @@ fn read_manifests(
     repo: &AddRepo,
     outline: &Outline,
     say: &mut dyn Say,
-) -> Result<Inferred, Failure> {
+) -> Result<Vec<(String, String)>, Failure> {
     let (chosen, left) = manifest_paths(&outline.paths, &repo.paths);
     if left > 0 {
         let read = chosen.len();
         say.status(format!("read {read} Manifests and left {left} unread"));
     }
-    if chosen.is_empty() {
-        return Ok(Inferred::default());
-    }
-    let files = source
+    source
         .read(&repo.url, &outline.pin, &chosen)
-        .map_err(Failure::Source)?;
-    Ok(infer(&files))
+        .map_err(Failure::Source)
 }

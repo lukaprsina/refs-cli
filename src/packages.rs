@@ -18,10 +18,11 @@ pub struct Inferred {
     pub description: Option<String>,
 }
 
-/// The Manifests among `paths` that a Checkout of `chosen` (the Repo's `paths`; empty is the
-/// whole repo) will hold, at most `MAX_MANIFESTS` of them, shallowest first, and how many more
-/// there were. (A submodule is listed like a file, and no Manifest is one.) Under cone mode a Checkout holds the files at the root, the files along the way to
-/// a chosen path, and everything under it.
+/// The Manifests among the outline's `paths` that a Checkout of `chosen` (the Repo's `paths`;
+/// empty is the whole repo) will hold, at most `MAX_MANIFESTS` of them, shallowest first, and how
+/// many more there were. Under cone mode a Checkout holds the files at the root, the files along
+/// the way to a chosen path, and everything under it. (A submodule is listed like a file, but no
+/// Manifest is one.)
 pub fn manifest_paths(paths: &[String], chosen: &[String]) -> (Vec<String>, usize) {
     let within = |path: &str, dir: &str| {
         path == dir || path.strip_prefix(dir).is_some_and(|r| r.starts_with('/'))

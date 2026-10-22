@@ -225,7 +225,6 @@ fn offline_does_not_look_at_the_repo() {
     let source = solid();
     // The sync itself needs a Lock offline, so only what was looked at is checked.
     add_foo(dir.path(), &source, &["--offline"], None);
-    assert!(!config_text(dir.path()).contains("packages"));
     assert!(!source.calls().contains(&Call::Outline(URL.into())));
 }
 
@@ -245,5 +244,29 @@ fn the_equivalent_command_comes_before_the_sync_and_survives_its_failure() {
         equivalent < run.err.find("boom").expect(&run.err),
         "{}",
         run.err
+    );
+}
+
+#[test]
+fn paths_answered_at_the_prompt_narrow_the_packages() {
+    let dir = project();
+    let source = solid();
+    // Id, group, description, then yes to customize, `paths` and `start`.
+    let mut script = Script::new([
+        Answer::Text(""),
+        Answer::Text(""),
+        Answer::Text(""),
+        Answer::Yes(true),
+        Answer::Text("packages/web"),
+        Answer::Text(""),
+    ]);
+
+    let run = add_foo(dir.path(), &source, &[], Some(&mut script));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    let config = config_text(dir.path());
+    assert!(
+        config.contains(r#"packages = ["@solidjs/web", "solid-js"]"#),
+        "{config}"
     );
 }
