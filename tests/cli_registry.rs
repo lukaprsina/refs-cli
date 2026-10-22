@@ -462,7 +462,7 @@ fn a_registry_add_offers_the_registrys_description_and_it_can_be_cleared() {
     let args = ["npm:foo-js", "--id", "foo", "--group", "g", "--no-sync"];
 
     let dir = project();
-    let mut kept = Script::new([Answer::Text(""), Answer::Yes(false)]);
+    let mut kept = Script::takes_defaults(true);
     let run = add_asking(
         dir.path(),
         &registry,
@@ -476,7 +476,13 @@ fn a_registry_add_offers_the_registrys_description_and_it_can_be_cleared() {
     assert!(config_text(dir.path()).contains("description = \"Reactive UI\""));
 
     let dir = project();
-    let mut cleared = Script::new([Answer::Clear, Answer::Yes(false)]);
+    let mut cleared = Script::new([
+        Answer::Yes(true),
+        Answer::Clear,
+        Answer::Text(""),
+        Answer::Text(""),
+        Answer::Text(""),
+    ]);
     let run = add_asking(
         dir.path(),
         &registry,

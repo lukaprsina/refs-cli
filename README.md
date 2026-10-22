@@ -33,24 +33,24 @@ gh attestation verify <file> -R lukaprsina/refs-cli
 ## Quick start
 
 ```sh
-refs init
 refs add
 ```
 
-In a terminal `refs add` asks for what you didn't pass: the URL (or a shorthand such as `gh:owner/repo` or `npm:name`), then the ref, then id, group (Enter for none, type to filter, or a new name to create one), description, paths and start. The package names are read from the repo's manifests (`package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`) before anything is written, so one edit and one sync write everything. It prints the equivalent command line before it syncs:
+`refs add` creates `refs.toml` if there is none. In a terminal it asks for the URL (or a shorthand such as `gh:owner/repo` or `npm:name`) and the ref, then looks at the repo: a bad URL or ref fails here, before anything is edited. It reads the repo's manifests (`package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`) for the package names and a description, shows one summary of what it will write, and asks `Customize?`. Enter adds as shown; yes asks for each value in turn, starting from the summary's. It prints the equivalent command line before it syncs:
 
 ```text
 $ refs add gh:solidjs/solid
 > Ref (empty: the remote's default branch) next
-> Id solid
-> Group (none yet; Enter for none, or a name to create one) solidjs-2
-> Description (one line on what the repo is) Solid 2.0 core packages and 2.0 design docs
-> Customize paths and start? Yes
-> Paths to check out (space-separated) packages documentation
-> Files to read first (space-separated) documentation/solid-2.0/MIGRATION.md
-equivalent: refs add https://github.com/solidjs/solid --group solidjs-2 --ref next --description "Solid 2.0 core packages and 2.0 design docs" --paths packages documentation --packages solid-js @solidjs/web @solidjs/signals --start documentation/solid-2.0/MIGRATION.md
-updated refs.toml
-created group `solidjs-2`
+id          solid
+ref         next (a1b2c3d)
+paths       (everything)
+start       (none)
+packages    @solidjs/signals, @solidjs/web, solid-js
+description Solid 2.0 core packages and 2.0 design docs
+group       (none)
+> Customize? No
+equivalent: refs add https://github.com/solidjs/solid --ref next --description "Solid 2.0 core packages and 2.0 design docs" --packages @solidjs/signals @solidjs/web solid-js
+created refs.toml
 updated refs.lock
 created checkout `solid`
 updated AGENTS.md
@@ -107,7 +107,7 @@ Commit `refs.toml`, `refs.lock` and `AGENTS.md`. `.references/` is excluded thro
 
 | Command | Does |
 |---|---|
-| `refs init` | Create `refs.toml` and the git exclude rule |
+| `refs init` | Create `refs.toml` (with a commented template) and the git exclude rule |
 | `refs add [url]` | Add a repo, lock it, sync. `url` can be `gh:owner/repo` or `gl:group/sub/repo` (also `github:`, `gitlab:`, `bitbucket:`; a path after the repository is ignored with a note), or `npm:<name>`, `cargo:<name>` or `pypi:<name>`, each with an optional `@<version>`: the registry says where the package lives. With no version, `add` reads the one your lockfile uses (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `uv.lock`, `poetry.lock`) and pins its tag. Asks for what is missing in a terminal; `--no-input` turns that off, `--no-sync` only edits |
 | `refs remove <id>` | Remove a repo |
 | `refs disable` / `enable` | Switch a repo or group (`--group`) off or on without removing it |

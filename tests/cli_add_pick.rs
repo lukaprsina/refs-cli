@@ -67,16 +67,17 @@ fn add_foo(
     }
 }
 
-/// The answers up to and including "Customize paths and start?" (yes): id, group and
-/// description left as offered, then the pick answers.
+/// The answers for a yes at `Customize?`: the description (none is found in these repos), then
+/// id and group left as offered, the pick answers, and the packages left as offered.
 fn customizing(picks: impl IntoIterator<Item = Answer>) -> Script {
     let first = [
         Answer::Text(""),
-        Answer::Text(""),
-        Answer::Text(""),
         Answer::Yes(true),
+        Answer::Text(""),
+        Answer::Text(""),
     ];
-    Script::new(first.into_iter().chain(picks))
+    let last = [Answer::Text("")];
+    Script::new(first.into_iter().chain(picks).chain(last))
 }
 
 #[test]
@@ -116,10 +117,7 @@ fn selecting_nothing_writes_neither_paths_nor_start() {
 fn a_directory_and_its_child_write_only_the_directory() {
     let dir = project();
     let source = serving(&["packages/solid-js/src/a.ts", "packages/web/b.ts"]);
-    let mut script = customizing([
-        Answer::Pick(&["packages", "packages/solid-js"]),
-        Answer::Pick(&[]),
-    ]);
+    let mut script = customizing([Answer::Pick(&["packages", "packages/solid-js"])]);
 
     let run = add_foo(dir.path(), &source, &[], Some(&mut script));
 
@@ -180,7 +178,7 @@ fn directories_past_the_cap_are_counted_in_a_status_line() {
     let files: Vec<String> = (0..5003).map(|i| format!("d{i}/f.rs")).collect();
     let files: Vec<&str> = files.iter().map(String::as_str).collect();
     let source = serving(&files);
-    let mut script = customizing([Answer::Pick(&[]), Answer::Pick(&[])]);
+    let mut script = customizing([Answer::Pick(&[])]);
 
     let run = add_foo(dir.path(), &source, &[], Some(&mut script));
 

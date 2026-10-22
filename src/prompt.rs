@@ -7,6 +7,7 @@ use crate::edit::{AddRepo, id_from_url};
 use crate::listing;
 use crate::registry;
 use crate::registry::pin::Say;
+use crate::source::Pin;
 
 /// Why a question went unanswered. Nothing has been edited yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,48 +46,127 @@ pub trait Prompter {
     fn pick(&mut self, message: &str, options: &[String]) -> Result<Vec<String>, Abort>;
 }
 
-/// Complete `repo` by asking for each value it does not have, except the URL and the `ref`,
-/// which `add` asks first (`ask_url`, `ask_ref`) so that a shorthand is expanded, and the repo
-/// looked at, before the rest. A value given on the command
-/// line is never asked for again; an empty answer leaves a value absent, as omitting its flag
-/// would.
+/// The package names for a Checkout of the given `paths`.
+pub type PackagesFor<'a> = dyn Fn(&[String]) -> Vec<String> + 'a;
+
+/// What `add` knows about the repo before it asks about the rest.
+#[derive(Default)]
+pub struct Known<'a> {
+    /// The description to start from: the registry's, else the root Manifest's.
+    pub described: Option<&'a str>,
+    /// What the repo was looked at for, when it was: the commit and the paths of its tree.
+    pub looked_at: Option<(&'a Pin, &'a [String])>,
+    /// The packages the Manifests give for a Checkout of these `paths`, when they were read.
+    pub packages_for: Option<&'a PackagesFor<'a>>,
+}
+
+/// Complete `repo` by showing a summary of what will be written and asking `Customize?`. A value
+/// given on the command line is never asked for again; an empty answer leaves a value absent, as
+/// omitting its flag would. The URL and the `ref` are not asked here: `add` asks them first, so
+/// that a shorthand is expanded and the repo looked at before the rest (ADR 0011).
 ///
-/// The packages are not asked here: `add` reads them from the repo's Manifests before this
-/// (ADR 0011). TODO(#67): the customize step asks for them again, prefilled. The description
-/// question starts from `described`: the registry's, else the root Manifest's. The `paths` and
-/// `start` are picked from the repo's `listed` paths when it was looked at, else typed.
+/// A value with no default is asked before the summary: an id that is taken, a description none
+/// was found for. On yes, the rest are asked in turn, each starting from the summary's value, so
+/// Enter all the way through gives what no gives. The `paths` and `start` are picked from the
+/// looked-at repo's paths, else typed; narrowing `paths` recomputes the `packages` default.
 pub fn fill_add(
     repo: &mut AddRepo,
     config: &Config,
     prompter: &mut dyn Prompter,
-    described: Option<&str>,
-    listed: Option<&[String]>,
+    known: &Known,
     say: &mut dyn Say,
 ) -> Result<(), Abort> {
-    if repo.id.is_none() {
-        let suggested = id_from_url(&repo.url).to_lowercase();
-        let taken = |id: &str| valid_id(id, config);
-        let id = prompter.text("Id", Some(&suggested), &taken)?;
-        repo.id = Some(id).filter(|id| *id != suggested);
+    let suggested = id_from_url(&repo.url).to_lowercase();
+    let taken = |id: &str| valid_id(id, config);
+    let mut id = repo.id.clone().unwrap_or_else(|| suggested.clone());
+    let mut id_open = repo.id.is_none();
+    if id_open && taken(&id).is_err() {
+        id = prompter.text("Id", Some(&id), &taken)?;
+        id_open = false;
     }
-    if repo.group.is_none() {
-        repo.group = ask_group(config, prompter)?;
+    let mut description_open = repo.description.is_none();
+    if description_open {
+        repo.description = known.described.map(str::to_owned);
     }
-    if repo.description.is_none() {
-        let message = "Description (one line on what the repo is)";
-        repo.description = non_empty(prompter.text(message, described, &|_| Ok(()))?);
+    if description_open && repo.description.is_none() {
+        repo.description = non_empty(prompter.text(DESCRIPTION, None, &|_| Ok(()))?);
+        description_open = false;
     }
-    if (repo.paths.is_empty() || repo.start.is_empty())
-        && prompter.confirm("Customize paths and start?")?
-    {
-        if repo.paths.is_empty() {
-            repo.paths = ask_paths(prompter, listed, say)?;
+    let (paths_open, start_open, packages_open) = (
+        repo.paths.is_empty(),
+        repo.start.is_empty(),
+        repo.packages.is_empty(),
+    );
+    let packages_for = |paths: &[String]| known.packages_for.map_or_else(Vec::new, |f| f(paths));
+    if packages_open {
+        repo.packages = packages_for(&repo.paths);
+    }
+    let group_open = repo.group.is_none();
+    let open =
+        id_open || description_open || group_open || paths_open || start_open || packages_open;
+    if open {
+        for line in summary(repo, &id, known.looked_at.map(|(pin, _)| pin)) {
+            say.status(line);
         }
-        if repo.start.is_empty() {
+    }
+    if open && prompter.confirm("Customize?")? {
+        let listed = known.looked_at.map(|(_, paths)| paths);
+        if id_open {
+            id = prompter.text("Id", Some(&id), &taken)?;
+        }
+        if group_open {
+            repo.group = ask_group(config, prompter)?;
+        }
+        if description_open {
+            let current = repo.description.clone();
+            let answer = prompter.text(DESCRIPTION, current.as_deref(), &|_| Ok(()))?;
+            repo.description = non_empty(answer);
+        }
+        if paths_open {
+            repo.paths = ask_paths(prompter, listed, say)?;
+            if packages_open {
+                repo.packages = packages_for(&repo.paths);
+            }
+        }
+        if start_open {
             repo.start = ask_start(prompter, listed, &repo.paths, say)?;
         }
+        if packages_open {
+            let current = repo.packages.join(" ");
+            let answer =
+                prompter.text("Packages (space-separated)", Some(&current), &|_| Ok(()))?;
+            repo.packages = answer.split_whitespace().map(str::to_owned).collect();
+        }
     }
+    repo.id = Some(id).filter(|id| *id != suggested);
     Ok(())
+}
+
+const DESCRIPTION: &str = "Description (one line on what the repo is)";
+
+/// The lines that say what `repo` (with this `id`) will be added as.
+fn summary(repo: &AddRepo, id: &str, pin: Option<&Pin>) -> Vec<String> {
+    let git_ref = match (pin, &repo.git_ref) {
+        (Some(pin), _) => format!("{} ({})", pin.display_ref(), pin.short_id()),
+        (None, Some(git_ref)) => git_ref.clone(),
+        (None, None) => "(default branch)".to_owned(),
+    };
+    let list = |items: &[String], none: &str| match items {
+        [] => none.to_owned(),
+        _ => items.join(", "),
+    };
+    let text = |value: &Option<String>| value.clone().unwrap_or_else(|| "(none)".to_owned());
+    [
+        ("id", id.to_owned()),
+        ("ref", git_ref),
+        ("paths", list(&repo.paths, "(everything)")),
+        ("start", list(&repo.start, "(none)")),
+        ("packages", list(&repo.packages, "(none)")),
+        ("description", text(&repo.description)),
+        ("group", text(&repo.group)),
+    ]
+    .map(|(label, value)| format!("{label:<12}{value}"))
+    .to_vec()
 }
 
 /// The directories to check out: picked from those of the `listed` repo, else typed.

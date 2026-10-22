@@ -12,7 +12,7 @@ use refs_cli::update::Unmanaged;
 use tempfile::TempDir;
 
 mod common;
-use common::script::{Answer, Script};
+use common::script::Script;
 
 const URL: &str = "https://github.com/o/foo";
 
@@ -155,7 +155,7 @@ fn manifests_beyond_the_cap_are_counted_in_a_status_line() {
 fn the_description_starts_from_the_root_manifest_and_a_flag_wins() {
     let dir = project();
     let source = solid();
-    let mut script = Script::takes_defaults(false);
+    let mut script = Script::takes_defaults(true);
     add_foo(dir.path(), &source, &[], Some(&mut script));
     let asked = script.asked_about("Description");
     assert_eq!(asked[0].1.as_deref(), Some("A UI library"));
@@ -171,23 +171,6 @@ fn the_description_starts_from_the_root_manifest_and_a_flag_wins() {
     );
     assert!(script.asked_about("Description").is_empty());
     assert!(config_text(dir.path()).contains("description = \"mine\""));
-}
-
-#[test]
-fn an_empty_description_answer_clears_the_default() {
-    let dir = project();
-    let source = solid();
-    let mut script = Script::new([
-        Answer::Text(""),
-        Answer::Text(""),
-        Answer::Clear,
-        Answer::Yes(false),
-    ]);
-
-    let run = add_foo(dir.path(), &source, &[], Some(&mut script));
-
-    assert_eq!(run.code, 0, "{}", run.err);
-    assert!(!config_text(dir.path()).contains("description"));
 }
 
 #[test]
@@ -244,29 +227,5 @@ fn the_equivalent_command_comes_before_the_sync_and_survives_its_failure() {
         equivalent < run.err.find("boom").expect(&run.err),
         "{}",
         run.err
-    );
-}
-
-#[test]
-fn paths_answered_at_the_prompt_narrow_the_packages() {
-    let dir = project();
-    let source = solid();
-    // Id, group, description, then yes to customize, `paths` and `start`.
-    let mut script = Script::new([
-        Answer::Text(""),
-        Answer::Text(""),
-        Answer::Text(""),
-        Answer::Yes(true),
-        Answer::Pick(&["packages/web"]),
-        Answer::Pick(&[]),
-    ]);
-
-    let run = add_foo(dir.path(), &source, &[], Some(&mut script));
-
-    assert_eq!(run.code, 0, "{}", run.err);
-    let config = config_text(dir.path());
-    assert!(
-        config.contains(r#"packages = ["@solidjs/web", "solid-js"]"#),
-        "{config}"
     );
 }

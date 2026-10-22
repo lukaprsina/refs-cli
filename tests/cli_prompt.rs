@@ -68,11 +68,12 @@ fn a_bare_add_asks_for_everything_and_writes_the_answers() {
     let mut script = Script::new([
         Answer::Text("https://github.com/solidjs/solid-router"),
         Answer::Text("next"),
-        Answer::Text(""),
-        Answer::Text("core"),
         Answer::Text("The router"),
         Answer::Yes(true),
+        Answer::Text(""),
+        Answer::Text("core"),
         Answer::Text("src docs"),
+        Answer::Text(""),
         Answer::Text(""),
     ]);
 
@@ -105,34 +106,7 @@ paths = ["src", "docs"]
 #[test]
 fn a_value_given_as_a_flag_is_not_asked_again() {
     let dir = project();
-    let mut script = Script::new([Answer::Text(""), Answer::Text(""), Answer::Yes(false)]);
-
-    let run = refs(
-        dir.path(),
-        &[
-            "add",
-            "https://github.com/o/lib",
-            "--ref",
-            "v2",
-            "--description",
-            "A lib",
-            "--no-sync",
-        ],
-        Some(&mut script),
-    );
-
-    assert_eq!(run.code, 0, "{}", run.err);
-    assert_eq!(
-        script.questions(),
-        ["Id", GROUP, "Customize paths and start?"]
-    );
-    assert!(config_text(dir.path()).contains("ref = \"v2\""));
-}
-
-#[test]
-fn packages_already_given_are_left_out_of_the_confirm() {
-    let dir = project();
-    let mut script = Script::new([Answer::Text(""), Answer::Text(""), Answer::Yes(false)]);
+    let mut script = Script::takes_defaults(true);
 
     let run = refs(
         dir.path(),
@@ -151,23 +125,26 @@ fn packages_already_given_are_left_out_of_the_confirm() {
     );
 
     assert_eq!(run.code, 0, "{}", run.err);
-    assert_eq!(
-        script.questions(),
-        ["Id", GROUP, "Customize paths and start?"]
-    );
+    for given in ["Ref", "Description", "Packages"] {
+        assert!(script.asked_about(given).is_empty(), "{given}");
+    }
+    assert!(config_text(dir.path()).contains("ref = \"v2\""));
 }
 
 #[test]
 fn a_bad_answer_is_asked_again() {
     let dir = project();
     let mut script = Script::new([
-        Answer::Text(""),      // ref
+        Answer::Text(""), // ref
+        Answer::Text(""), // description
+        Answer::Yes(true),
         Answer::Text("solid"), // taken
         Answer::Text("Not Valid"),
         Answer::Text("router"),
         Answer::Text(""),
         Answer::Text(""),
-        Answer::Yes(false),
+        Answer::Text(""),
+        Answer::Text(""),
     ]);
 
     let run = refs(
@@ -237,6 +214,8 @@ fn the_equivalent_command_is_printed_with_a_terminal_even_when_nothing_was_asked
             "docs",
             "--start",
             "docs/a.md",
+            "--packages",
+            "lib",
         ],
         Some(&mut script),
     );
@@ -284,6 +263,16 @@ fn without_a_terminal_nothing_is_asked_and_a_missing_url_is_a_usage_error() {
     assert_eq!(run.code, 0, "{}", run.err);
 }
 
+/// The answers for `add` with a ref, no sync and a description to ask for: the description, yes
+/// at `Customize?`, id and the paths, start and packages left as offered, and `group` for the
+/// group.
+fn group_answered(group: &'static str) -> Script {
+    let (empty, yes) = (Answer::Text(""), Answer::Yes(true));
+    let answers = [empty, yes, Answer::Text(""), Answer::Text(group)];
+    let rest = [Answer::Text(""), Answer::Text(""), Answer::Text("")];
+    Script::new(answers.into_iter().chain(rest))
+}
+
 #[test]
 fn the_first_group_can_be_created_by_typing_its_name() {
     let dir = TempDir::new().unwrap();
@@ -294,12 +283,7 @@ url = \"https://github.com/solidjs/solid\"
 ",
     )
     .unwrap();
-    let mut script = Script::new([
-        Answer::Text(""),
-        Answer::Text("Solid core"),
-        Answer::Text(""),
-        Answer::Yes(false),
-    ]);
+    let mut script = group_answered("Solid core");
 
     let run = refs(
         dir.path(),
@@ -323,12 +307,7 @@ url = \"https://github.com/solidjs/solid\"
 #[test]
 fn existing_groups_are_suggested_and_picking_one_creates_nothing() {
     let dir = project();
-    let mut script = Script::new([
-        Answer::Text(""),
-        Answer::Text("core"),
-        Answer::Text(""),
-        Answer::Yes(false),
-    ]);
+    let mut script = group_answered("core");
 
     let run = refs(
         dir.path(),
@@ -350,12 +329,7 @@ fn existing_groups_are_suggested_and_picking_one_creates_nothing() {
 #[test]
 fn enter_on_the_group_question_files_the_repo_under_no_group() {
     let dir = project();
-    let mut script = Script::new([
-        Answer::Text(""),
-        Answer::Text(""),
-        Answer::Text(""),
-        Answer::Yes(false),
-    ]);
+    let mut script = group_answered("");
 
     let run = refs(
         dir.path(),
@@ -371,7 +345,7 @@ fn enter_on_the_group_question_files_the_repo_under_no_group() {
 
     assert_eq!(run.code, 0, "{}", run.err);
     assert!(script.rejected.is_empty(), "{:?}", script.rejected);
-    assert_eq!(script.questions()[..2], ["Id", GROUP]);
+    assert!(script.questions().contains(&GROUP));
     assert!(!config_text(dir.path()).contains("group ="));
 }
 
@@ -379,7 +353,12 @@ fn enter_on_the_group_question_files_the_repo_under_no_group() {
 fn with_no_groups_yet_the_question_says_a_name_creates_one() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join("refs.toml"), "").unwrap();
-    let mut script = Script::new([Answer::Text(""), Answer::Cancel]);
+    let mut script = Script::new([
+        Answer::Text(""),
+        Answer::Yes(true),
+        Answer::Text(""),
+        Answer::Cancel,
+    ]);
 
     refs(
         dir.path(),
@@ -393,11 +372,8 @@ fn with_no_groups_yet_the_question_says_a_name_creates_one() {
         Some(&mut script),
     );
 
-    assert!(
-        script.questions()[1].contains("none yet"),
-        "{:?}",
-        script.questions()
-    );
+    let group = script.questions()[3];
+    assert!(group.contains("none yet"), "{group}");
 }
 
 #[test]
@@ -405,10 +381,13 @@ fn a_case_only_different_group_name_is_asked_again() {
     let dir = project();
     let mut script = Script::new([
         Answer::Text(""),
+        Answer::Yes(true),
+        Answer::Text(""),
         Answer::Text("Core"),
         Answer::Text("core"),
         Answer::Text(""),
-        Answer::Yes(false),
+        Answer::Text(""),
+        Answer::Text(""),
     ]);
 
     let run = refs(
@@ -434,8 +413,6 @@ fn a_forge_shorthand_typed_at_the_url_question_is_expanded() {
     let mut script = Script::new([
         Answer::Text("gh:owner"),
         Answer::Text("gh:o/.github"),
-        Answer::Text(""),
-        Answer::Text(""),
         Answer::Text(""),
         Answer::Text(""),
         Answer::Yes(false),

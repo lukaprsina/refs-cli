@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit};
 use crate::packages::{infer, manifest_paths};
-use crate::prompt::{self, Abort, Prompter};
+use crate::prompt::{self, Abort, Known, PackagesFor, Prompter};
 use crate::registry::pin::{Say, Stop, pin};
 use crate::registry::{self, Registry, RegistryError};
 use crate::source::{Outline, Source};
@@ -140,47 +140,42 @@ fn prepare(
     });
     let mut described = registry_description;
     let mut manifests = Vec::new();
-    let mut listed = None;
-    let mut inferring = false;
+    let mut outline = None;
     if let Some(source) = looks {
         let git_ref = repo.git_ref.as_deref().unwrap_or("HEAD");
-        let outline = source
+        let looked = source
             .outline(&repo.url, git_ref)
             .map_err(Failure::Source)?;
-        manifests = read_manifests(source, &repo, &outline, say)?;
-        let inferred = infer(&manifests);
-        inferring = repo.packages.is_empty();
-        if inferring {
-            repo.packages = inferred.packages;
-        }
-        described = inferred.description;
-        listed = Some(outline.paths);
+        manifests = read_manifests(source, &repo, &looked, say)?;
+        described = infer(&manifests).description;
+        outline = Some(looked);
     }
+    // Only the Manifests a Checkout of `paths` will hold count. None is fetched again.
+    let packages_for = |paths: &[String]| {
+        let read: Vec<String> = manifests.iter().map(|(path, _)| path.clone()).collect();
+        let held = manifest_paths(&read, paths).0;
+        let held: Vec<_> = manifests
+            .iter()
+            .filter(|(p, _)| held.contains(p))
+            .cloned()
+            .collect();
+        infer(&held).packages
+    };
     let Some(prompter) = asking.prompter() else {
+        if repo.packages.is_empty() {
+            repo.packages = packages_for(&repo.paths);
+        }
         return match repo.url.is_empty() {
             true => Err(Failure::UrlRequired),
             false => Ok(repo),
         };
     };
-    let paths = repo.paths.clone();
-    let listed = listed.as_deref();
-    prompt::fill_add(
-        &mut repo,
-        config,
-        prompter,
-        described.as_deref(),
-        listed,
-        say,
-    )
-    .map_err(Failure::Asked)?;
-    if inferring && repo.paths != paths {
-        // Narrowed by the answers: only the Manifests the Checkout will hold count. None is
-        // fetched again.
-        let read: Vec<String> = manifests.iter().map(|(path, _)| path.clone()).collect();
-        let held = manifest_paths(&read, &repo.paths).0;
-        manifests.retain(|(path, _)| held.contains(path));
-        repo.packages = infer(&manifests).packages;
-    }
+    let known = Known {
+        described: described.as_deref(),
+        looked_at: outline.as_ref().map(|o| (&o.pin, &o.paths[..])),
+        packages_for: outline.is_some().then_some(&packages_for as &PackagesFor),
+    };
+    prompt::fill_add(&mut repo, config, prompter, &known, say).map_err(Failure::Asked)?;
     Ok(repo)
 }
 
