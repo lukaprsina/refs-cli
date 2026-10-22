@@ -1222,7 +1222,10 @@ fn the_registrys_directory_is_picked_by_default_and_enter_keeps_it() {
 
     assert_eq!(yes.preselected[0], ["packages/foo"]);
     assert!(yes.offered[0].contains(&"packages/bar".to_owned()));
-    assert_eq!(config_text(accepted.path()), config_text(declined.path()));
+    for file in ["refs.toml", "refs.lock", "AGENTS.md"] {
+        let read = |dir: &TempDir| fs::read_to_string(dir.path().join(file)).unwrap();
+        assert_eq!(read(&accepted), read(&declined), "{file}");
+    }
     assert!(config_text(accepted.path()).contains("paths = [\"packages/foo\"]"));
 }
 
@@ -1391,14 +1394,37 @@ fn the_summary_shows_the_tag_the_repo_was_looked_at_in() {
 fn a_registry_add_with_no_one_to_ask_does_not_look_at_the_repo() {
     let source = FakeSource::new();
 
+    for extra in [&[][..], &["--packages", "foo-js"], &["--no-input"]] {
+        let args = [&["npm:foo-js", "--id", "foo"][..], extra].concat();
+        let dir = project();
+        let run = add(
+            dir.path(),
+            &in_monorepo(Some("packages/foo")),
+            &source,
+            &args,
+        );
+
+        assert_eq!(run.code, 0, "{}", run.err);
+        assert!(
+            !source.calls().contains(&Call::Outline(FOO.into())),
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
+fn paths_given_by_flag_win_over_the_registrys_directory_and_are_not_asked() {
+    let source = FakeSource::new();
+    monorepo(&source);
+    let mut yes = Script::takes_defaults(true);
+
     let dir = project();
-    let run = add(
-        dir.path(),
-        &in_monorepo(Some("packages/foo")),
-        &source,
-        &["npm:foo-js", "--id", "foo"],
-    );
+    let args = ["npm:foo-js", "--id", "foo", "--paths", "packages/bar"];
+    let registry = in_monorepo(Some("packages/foo"));
+    let run = add_asking(dir.path(), &registry, &source, &args, Some(&mut yes));
 
     assert_eq!(run.code, 0, "{}", run.err);
-    assert!(!source.calls().contains(&Call::Outline(FOO.into())));
+    assert!(config_text(dir.path()).contains("paths = [\"packages/bar\"]"));
+    assert!(yes.offered[0].contains(&"packages/bar/README.md".to_owned()));
+    assert!(!yes.offered[0].contains(&"packages/foo/README.md".to_owned()));
 }

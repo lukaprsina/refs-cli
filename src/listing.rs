@@ -64,6 +64,19 @@ pub fn directories(paths: &[String]) -> (Vec<String>, usize) {
     (dirs, left)
 }
 
+/// `options` with each of `ticked` among them, in path order: a ticked one the cap cut off, or
+/// that the tree lacks, is still offered, so that leaving it ticked changes nothing.
+pub fn with_ticked(mut options: Vec<String>, ticked: &[String]) -> Vec<String> {
+    let missing: Vec<String> = ticked
+        .iter()
+        .filter(|t| !options.contains(t))
+        .cloned()
+        .collect();
+    options.extend(missing);
+    options.sort();
+    options
+}
+
 /// The docs files a Checkout of `chosen` will hold, in path order, and how many were left out
 /// past the cap: Markdown, MDX, reStructuredText and AsciiDoc files, and any README.
 pub fn start_files(paths: &[String], chosen: &[String]) -> (Vec<String>, usize) {

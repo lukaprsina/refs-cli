@@ -63,7 +63,7 @@ pub struct Known<'a> {
     pub looked_at: Option<&'a Outline>,
     /// Whether the `paths` of the repo are the registry's, to be picked from with those ticked,
     /// and not given on the command line.
-    pub paths_proposed: bool,
+    pub paths_from_registry: bool,
     /// The packages the Manifests give for a Checkout of these `paths`, when they were read.
     pub packages_for: Option<&'a PackagesFor<'a>>,
 }
@@ -101,7 +101,7 @@ pub fn fill_add(
         description_open = false;
     }
     let (paths_open, start_open, packages_open) = (
-        repo.paths.is_empty() || known.paths_proposed,
+        repo.paths.is_empty() || known.paths_from_registry,
         repo.start.is_empty(),
         repo.packages.is_empty(),
     );
@@ -193,12 +193,14 @@ fn ask_paths(
         return ask_words(prompter, "Paths to check out (space-separated)");
     };
     let (dirs, left) = listing::directories(listed);
+    let dirs = listing::with_ticked(dirs, current);
     let message = "Paths to check out (type to filter; none selected: the whole repo)";
     let picked = pick_capped(
         prompter,
         say,
         message,
-        (dirs, current),
+        dirs,
+        current,
         left,
         ("directories", "--paths"),
     )?;
@@ -218,28 +220,21 @@ fn ask_start(
     };
     let (files, left) = listing::start_files(listed, paths);
     let message = "Files to read first (type to filter; none selected: none)";
-    let files = (files, &[][..]);
-    pick_capped(prompter, say, message, files, left, ("files", "--start"))
+    let flag = ("files", "--start");
+    pick_capped(prompter, say, message, files, &[], left, flag)
 }
 
 /// A selection from `options`, with `ticked` ticked, of which `left` more were cut off: said, with
-/// the `flag` that names them. A ticked one is offered even if it was cut off. Nothing is asked
-/// when there are none.
+/// the `flag` that names them. Nothing is asked when there are none.
 fn pick_capped(
     prompter: &mut dyn Prompter,
     say: &mut dyn Say,
     message: &str,
-    (mut options, ticked): (Vec<String>, &[String]),
+    options: Vec<String>,
+    ticked: &[String],
     left: usize,
     (noun, flag): (&str, &str),
 ) -> Result<Vec<String>, Abort> {
-    let cut: Vec<String> = ticked
-        .iter()
-        .filter(|t| !options.contains(t))
-        .cloned()
-        .collect();
-    options.extend(cut);
-    options.sort();
     if options.is_empty() {
         return Ok(vec![]);
     }

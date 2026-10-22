@@ -114,9 +114,7 @@ fn prepare(
         ));
     }
     // A registry add has chosen its Ref (a tag, or the default branch), so it is not asked.
-    let ref_settled = expanded.requested.is_some();
-    // The directory the registry gave is where the paths picker starts, unlike one from `--paths`.
-    let paths_proposed = ref_settled && !paths_given;
+    let registry_add = expanded.requested.is_some();
     let registry_description = expanded.description;
     let mut repo = expanded.repo;
     // A `ref` given with a version was refused by `expand`; without one it is kept as it is.
@@ -128,7 +126,7 @@ fn prepare(
         repo.git_ref = pin(package, version, url, root, source, prompter, say)?;
     }
     if repo.git_ref.is_none()
-        && !ref_settled
+        && !registry_add
         && let Some(prompter) = asking.prompter()
     {
         repo.git_ref = prompt::ask_ref(prompter).map_err(Failure::Asked)?;
@@ -149,7 +147,9 @@ fn prepare(
             .outline(&repo.url, git_ref)
             .map_err(Failure::Source)?;
         // A registry add that names its package and describes it has no use for the Manifests.
-        if repo.packages.is_empty() || (described.is_none() && repo.description.is_none()) {
+        let nameless = repo.packages.is_empty();
+        let undescribed = described.is_none() && repo.description.is_none();
+        if nameless || undescribed {
             manifests = read_manifests(source, &repo, &looked, say)?;
             described = described.or(infer(&manifests).description);
         }
@@ -178,7 +178,8 @@ fn prepare(
     let known = Known {
         described: described.as_deref(),
         looked_at: outline.as_ref(),
-        paths_proposed: paths_proposed && outline.is_some(),
+        // The directory the registry gave is where the picker starts, unlike one from `--paths`.
+        paths_from_registry: registry_add && !paths_given && outline.is_some(),
         packages_for: outline.is_some().then_some(&packages_for as &PackagesFor),
     };
     prompt::fill_add(&mut repo, config, prompter, &known, say).map_err(Failure::Asked)?;

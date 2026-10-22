@@ -1,7 +1,7 @@
 //! The policy behind the `paths` and `start` pickers, as data: what a Checkout holds, what
 //! counts as a docs file, the order under the cap, and which selections are redundant.
 
-use refs_cli::listing::{directories, drop_children, held, start_files};
+use refs_cli::listing::{directories, drop_children, held, start_files, with_ticked};
 
 fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()
@@ -89,5 +89,14 @@ fn a_selected_directory_makes_its_descendants_redundant() {
     assert_eq!(
         drop_children(picked),
         strings(&["packages", "packages-x", "src"])
+    );
+}
+
+#[test]
+fn a_ticked_option_the_list_lacks_is_added_in_path_order() {
+    let options = strings(&["a", "c"]);
+    assert_eq!(
+        with_ticked(options, &strings(&["b", "a"])),
+        strings(&["a", "b", "c"])
     );
 }
