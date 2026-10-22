@@ -209,27 +209,57 @@ mod verify {
     use super::*;
 
     #[test]
-    fn the_cache_is_a_partial_clone_with_no_fetch_refspec() {
+    fn the_cache_is_partial_and_holds_no_blobs_after_a_verify() {
         let (remote, env) = (Remote::new(), Env::new());
         verify(&env.source(), &remote, &remote.repo(&["docs"], &[]), ONLINE).unwrap();
 
-        let cache = env.cache_repo(&remote);
         assert_eq!(
-            git(&cache, &["config", "remote.origin.partialclonefilter"]),
+            git(
+                &env.cache_repo(&remote),
+                &["config", "remote.origin.partialclonefilter"]
+            ),
             "blob:none"
         );
-        let refspecs = Command::new("git")
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_WORK_TREE")
-            .current_dir(&cache)
-            .args(["config", "--get-all", "remote.origin.fetch"])
-            .output()
-            .unwrap();
-        assert!(refspecs.stdout.is_empty(), "a bare clone has no refspec");
         assert!(
             env.cached_blobs(&remote).is_empty(),
             "no blobs were fetched"
+        );
+    }
+
+    #[test]
+    fn the_cache_holds_the_pinned_commit_and_none_of_its_history() {
+        let (mut remote, env) = (Remote::new(), Env::new());
+        remote.advance();
+        verify(&env.source(), &remote, &remote.repo(&["docs"], &[]), ONLINE).unwrap();
+
+        let objects = git(
+            &env.cache_repo(&remote),
+            &["cat-file", "--batch-all-objects", "--batch-check"],
+        );
+        let commits = objects.lines().filter(|l| l.contains(" commit ")).count();
+        assert_eq!(commits, 1, "the parent commit is in the Cache:\n{objects}");
+    }
+
+    #[test]
+    fn two_pins_of_one_url_are_both_usable() {
+        let (mut remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        let old = remote.pin();
+        remote.advance();
+
+        source
+            .materialise(at("old", &repo), &old, MaterialiseOpts::default())
+            .unwrap();
+        materialise(&source, "new", &remote, &repo, ONLINE).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(env.checkouts().join("old/docs/guide/a.md")).unwrap(),
+            "a"
+        );
+        assert_eq!(
+            fs::read_to_string(env.checkouts().join("new/docs/guide/a.md")).unwrap(),
+            "a, again"
         );
     }
 
@@ -751,7 +781,7 @@ mod checkout {
             source.inspect("r").unwrap(),
             clean_at(&first, &["docs/guide"])
         );
-        assert!(!env.cache_repo(&second).exists(), "nothing was cloned");
+        assert!(!env.cache_repo(&second).exists(), "nothing was fetched");
     }
 
     #[test]
@@ -787,10 +817,10 @@ mod checkout {
     }
 }
 
-/// A real server, not `file://`: it honours the filter for real, so the clone is partial and
+/// A real server, not `file://`: it honours the filter for real, so the Cache is partial and
 /// a checkout brings only the blobs it reads. Opt in with `REFS_NETWORK_TESTS=1`.
 #[test]
-fn a_real_remote_serves_a_blobless_clone() {
+fn a_real_remote_serves_a_blobless_fetch() {
     if std::env::var_os("REFS_NETWORK_TESTS").is_none() {
         eprintln!("skipped: set REFS_NETWORK_TESTS=1 to run against github.com");
         return;

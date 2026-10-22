@@ -1,5 +1,5 @@
-//! The Cache (spec §7.1): one bare, blobless clone per normalised URL, each behind an
-//! exclusive file lock. Everything that touches a Cache repository runs inside
+//! The Cache (spec §7.1): one bare repository per normalised URL, filled with shallow, blobless
+//! fetches of the pinned commits (ADR 0010), each behind an exclusive file lock. Everything that touches a Cache repository runs inside
 //! `Cache::with_repo`, so two `refs` processes never mutate one at the same time.
 
 use std::fs::{self, OpenOptions};
@@ -98,7 +98,7 @@ impl Cache {
     }
 
     /// Run `f` on the Cache repository for `url` while holding its lock. A missing repository
-    /// is cloned, unless `offline`: then it is an error naming `sha`, the commit the caller
+    /// is created empty, unless `offline`: then it is an error naming `sha`, the commit the caller
     /// wanted.
     pub fn with_repo<T>(
         &self,
@@ -119,7 +119,7 @@ impl Cache {
                     sha: sha.into(),
                 });
             } else {
-                self.clone_repo(url, &name)?;
+                self.create_entry(url, &name)?;
             }
             if !url_file.exists() {
                 crate::atomic::write(&url_file, &format!("{url}\n"))
@@ -148,7 +148,7 @@ impl Cache {
         })
     }
 
-    /// The file beside a Cache repository names the URL it was cloned from. Two URLs with
+    /// The file beside a Cache repository names the URL the entry was made for. Two URLs with
     /// one hash would share a repository and mix their objects, so a different one is an
     /// error.
     fn check_url(url_file: &Path, url: &str) -> Result<(), SourceError> {
@@ -166,18 +166,22 @@ impl Cache {
         }
     }
 
-    /// Clone into a temporary directory and rename it, so a clone that died half way is never
-    /// mistaken for a Cache repository.
-    fn clone_repo(&self, url: &str, name: &str) -> Result<(), SourceError> {
+    /// Create an empty bare repository that knows `url` (and has no fetch refspec) in a
+    /// temporary directory and rename it, so one that died half way is never mistaken for a
+    /// Cache repository. Commits arrive later, one Pin at a time (`Repo::ensure_commit`).
+    fn create_entry(&self, url: &str, name: &str) -> Result<(), SourceError> {
         let tmp = self.root.join(format!("{name}.tmp"));
         let dir = self.root.join(name);
         if tmp.exists() {
             fs::remove_dir_all(&tmp).map_err(|e| io("could not remove", &tmp, e))?;
         }
         Cmd::new()
-            .args(["clone", "--bare", "--filter=blob:none", "--"])
-            .arg(url)
+            .args(["init", "--bare", "--quiet", "--"])
             .arg(&tmp)
+            .run()?;
+        Cmd::new()
+            .git_dir(&tmp)
+            .args(["config", "remote.origin.url", url])
             .run()?;
         fs::rename(&tmp, &dir).map_err(|e| io("could not move", &tmp, e))
     }
@@ -232,7 +236,14 @@ impl Repo {
 
     fn fetch_commit(&self, url: &str, sha: &str) -> Result<(), SourceError> {
         self.git()
-            .args(["fetch", "--no-tags", "--filter=blob:none", "origin", sha])
+            .args([
+                "fetch",
+                "--no-tags",
+                "--depth=1",
+                "--filter=blob:none",
+                "origin",
+                sha,
+            ])
             .run()
             .map(drop)
             .map_err(|failure| {
