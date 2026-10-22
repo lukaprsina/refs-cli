@@ -1,6 +1,7 @@
 //! The Cache (spec §7.1): one bare repository per normalised URL, filled with shallow, blobless
-//! fetches of the pinned commits (ADR 0010), each behind an exclusive file lock. Everything that touches a Cache repository runs inside
-//! `Cache::with_repo`, so two `refs` processes never mutate one at the same time.
+//! fetches of the pinned commits (ADR 0010), each behind an exclusive file lock. Everything
+//! that touches a Cache repository runs inside `Cache::with_repo`, so two `refs` processes
+//! never mutate one at the same time.
 
 use std::fs::{self, OpenOptions};
 use std::io::ErrorKind;
@@ -98,8 +99,8 @@ impl Cache {
     }
 
     /// Run `f` on the Cache repository for `url` while holding its lock. A missing repository
-    /// is created empty, unless `offline`: then it is an error naming `sha`, the commit the caller
-    /// wanted.
+    /// is created empty, unless `offline`: then it is an error naming `sha`, the commit the
+    /// caller wanted.
     pub fn with_repo<T>(
         &self,
         url: &str,
