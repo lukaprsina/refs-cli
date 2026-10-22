@@ -313,8 +313,30 @@ impl Prompter for Terminal {
     fn pick(&mut self, message: &str, options: &[String]) -> Result<Vec<String>, Abort> {
         inquire::MultiSelect::new(message, options.to_vec())
             .with_page_size(15)
+            .with_scorer(&path_scorer())
             .prompt()
             .map_err(abort)
+    }
+}
+
+/// Scores an option (a path) against what has been typed, for `inquire`: fuzzy, with the bonuses
+/// of path matching. `inquire` sorts by score and leaves ties in no order, so the option's
+/// position, which is path order, breaks them: `packages/solid` stays above
+/// `packages/solid-element`.
+pub fn path_scorer() -> impl Fn(&str, &String, &str, usize) -> Option<i64> {
+    use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
+    use nucleo_matcher::{Config, Matcher, Utf32Str};
+    let state = std::cell::RefCell::new((Matcher::new(Config::DEFAULT.match_paths()), Vec::new()));
+    move |input, _, path, position| {
+        let (matcher, buffer) = &mut *state.borrow_mut();
+        let pattern = Pattern::new(
+            input,
+            CaseMatching::Ignore,
+            Normalization::Smart,
+            AtomKind::Fuzzy,
+        );
+        let score = pattern.score(Utf32Str::new(path, buffer), matcher)?;
+        Some(i64::from(score) * 1_000_000 - position as i64)
     }
 }
 
