@@ -35,12 +35,16 @@ A file inside a Repo that names the package it defines, such as `package.json` o
 _Avoid_: Package file, metadata file
 
 **Registry**:
-A package index (npm, crates.io, PyPI) that `add` asks for a package's repository. Named in `add` by a prefix (`npm:`, `cargo:`, `pypi:`); the Repo that is stored has the git URL, never the prefix.
+A package index (npm, crates.io, PyPI) that `add` asks for a package's repository. Named in `add` by a prefix (`npm:`, `cargo:`, `pypi:`); the Repo that is stored has the git URL, never the prefix in it, and the Package it came from as its Origin.
 _Avoid_: Source, Cache
 
 **Package**:
 A name published on a Registry: the ecosystem and the name together (`npm:@scope/name`, `cargo:serde`). It is what a shorthand asks the Registry about and what a Package lockfile is searched for. Not the same as **Packages**, which are the names a Repo documents, read from its Manifests with no ecosystem.
 _Avoid_: Release, Dependency
+
+**Origin**:
+The Package a Repo was added from, kept so `update` can read the Package lockfile again and name the Version tag. Absent for a Repo added by URL or Forge. It is only intent: the Lock never records it and `lock` and `sync` never read it.
+_Avoid_: Provenance, Source
 
 **Forge**:
 A code host (GitHub, GitLab, Bitbucket, Codeberg) that `add` names with a prefix (`gh:`, `gl:`, `bitbucket:`; Codeberg has none yet) and the path of a repository on it; the Repo that is stored has the https URL, never the prefix. It asks nothing, unlike a Registry.

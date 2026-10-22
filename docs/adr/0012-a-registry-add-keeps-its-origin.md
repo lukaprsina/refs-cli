@@ -1,0 +1,31 @@
+---
+status: proposed
+---
+
+# A registry add keeps its Origin in `refs.toml`, and `update` moves pins from it
+
+`npm:solid-js@2.0.0-rc.17` stored only the git URL and the tag, so nothing could later say which Package lockfile entry the pin followed, and a pinned Repo could only be moved by `remove` then `add` or by hand. A Repo added from a Registry now also stores `origin = "npm:solid-js"` (a **Package**, never a version: the version is the Ref). `refs update` reads it to find the Used version and its Version tag again.
+
+## Decision
+
+- **`url` stays the git URL.** The Lock compares the config's `url` and `ref` with its own (`lock::Field`), and `sync --check` depends on that. A shorthand in `url` would make `lock` and `sync` ask the Registry, break offline use and tie the result to the Registry's current `repository`.
+- **A separate field, written for every Registry add**, never for a Forge shorthand (its expansion is a pure string). Presence does not depend on how the Ref was chosen. It is validated when the config loads: `npm:`, `cargo:` or `pypi:` and a name, no version.
+- **Only `add` and `update` read it.** `update` never asks the Registry: the Origin gives the ecosystem and name for `used::find` and `tag_for`, the URL stays as written, and the tags come from `Source::tags(url)`.
+- **`refs update [id…]`** (bare, in a terminal: a multi-select of every Repo as `current → new`, nothing preselected). A floating Ref moves in the Lock, a pinned one moves to the Version tag of the lockfile's version, and then it syncs. A pinned Repo with no Origin needs `--ref`. Picking or naming a Repo is the consent: a clean move has no question, and a Repo that loses a path or `start` file asks `Update?` and re-asks only the broken fields, with the still valid entries ticked. `packages` that vanished from the Manifests are kept and warned about. `description` is never touched. `--list` is a dry run that also works without a terminal, and without a terminal only `update <id> --ref <tag>` moves anything. One edit and one sync; Esc edits nothing.
+- **`refs lock --upgrade` stays**: the scriptable move for floating Refs, which never edits `refs.toml`.
+- **The Ref is asked on a Registry add only when nothing was pinned.** A pin from a version or the lockfile prints a hint instead (`use --ref to track a branch or choose another tag`).
+- **`refs update` (self-update) becomes `refs self update`**, with no alias, so an old script never starts moving pins.
+
+## Considered and rejected
+
+- The shorthand in `url`: see above.
+- `add` replacing a taken id: it would overwrite a tuned `description`, `start` and `group` (ADR 0011 refuses a taken id).
+- Dropping pinned Registry versions: the lockfile-to-tag path is the only add with no question, and the pin is what makes a Reference match the version the project runs.
+- Writing the Origin only when the Ref came from the lockfile: its presence would then depend on how the Ref was chosen.
+- Moving pins in `sync`: `sync` is locked.
+- `update --all` and a moving `--no-input`: bare `update` is the picker, and a lockfile-driven move without a person is the case that is too easy to get wrong.
+
+## Consequences
+
+- Amends ADR 0009 ("the prefix and version are never stored": the prefix is now kept as the Origin, the version still is not) and the glossary's **Registry**.
+- `Repo` is `deny_unknown_fields`: `origin` is a config-format change, and a Repo added before it has none until it is hand-edited in.
