@@ -57,7 +57,6 @@ pub enum Edit<'a> {
     Remove(&'a str),
     Disable(Target<'a>),
     Enable(Target<'a>),
-    SetPackages { id: &'a str, names: &'a [String] },
 }
 
 /// What an edit gave: the new text, that text parsed, and the Group it had to create for it.
@@ -76,7 +75,6 @@ impl Edit<'_> {
             Edit::Remove(id) => (remove(text, id)?, None),
             Edit::Disable(target) => (disable(text, *target)?, None),
             Edit::Enable(target) => (enable(text, *target)?, None),
-            Edit::SetPackages { id, names } => (set_packages(text, id, names)?, None),
         };
         let config = config::parse(&text)?;
         Ok(Applied {
@@ -221,22 +219,6 @@ fn disable(text: &str, target: Target) -> Result<String, EditError> {
     check_exists(text, target)?;
     let doc = parse(text)?;
     Ok(set_key(text, table_of(&doc, target)?, "enabled", "false"))
-}
-
-/// Give the repo `id` the `packages` `names`, after its last key.
-fn set_packages(text: &str, id: &str, names: &[String]) -> Result<String, EditError> {
-    let target = Target::Repo(id);
-    check_exists(text, target)?;
-    let doc = parse(text)?;
-    let array = value(names.iter().collect::<Array>())
-        .into_value()
-        .expect("an array is a value");
-    Ok(set_key(
-        text,
-        table_of(&doc, target)?,
-        "packages",
-        &array.to_string(),
-    ))
 }
 
 /// `text` with `key = value` in `table`: the value of the existing key replaced, or the key on

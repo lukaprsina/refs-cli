@@ -45,9 +45,9 @@ pub trait Prompter {
 /// line is never asked for again; an empty answer leaves a value absent, as omitting its flag
 /// would.
 ///
-/// The packages are not asked here: `add` reads them from the new Checkout and asks then (ADR
-/// 0009), see `ask_packages`. The description question starts from `described`, the
-/// registry's own.
+/// The packages are not asked here: `add` reads them from the repo's Manifests before this
+/// (ADR 0011). TODO(#67): the customize step asks for them again, prefilled. The description
+/// question starts from `described`: the registry's, else the root Manifest's.
 pub fn fill_add(
     repo: &mut AddRepo,
     config: &Config,
@@ -81,18 +81,6 @@ pub fn fill_add(
         }
     }
     Ok(())
-}
-
-/// The packages of a repo that has just been checked out, with `inferred` to start from. The
-/// answer is split on whitespace; an empty one is none.
-pub fn ask_packages(
-    inferred: &[String],
-    prompter: &mut dyn Prompter,
-) -> Result<Vec<String>, Abort> {
-    let initial = inferred.join(" ");
-    let initial = Some(initial.as_str()).filter(|d| !d.is_empty());
-    let answer = prompter.text("Packages (space-separated)", initial, &|_| Ok(()))?;
-    Ok(answer.split_whitespace().map(str::to_owned).collect())
 }
 
 /// The group to file the repo under: one that exists or a new one, by name. Empty is none.

@@ -21,10 +21,6 @@ fn enable(text: &str, target: Target) -> Result<String, EditError> {
     text_of(Edit::Enable(target), text)
 }
 
-fn set_packages(text: &str, id: &str, names: &[String]) -> Result<String, EditError> {
-    text_of(Edit::SetPackages { id, names }, text)
-}
-
 const CONFIG: &str = r#"# My references.
 
 [settings]
@@ -382,40 +378,4 @@ fn a_repo_not_written_as_a_table_is_refused_with_a_hint() {
         assert_eq!(codes(&err), ["refs::config::unreadable"]);
         assert!(err.to_string().contains("rewrite it as one"), "{err}");
     }
-}
-
-#[test]
-fn set_packages_adds_the_key_after_the_repos_last_key() {
-    let edited =
-        set_packages(CONFIG, "solid", &["solid-js".into(), "@solidjs/web".into()]).unwrap();
-    let expected = CONFIG.replace(
-        "group = \"solid\"\n",
-        "group = \"solid\"\npackages = [\"solid-js\", \"@solidjs/web\"]\n",
-    );
-    assert_eq!(edited, expected);
-}
-
-#[test]
-fn set_packages_replaces_an_existing_key_and_leaves_every_other_byte() {
-    let config = "[repos.a]\nurl = \"https://github.com/o/a\"\npackages = [\"old\"] # why\nstart = [\"README.md\"]\n\n# next\n[repos.b]\nurl = \"https://github.com/o/b\"\n";
-    let edited = set_packages(config, "a", &["new-1".into(), "new-2".into()]).unwrap();
-    assert_eq!(
-        edited,
-        config.replace("[\"old\"]", "[\"new-1\", \"new-2\"]")
-    );
-}
-
-#[test]
-fn set_packages_keeps_the_line_endings_and_a_missing_final_newline() {
-    let config = "[repos.a]\r\nurl = \"https://github.com/o/a\"";
-    let edited = set_packages(config, "a", &["x".into()]).unwrap();
-    assert_eq!(
-        edited,
-        "[repos.a]\r\nurl = \"https://github.com/o/a\"\r\npackages = [\"x\"]"
-    );
-}
-
-#[test]
-fn set_packages_refuses_an_unknown_repo() {
-    assert!(set_packages(CONFIG, "nope", &["x".into()]).is_err());
 }

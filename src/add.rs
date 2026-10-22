@@ -1,23 +1,22 @@
-//! `refs add` (ADR 0008, 0009), all but the printing of its reports (it says what it read and decided, and warns, through a `Say`). First the repo it is asked
-//! to add is made ready: a registry or forge shorthand expanded, its version pinned to a tag
-//! (`registry::pin`), the ref asked for, and the repo looked at (`Source::outline`, ADR 0011), so that
-//! a bad URL or ref fails before the other questions. Then the repo is added and
-//! synced, the new Checkout's Manifests are read for its `packages`, the person confirms them,
-//! and a second sync that only re-renders the Managed block writes them. With no sync
-//! (`--no-sync`) there is no Checkout, so the `packages` stay as given. What is read and decided
-//! on the way is said through a `Say`.
+//! `refs add` (ADR 0008, 0009, 0011), all but the printing of its report (it says what it read and
+//! decided, and warns, through a `Say`). First the repo it is asked to add is made ready: a
+//! registry or forge shorthand expanded, its version pinned to a tag (`registry::pin`), the ref
+//! asked for, and the repo looked at (`Source::outline`), so that a bad URL or ref fails before
+//! the other questions. Its Manifests are read then, for the `packages` and the description.
+//! Then the repo is added and synced once. With no sync (`--no-sync`) nothing is looked at, so
+//! the `packages` stay as given.
 
 use std::path::Path;
 
 use crate::config::Config;
 use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit};
-use crate::packages::infer_packages;
+use crate::packages::{Inferred, infer, manifest_paths};
 use crate::prompt::{self, Abort, Prompter};
 use crate::registry::pin::{Say, Stop, pin};
 use crate::registry::{self, Registry, RegistryError};
-use crate::source::Source;
-use crate::sync::{self, Outcome, Report, SyncFlags};
+use crate::source::{Outline, Source};
+use crate::sync::{self, Report, SyncFlags};
 
 /// Who `add` can ask and what it can ask about.
 pub struct Asking<'a> {
@@ -59,36 +58,12 @@ impl From<Stop> for Failure {
     }
 }
 
-/// What an `add` did, for the CLI to print.
-#[derive(Debug)]
-pub struct Added {
-    /// The add and its sync, then the sync that wrote `packages` if there was one.
-    pub reports: Vec<Report>,
-    /// The repo as it ended up in `refs.toml`: the one given, with the `packages` the second
-    /// sync wrote if there was one.
-    pub repo: AddRepo,
-    /// Why the repo was left without the `packages` it was asked for, if it was.
-    pub skipped: Option<Skipped>,
-    /// Whether there was someone to ask, whether or not a question came up, so the equivalent
-    /// command line is worth printing.
-    pub interactive: bool,
-}
-
-/// Why `add` left a repo without `packages` after asking for them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Skipped {
-    /// The person gave up the question or answered it with nothing.
-    Declined,
-    /// The terminal failed.
-    PromptFailed(String),
-}
-
-/// Add `repo`, as the command line gave it, to the project at `root` and sync it. It is first
-/// made ready (see `prepare`). Unless it names its `packages`, they are then read from the
-/// Checkout: asked for with the names found as the default when there is a prompter, otherwise
-/// the names found are written. `flags` are for the add's own sync. Without a `source`
-/// (`--no-sync`) the repo is only added: there are no tags to list and no Checkout to read, so
-/// the version is not pinned and the `packages` stay as given.
+/// Add `repo`, as the command line gave it, to the project at `root` and sync it: one edit of
+/// `refs.toml` and one sync. It is first made ready (see `prepare`), and when there is someone
+/// to ask, the equivalent command line is said before the edit, so a failed sync does not lose
+/// it. `flags` are for the sync. Without a `source` (`--no-sync`) the repo is only added: there
+/// are no tags to list and no repo to look at, so the version is not pinned and the `packages`
+/// stay as given.
 pub fn run(
     source: Option<&dyn Source>,
     root: &Path,
@@ -97,71 +72,20 @@ pub fn run(
     flags: &SyncFlags,
     asking: &mut Asking,
     say: &mut dyn Say,
-) -> Result<Added, Failure> {
+) -> Result<Report, Failure> {
     let repo = prepare(repo, source, root, config, asking, say)?;
-    let mut added = sync_and_infer(source, root, config, &repo, flags, asking);
-    added.interactive = asking.prompter.is_some();
-    Ok(added)
-}
-
-/// The add of the prepared `repo` and its sync, then the `packages` (see `run`).
-fn sync_and_infer(
-    source: Option<&dyn Source>,
-    root: &Path,
-    config: &Config,
-    repo: &AddRepo,
-    flags: &SyncFlags,
-    asking: &mut Asking,
-) -> Added {
-    let edit = Edit::Add(repo);
-    let first = match source {
+    if asking.prompter.is_some() {
+        say.status(format!("equivalent: {}", prompt::equivalent_command(&repo)));
+    }
+    let edit = Edit::Add(&repo);
+    Ok(match source {
         Some(source) => sync::edit(source, root, &edit, flags),
         None => sync::edit_only(root, &edit),
-    };
-    let mut added = Added {
-        reports: Vec::new(),
-        repo: repo.clone(),
-        skipped: None,
-        interactive: false,
-    };
-    let infer = repo.packages.is_empty() && first.outcome == Outcome::InSync;
-    added.reports.push(first);
-    let Some(source) = source.filter(|_| infer) else {
-        return added;
-    };
-    let id = repo.resolved_id();
-    let checkout = root.join(config.settings.references_dir()).join(&id);
-    let inferred = infer_packages(&checkout);
-    let prompter = asking.prompter();
-    let prompted = prompter.is_some();
-    let names = match prompter {
-        Some(prompter) => match prompt::ask_packages(&inferred, prompter) {
-            Ok(names) => names,
-            Err(Abort::Cancelled) => return added.skip(Skipped::Declined),
-            Err(Abort::Failed(why)) => return added.skip(Skipped::PromptFailed(why)),
-        },
-        None => inferred,
-    };
-    if names.is_empty() && prompted {
-        return added.skip(Skipped::Declined);
-    }
-    if !names.is_empty() {
-        let flags = SyncFlags {
-            offline: true,
-            ..SyncFlags::default()
-        };
-        let edit = Edit::SetPackages {
-            id: &id,
-            names: &names,
-        };
-        added.reports.push(sync::edit(source, root, &edit, &flags));
-        added.repo.packages = names;
-    }
-    added
+    })
 }
 
-/// `repo` ready to add: a registry shorthand expanded and its version pinned to a tag, then
-/// what the command line left out asked for. The version is the one given, else the one the
+/// `repo` ready to add: a registry shorthand expanded and its version pinned to a tag, the repo
+/// looked at for its `packages` and description, then what the command line left out asked for. The version is the one given, else the one the
 /// project's Package lockfile at `root` says it uses. The tags come from `source`. Only a
 /// missing URL is a problem without a prompter. On a cancel nothing has been edited.
 fn prepare(
@@ -213,11 +137,17 @@ fn prepare(
             && !asking.offline
             && (asking.prompter.is_some() || repo.packages.is_empty())
     });
+    let mut described = registry_description;
     if let Some(source) = looks {
         let git_ref = repo.git_ref.as_deref().unwrap_or("HEAD");
-        source
+        let outline = source
             .outline(&repo.url, git_ref)
             .map_err(Failure::Source)?;
+        let inferred = read_manifests(source, &repo, &outline, say)?;
+        if repo.packages.is_empty() {
+            repo.packages = inferred.packages;
+        }
+        described = inferred.description;
     }
     let Some(prompter) = asking.prompter() else {
         return match repo.url.is_empty() {
@@ -225,14 +155,29 @@ fn prepare(
             false => Ok(repo),
         };
     };
-    prompt::fill_add(&mut repo, config, prompter, registry_description.as_deref())
-        .map_err(Failure::Asked)?;
+    prompt::fill_add(&mut repo, config, prompter, described.as_deref()).map_err(Failure::Asked)?;
     Ok(repo)
 }
 
-impl Added {
-    fn skip(mut self, why: Skipped) -> Added {
-        self.skipped = Some(why);
-        self
+/// What the Manifests of the `outline`d repo that `repo` will check out say. The Lock records
+/// what the sync resolves, which is another commit than this one if upstream moved in between:
+/// accepted.
+fn read_manifests(
+    source: &dyn Source,
+    repo: &AddRepo,
+    outline: &Outline,
+    say: &mut dyn Say,
+) -> Result<Inferred, Failure> {
+    let (chosen, left) = manifest_paths(&outline.paths, &repo.paths);
+    if left > 0 {
+        let read = chosen.len();
+        say.status(format!("read {read} Manifests and left {left} unread"));
     }
+    if chosen.is_empty() {
+        return Ok(Inferred::default());
+    }
+    let files = source
+        .read(&repo.url, &outline.pin, &chosen)
+        .map_err(Failure::Source)?;
+    Ok(infer(&files))
 }

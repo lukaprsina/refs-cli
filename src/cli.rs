@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::add::{Asking, Failure, Skipped};
+use crate::add::{Asking, Failure};
 use crate::config::Config;
 use crate::diagnostic::{Note, ProjectError, SourceError};
 use crate::edit::{AddRepo, Edit, Target};
@@ -481,15 +481,7 @@ fn failed(failure: Failure, console: &mut Console) -> u8 {
     }
 }
 
-fn equivalent(repo: &AddRepo, console: &mut Console) {
-    console.status(format_args!(
-        "equivalent: {}",
-        prompt::equivalent_command(repo)
-    ));
-}
-
-/// `refs add` (`add::run`), then its reports. When there was someone to ask, the
-/// `equivalent:` line comes last, with the `packages` that were read.
+/// `refs add` (`add::run`), then its report.
 fn add(
     source: Option<&dyn Source>,
     root: &Path,
@@ -499,31 +491,10 @@ fn add(
     asking: &mut Asking,
     console: &mut Console,
 ) -> u8 {
-    let added = match crate::add::run(source, root, config, repo, flags, asking, console) {
-        Ok(added) => added,
-        Err(failure) => return failed(failure, console),
-    };
-    let mut code = 0;
-    for report in &added.reports {
-        let reported = print_report(report, false, console);
-        if code == 0 {
-            code = reported;
-        }
+    match crate::add::run(source, root, config, repo, flags, asking, console) {
+        Ok(report) => print_report(&report, false, console),
+        Err(failure) => failed(failure, console),
     }
-    if added.interactive {
-        equivalent(&added.repo, console);
-    }
-    if let Some(why) = &added.skipped {
-        if let Skipped::PromptFailed(why) = why {
-            console.problem(format_args!("cannot prompt: {why}"));
-        }
-        console.status(format_args!(
-            "added `{}` without packages; set them in {}",
-            repo.resolved_id(),
-            project::CONFIG_FILE
-        ));
-    }
-    code
 }
 
 /// Build the `Source` and run `f` with it. Only the commands that sync ask for one, so the
