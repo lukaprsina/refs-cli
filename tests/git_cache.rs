@@ -843,3 +843,59 @@ fn a_real_remote_serves_a_blobless_fetch() {
     );
     assert!(env.checkouts().join("r/README").exists());
 }
+
+mod outline {
+    use super::*;
+
+    #[test]
+    fn lists_every_path_and_fetches_no_blob() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let outline = env.source().outline(&remote.url(), "main").unwrap();
+        assert_eq!(outline.pin.sha(), remote.sha);
+        let expected = [
+            "LICENSE",
+            "README.md",
+            "docs/api/c.md",
+            "docs/guide/a.md",
+            "docs/guide/sub/b.md",
+            "docs/other.md",
+            "src/lib.rs",
+        ];
+        assert_eq!(outline.paths, expected);
+        assert_eq!(env.cached_blobs(&remote), names(&[]));
+    }
+
+    #[test]
+    fn read_fetches_only_the_named_blobs() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let outline = source.outline(&remote.url(), "main").unwrap();
+        let paths = ["src/lib.rs".to_string(), "README.md".to_string()];
+        let texts = source.read(&remote.url(), &outline.pin, &paths).unwrap();
+        let expected = [("src/lib.rs", "lib"), ("README.md", "readme")];
+        let expected: Vec<_> = expected.map(|(p, t)| (p.to_string(), t.to_string())).into();
+        assert_eq!(texts, expected);
+        assert_eq!(env.cached_blobs(&remote).len(), 2);
+    }
+
+    #[test]
+    fn read_refuses_a_directory_and_a_path_not_in_the_tree() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let outline = source.outline(&remote.url(), "main").unwrap();
+        for path in ["docs", "docs/gone.md"] {
+            let result = source.read(&remote.url(), &outline.pin, &[path.to_string()]);
+            assert!(result.is_err(), "{path}");
+        }
+    }
+
+    #[test]
+    fn a_bad_ref_or_url_is_an_error_and_leaves_no_cache() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        assert!(source.outline(&remote.url(), "no-such-ref").is_err());
+        let gone = common::file_url(&remote.dir.path().join("gone"));
+        assert!(source.outline(&gone, "HEAD").is_err());
+        assert!(!env.cache_repo(&remote).exists());
+    }
+}

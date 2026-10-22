@@ -1,6 +1,7 @@
 //! `refs add` (ADR 0008, 0009), all but the printing of its reports (it says what it read and decided, and warns, through a `Say`). First the repo it is asked
 //! to add is made ready: a registry or forge shorthand expanded, its version pinned to a tag
-//! (`registry::pin`), and what the command line left out asked for. Then the repo is added and
+//! (`registry::pin`), the ref asked for, and the repo looked at (`Source::outline`, ADR 0011), so that
+//! a bad URL or ref fails before the other questions. Then the repo is added and
 //! synced, the new Checkout's Manifests are read for its `packages`, the person confirms them,
 //! and a second sync that only re-renders the Managed block writes them. With no sync
 //! (`--no-sync`) there is no Checkout, so the `packages` stay as given. What is read and decided
@@ -38,7 +39,7 @@ impl Asking<'_> {
 #[derive(Debug)]
 pub enum Failure {
     Registry(RegistryError),
-    /// The tags of the remote could not be listed.
+    /// The remote could not be looked at: a bad URL or ref, or its tags could not be listed.
     Source(SourceError),
     /// A question ended without an answer.
     Asked(Abort),
@@ -198,20 +199,34 @@ fn prepare(
         let prompter = asking.prompter();
         repo.git_ref = pin(package, version, url, root, source, prompter, say)?;
     }
+    if repo.git_ref.is_none()
+        && !ref_settled
+        && let Some(prompter) = asking.prompter()
+    {
+        repo.git_ref = prompt::ask_ref(prompter).map_err(Failure::Asked)?;
+    }
+    // Looking at the repo comes before the rest of the questions, so that a bad URL or ref
+    // fails before they are asked and with nothing edited.
+    let looks = source.filter(|_| {
+        !ref_settled
+            && !repo.url.is_empty()
+            && !asking.offline
+            && (asking.prompter.is_some() || repo.packages.is_empty())
+    });
+    if let Some(source) = looks {
+        let git_ref = repo.git_ref.as_deref().unwrap_or("HEAD");
+        source
+            .outline(&repo.url, git_ref)
+            .map_err(Failure::Source)?;
+    }
     let Some(prompter) = asking.prompter() else {
         return match repo.url.is_empty() {
             true => Err(Failure::UrlRequired),
             false => Ok(repo),
         };
     };
-    prompt::fill_add(
-        &mut repo,
-        config,
-        prompter,
-        ref_settled,
-        registry_description.as_deref(),
-    )
-    .map_err(Failure::Asked)?;
+    prompt::fill_add(&mut repo, config, prompter, registry_description.as_deref())
+        .map_err(Failure::Asked)?;
     Ok(repo)
 }
 

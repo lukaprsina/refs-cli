@@ -3,6 +3,7 @@
 //! that touches a Cache repository runs inside `Cache::with_repo`, so two `refs` processes
 //! never mutate one at the same time.
 
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -296,6 +297,12 @@ impl Repo {
             }
             wanted.extend(tree(&["-r"], paths)?);
         }
+        self.fetch_missing(&wanted)
+    }
+
+    /// Fetch the blobs of `wanted` (object ids) that the repository does not have, in one
+    /// round trip.
+    fn fetch_missing(&self, wanted: &[String]) -> Result<(), SourceError> {
         let present = self
             .git()
             .no_lazy_fetch()
@@ -319,5 +326,75 @@ impl Repo {
             .stdin(missing.join("\n") + "\n")
             .run()?;
         Ok(())
+    }
+
+    /// Every path in the tree of `sha`, in git's order.
+    pub fn paths(&self, sha: &str) -> Result<Vec<String>, SourceError> {
+        let out = self
+            .git()
+            .no_lazy_fetch()
+            .args(["ls-tree", "-r", "--name-only", "-z", sha])
+            .run()?;
+        Ok(out
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(String::from)
+            .collect())
+    }
+
+    /// The text of the files at `paths` in the tree of `sha`, in the order asked. Their blobs
+    /// are fetched in one batch, then read without fetching lazily. A path that is not a
+    /// file of the tree is an error.
+    pub fn read(&self, sha: &str, paths: &[String]) -> Result<Vec<(String, String)>, SourceError> {
+        if paths.is_empty() {
+            return Ok(vec![]);
+        }
+        let listing = self
+            .git()
+            .no_lazy_fetch()
+            .args(["ls-tree", "-z", sha, "--"])
+            .args(paths)
+            .run()?;
+        let entries: HashMap<&str, &str> = listing
+            .split('\0')
+            .filter_map(|line| line.split_once('\t'))
+            .map(|(meta, path)| (path, meta))
+            .collect();
+        let mut oids = Vec::with_capacity(paths.len());
+        for path in paths {
+            let mut meta = entries.get(path.as_str()).copied().unwrap_or("").split(' ');
+            match (meta.nth(1), meta.next()) {
+                (Some("blob"), Some(oid)) => oids.push(oid.to_string()),
+                _ => return Err(failed(format!("{path} is not a file in {sha}"))),
+            }
+        }
+        self.fetch_missing(&oids)?;
+        let out = self
+            .git()
+            .no_lazy_fetch()
+            .args(["cat-file", "--batch"])
+            .stdin(oids.join("\n") + "\n")
+            .run_bytes()?;
+        // Each blob is `<oid> blob <size>\n<size bytes>\n`.
+        let mut rest = out.as_slice();
+        let mut texts = Vec::with_capacity(paths.len());
+        for path in paths {
+            let framed = (|| {
+                let end = rest.iter().position(|&b| b == b'\n')?;
+                let size: usize = std::str::from_utf8(&rest[..end])
+                    .ok()?
+                    .rsplit(' ')
+                    .next()?
+                    .parse()
+                    .ok()?;
+                Some((rest.get(end + 1..end + 1 + size)?, end + 2 + size))
+            })();
+            let Some((body, next)) = framed else {
+                return Err(failed(format!("could not read {path} in {sha}")));
+            };
+            texts.push((path.clone(), String::from_utf8_lossy(body).into_owned()));
+            rest = rest.get(next..).unwrap_or_default();
+        }
+        Ok(texts)
     }
 }

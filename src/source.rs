@@ -105,6 +105,13 @@ pub struct VerifyOpts {
     pub offline: bool,
 }
 
+/// What a remote holds at a ref: the Pin it resolved to and every path of the commit's tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outline {
+    pub pin: Pin,
+    pub paths: Vec<String>,
+}
+
 pub trait Source {
     /// Ref to commit. Asks the remote; never creates a Checkout.
     fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError>;
@@ -121,6 +128,18 @@ pub trait Source {
     /// The names of the remote's tags, sorted. Asks the remote (one round trip); never touches
     /// the Cache or a Checkout. Takes a URL, as the Repo it is for is not in the config yet.
     fn tags(&self, url: &str) -> Result<Vec<String>, SourceError>;
+    /// Resolve `git_ref` of the remote at `url` and make the commit's trees local in the Cache
+    /// (no blobs), so that its paths can be listed. Takes a URL, as the Repo it is for is not
+    /// in the config yet. A bad URL or ref fails here, before anything is edited.
+    fn outline(&self, url: &str, git_ref: &str) -> Result<Outline, SourceError>;
+    /// The text of the blobs at `paths` in the commit `pin`, fetched in one batch, and never
+    /// lazily. A path that is not in the tree is an error.
+    fn read(
+        &self,
+        url: &str,
+        pin: &Pin,
+        paths: &[String],
+    ) -> Result<Vec<(String, String)>, SourceError>;
     fn remove(&self, id: &str) -> Result<(), SourceError>;
     fn inspect(&self, id: &str) -> Result<Observed, SourceError>;
     /// The names of the directories in the references directory, whatever made them.

@@ -39,20 +39,19 @@ pub trait Prompter {
     fn confirm(&mut self, message: &str) -> Result<bool, Abort>;
 }
 
-/// Complete `repo` by asking for each value it does not have, except the URL, which `add` asks
-/// first (`ask_url`) so that a shorthand is expanded before the rest. A value given on the command
+/// Complete `repo` by asking for each value it does not have, except the URL and the `ref`,
+/// which `add` asks first (`ask_url`, `ask_ref`) so that a shorthand is expanded, and the repo
+/// looked at, before the rest. A value given on the command
 /// line is never asked for again; an empty answer leaves a value absent, as omitting its flag
 /// would.
 ///
 /// The packages are not asked here: `add` reads them from the new Checkout and asks then (ADR
-/// 0009), see `ask_packages`. With `ref_settled` the `ref` is not asked either: a registry add
-/// has chosen it (a tag, or the default branch). The description question starts from
-/// `described`, the registry's own.
+/// 0009), see `ask_packages`. The description question starts from `described`, the
+/// registry's own.
 pub fn fill_add(
     repo: &mut AddRepo,
     config: &Config,
     prompter: &mut dyn Prompter,
-    ref_settled: bool,
     described: Option<&str>,
 ) -> Result<(), Abort> {
     if repo.id.is_none() {
@@ -63,9 +62,6 @@ pub fn fill_add(
     }
     if repo.group.is_none() {
         repo.group = ask_group(config, prompter)?;
-    }
-    if repo.git_ref.is_none() && !ref_settled {
-        repo.git_ref = ask_optional(prompter, "Ref (empty: the remote's default branch)")?;
     }
     if repo.description.is_none() {
         let message = "Description (one line on what the repo is)";
@@ -124,6 +120,12 @@ fn non_empty(answer: String) -> Option<String> {
 /// expands before `fill_add` asks the rest.
 pub fn ask_url(prompter: &mut dyn Prompter) -> Result<String, Abort> {
     prompter.text("Repository URL", None, &valid_url)
+}
+
+/// The ref to add, asked once the URL is settled and before the repo is looked at. Empty is
+/// the remote's default branch.
+pub fn ask_ref(prompter: &mut dyn Prompter) -> Result<Option<String>, Abort> {
+    ask_optional(prompter, "Ref (empty: the remote's default branch)")
 }
 
 fn valid_url(url: &str) -> Result<(), String> {

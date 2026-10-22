@@ -47,9 +47,11 @@ struct FakeHarness {
 
 impl FakeHarness {
     fn new() -> Self {
-        FakeHarness {
-            source: FakeSource::new(),
-        }
+        let source = FakeSource::new();
+        // The tree of the git remote's second commit, the one `outline` resolves.
+        let files = [("docs/a.md", "two"), ("src/b.md", "two")];
+        source.set_tree(FAKE_URL, &"b".repeat(40), &files);
+        FakeHarness { source }
     }
 }
 
@@ -230,6 +232,28 @@ fn tags_rows<H: Harness>(new: &impl Fn() -> H) {
     );
 }
 
+/// `outline` resolves the ref and lists every path of its tree; `read` returns the text of
+/// the named blobs, and a path that is not in the tree is an error, not an empty text.
+fn outline_rows<H: Harness>(new: &impl Fn() -> H) {
+    let h = new();
+    let url = h.url();
+    let outline = h.source().outline(&url, "main").unwrap();
+    assert_eq!(outline.pin, h.pins()[1], "outline: pin");
+    assert_eq!(outline.paths, ["docs/a.md", "src/b.md"], "outline: paths");
+    let paths = ["src/b.md".to_string(), "docs/a.md".to_string()];
+    let texts = h.source().read(&url, &outline.pin, &paths).unwrap();
+    let expected = [("src/b.md", "two"), ("docs/a.md", "two")];
+    let expected: Vec<(String, String)> = expected
+        .map(|(path, text)| (path.to_string(), text.to_string()))
+        .into();
+    assert_eq!(texts, expected, "read: texts");
+    let gone = ["docs/gone.md".to_string()];
+    assert!(
+        h.source().read(&url, &outline.pin, &gone).is_err(),
+        "read: a missing path"
+    );
+}
+
 /// `inspect` reports what was seeded, and looking changes nothing.
 fn inspect_rows<H: Harness>(new: &impl Fn() -> H) {
     for (name, state) in states(&new()) {
@@ -313,6 +337,11 @@ macro_rules! meets_the_contract {
             #[test]
             fn materialise() {
                 materialise_rows(&$new);
+            }
+
+            #[test]
+            fn outline() {
+                outline_rows(&$new);
             }
 
             #[test]

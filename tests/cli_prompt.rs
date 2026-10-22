@@ -67,9 +67,9 @@ fn a_bare_add_asks_for_everything_and_writes_the_answers() {
     let dir = project();
     let mut script = Script::new([
         Answer::Text("https://github.com/solidjs/solid-router"),
+        Answer::Text("next"),
         Answer::Text(""),
         Answer::Text("core"),
-        Answer::Text("next"),
         Answer::Text("The router"),
         Answer::Yes(true),
         Answer::Text("src docs"),
@@ -161,10 +161,10 @@ fn packages_already_given_are_left_out_of_the_confirm() {
 fn a_bad_answer_is_asked_again() {
     let dir = project();
     let mut script = Script::new([
+        Answer::Text(""),      // ref
         Answer::Text("solid"), // taken
         Answer::Text("Not Valid"),
         Answer::Text("router"),
-        Answer::Text(""),
         Answer::Text(""),
         Answer::Text(""),
         Answer::Yes(false),
@@ -298,13 +298,18 @@ url = \"https://github.com/solidjs/solid\"
         Answer::Text(""),
         Answer::Text("Solid core"),
         Answer::Text(""),
-        Answer::Text(""),
         Answer::Yes(false),
     ]);
 
     let run = refs(
         dir.path(),
-        &["add", "https://github.com/o/lib", "--no-sync"],
+        &[
+            "add",
+            "https://github.com/o/lib",
+            "--ref",
+            "main",
+            "--no-sync",
+        ],
         Some(&mut script),
     );
 
@@ -322,13 +327,18 @@ fn existing_groups_are_suggested_and_picking_one_creates_nothing() {
         Answer::Text(""),
         Answer::Text("core"),
         Answer::Text(""),
-        Answer::Text(""),
         Answer::Yes(false),
     ]);
 
     let run = refs(
         dir.path(),
-        &["add", "https://github.com/o/lib", "--no-sync"],
+        &[
+            "add",
+            "https://github.com/o/lib",
+            "--ref",
+            "main",
+            "--no-sync",
+        ],
         Some(&mut script),
     );
 
@@ -344,13 +354,18 @@ fn enter_on_the_group_question_files_the_repo_under_no_group() {
         Answer::Text(""),
         Answer::Text(""),
         Answer::Text(""),
-        Answer::Text(""),
         Answer::Yes(false),
     ]);
 
     let run = refs(
         dir.path(),
-        &["add", "https://github.com/o/lib", "--no-sync"],
+        &[
+            "add",
+            "https://github.com/o/lib",
+            "--ref",
+            "main",
+            "--no-sync",
+        ],
         Some(&mut script),
     );
 
@@ -368,7 +383,13 @@ fn with_no_groups_yet_the_question_says_a_name_creates_one() {
 
     refs(
         dir.path(),
-        &["add", "https://github.com/o/lib", "--no-sync"],
+        &[
+            "add",
+            "https://github.com/o/lib",
+            "--ref",
+            "main",
+            "--no-sync",
+        ],
         Some(&mut script),
     );
 
@@ -387,13 +408,18 @@ fn a_case_only_different_group_name_is_asked_again() {
         Answer::Text("Core"),
         Answer::Text("core"),
         Answer::Text(""),
-        Answer::Text(""),
         Answer::Yes(false),
     ]);
 
     let run = refs(
         dir.path(),
-        &["add", "https://github.com/o/lib", "--no-sync"],
+        &[
+            "add",
+            "https://github.com/o/lib",
+            "--ref",
+            "main",
+            "--no-sync",
+        ],
         Some(&mut script),
     );
 

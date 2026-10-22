@@ -37,13 +37,13 @@ refs init
 refs add
 ```
 
-In a terminal `refs add` asks for what you didn't pass: the URL (or a shorthand such as `gh:owner/repo` or `npm:name`), then id, group (Enter for none, type to filter, or a new name to create one), ref, description, paths and start. It then locks the repo and syncs, reads the package names from the new checkout's manifests (`package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`) and asks you to confirm them. That second write re-renders `refs.toml` and `AGENTS.md`, which is why both appear twice in the output. It ends by printing the equivalent command line:
+In a terminal `refs add` asks for what you didn't pass: the URL (or a shorthand such as `gh:owner/repo` or `npm:name`), then the ref, then id, group (Enter for none, type to filter, or a new name to create one), description, paths and start. It then locks the repo and syncs, reads the package names from the new checkout's manifests (`package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`) and asks you to confirm them. That second write re-renders `refs.toml` and `AGENTS.md`, which is why both appear twice in the output. It ends by printing the equivalent command line:
 
 ```text
 $ refs add gh:solidjs/solid
+> Ref (empty: the remote's default branch) next
 > Id solid
 > Group (none yet; Enter for none, or a name to create one) solidjs-2
-> Ref (empty: the remote's default branch) next
 > Description (one line on what the repo is) Solid 2.0 core packages and 2.0 design docs
 > Customize paths and start? Yes
 > Paths to check out (space-separated) packages documentation

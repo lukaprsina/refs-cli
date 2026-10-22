@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
-use crate::source::{MaterialiseOpts, Observed, Pin, Source, VerifyOpts};
+use crate::source::{MaterialiseOpts, Observed, Outline, Pin, Source, VerifyOpts};
 use cache::{Cache, Repo};
 use checkout::{Layout, Record};
 use command::Cmd;
@@ -54,33 +54,32 @@ impl GitSource {
 
 impl Source for GitSource {
     fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError> {
-        let url = repo.repo.url.as_ref().as_str();
-        let git_ref = repo.repo.effective_ref();
-        remote::check_input(url, git_ref)?;
-        if is_full_sha(git_ref) {
-            return Ok(Pin::new(url, git_ref, git_ref, None));
-        }
-        if git_ref == "HEAD" {
-            let out = Cmd::new()
-                .args(["ls-remote", "--symref", "--"])
-                .arg(url)
-                .arg("HEAD")
-                .run()?;
-            let (sha, branch) = remote::select_head(url, &out)?;
-            return Ok(Pin::new(url, git_ref, &sha, branch.as_deref()));
-        }
-        let patterns = [
-            format!("refs/heads/{git_ref}"),
-            format!("refs/tags/{git_ref}"),
-            format!("refs/tags/{git_ref}^{{}}"),
-        ];
-        let out = Cmd::new()
-            .args(["ls-remote", "--"])
-            .arg(url)
-            .args(&patterns)
-            .run()?;
-        let sha = remote::select_ref(url, git_ref, &out)?;
-        Ok(Pin::new(url, git_ref, &sha, None))
+        resolve_ref(repo.repo.url.as_ref(), repo.repo.effective_ref())
+    }
+
+    fn outline(&self, url: &str, git_ref: &str) -> Result<Outline, SourceError> {
+        let pin = resolve_ref(url, git_ref)?;
+        let sha = pin.sha();
+        remote::check_sha(sha)?;
+        let paths = self.cache.with_repo(url, sha, false, |cache| {
+            cache.ensure_commit(url, sha, false)?;
+            cache.paths(sha)
+        })?;
+        Ok(Outline { pin, paths })
+    }
+
+    fn read(
+        &self,
+        url: &str,
+        pin: &Pin,
+        paths: &[String],
+    ) -> Result<Vec<(String, String)>, SourceError> {
+        let sha = pin.sha();
+        remote::check_sha(sha)?;
+        self.cache.with_repo(url, sha, false, |cache| {
+            cache.ensure_commit(url, sha, false)?;
+            cache.read(sha, paths)
+        })
     }
 
     fn tags(&self, url: &str) -> Result<Vec<String>, SourceError> {
@@ -242,6 +241,35 @@ impl Source for GitSource {
         names.sort();
         Ok(names)
     }
+}
+
+/// Ask the remote which commit `git_ref` of `url` is.
+fn resolve_ref(url: &str, git_ref: &str) -> Result<Pin, SourceError> {
+    remote::check_input(url, git_ref)?;
+    if is_full_sha(git_ref) {
+        return Ok(Pin::new(url, git_ref, git_ref, None));
+    }
+    if git_ref == "HEAD" {
+        let out = Cmd::new()
+            .args(["ls-remote", "--symref", "--"])
+            .arg(url)
+            .arg("HEAD")
+            .run()?;
+        let (sha, branch) = remote::select_head(url, &out)?;
+        return Ok(Pin::new(url, git_ref, &sha, branch.as_deref()));
+    }
+    let patterns = [
+        format!("refs/heads/{git_ref}"),
+        format!("refs/tags/{git_ref}"),
+        format!("refs/tags/{git_ref}^{{}}"),
+    ];
+    let out = Cmd::new()
+        .args(["ls-remote", "--"])
+        .arg(url)
+        .args(&patterns)
+        .run()?;
+    let sha = remote::select_ref(url, git_ref, &out)?;
+    Ok(Pin::new(url, git_ref, &sha, None))
 }
 
 /// What is on disk at `dest`, a worktree of `cache`. First repairs the link a moved project

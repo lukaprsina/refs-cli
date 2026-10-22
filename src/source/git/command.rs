@@ -108,8 +108,14 @@ impl Cmd {
         args.into_iter().fold(self, Cmd::arg)
     }
 
-    /// Run it and return its stdout.
-    pub fn run(mut self) -> Result<String, Failure> {
+    /// Run it and return its stdout as text.
+    pub fn run(self) -> Result<String, Failure> {
+        self.run_bytes()
+            .map(|out| String::from_utf8_lossy(&out).into_owned())
+    }
+
+    /// Run it and return its stdout as it is, for output framed by byte counts.
+    pub fn run_bytes(mut self) -> Result<Vec<u8>, Failure> {
         let failed = |message: String, stderr: String| Failure {
             error: SourceError::Failed { message },
             stderr,
@@ -162,7 +168,7 @@ impl Cmd {
                 stderr,
             ));
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(output.stdout)
     }
 }
 

@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use super::{MaterialiseOpts, Observed, Pin, Source, VerifyOpts};
+use super::{MaterialiseOpts, Observed, Outline, Pin, Source, VerifyOpts};
 use crate::config::RepoRef;
 use crate::diagnostic::SourceError;
 
@@ -17,6 +17,8 @@ pub enum Method {
     Inspect,
     /// Keyed by the remote's URL, not an id.
     Tags,
+    /// Keyed by the remote's URL, not an id.
+    Outline,
 }
 
 /// One call the fake received, in order.
@@ -27,6 +29,13 @@ pub enum Call {
     Materialise { id: String, offline: bool },
     Remove(String),
     Tags(String),
+    Outline(String),
+}
+
+/// The commit and files `outline` and `read` serve for a URL.
+struct Tree {
+    sha: String,
+    files: Vec<(String, String)>,
 }
 
 #[derive(Default)]
@@ -35,6 +44,7 @@ pub struct FakeSource {
     failures: RefCell<HashMap<(String, Method), String>>,
     commits: RefCell<HashMap<String, String>>,
     tags: RefCell<HashMap<String, Vec<String>>>,
+    trees: RefCell<HashMap<String, Tree>>,
     calls: RefCell<Vec<Call>>,
 }
 
@@ -72,7 +82,22 @@ impl FakeSource {
         self.tags.borrow_mut().insert(url.into(), names);
     }
 
-    /// Every `resolve`, `verify`, `materialise`, `remove` and `tags` received so far.
+    /// The commit `outline` resolves to for `url` from now on, and its files, as path and text
+    /// pairs. Without one a URL has an empty tree at a commit of 40 `a`s.
+    pub fn set_tree(&self, url: &str, sha: &str, files: &[(&str, &str)]) {
+        let mut files: Vec<(String, String)> = files
+            .iter()
+            .map(|(path, text)| (path.to_string(), text.to_string()))
+            .collect();
+        files.sort();
+        let tree = Tree {
+            sha: sha.into(),
+            files,
+        };
+        self.trees.borrow_mut().insert(url.into(), tree);
+    }
+
+    /// Every `resolve`, `verify`, `materialise`, `remove`, `tags` and `outline` received so far.
     pub fn calls(&self) -> Vec<Call> {
         self.calls.borrow().clone()
     }
@@ -149,6 +174,45 @@ impl Source for FakeSource {
         Ok(self.tags.borrow().get(url).cloned().unwrap_or_default())
     }
 
+    fn outline(&self, url: &str, git_ref: &str) -> Result<Outline, SourceError> {
+        self.record(Call::Outline(url.into()));
+        self.check(url, Method::Outline)?;
+        let trees = self.trees.borrow();
+        let (sha, paths) = match trees.get(url) {
+            Some(tree) => (
+                tree.sha.clone(),
+                tree.files.iter().map(|(path, _)| path.clone()).collect(),
+            ),
+            None => ("a".repeat(40), vec![]),
+        };
+        Ok(Outline {
+            pin: Pin::new(url, git_ref, &sha, None),
+            paths,
+        })
+    }
+
+    fn read(
+        &self,
+        url: &str,
+        _pin: &Pin,
+        paths: &[String],
+    ) -> Result<Vec<(String, String)>, SourceError> {
+        let trees = self.trees.borrow();
+        let files = trees.get(url).map(|tree| tree.files.as_slice());
+        paths
+            .iter()
+            .map(|path| {
+                let found = files.unwrap_or_default().iter().find(|(p, _)| p == path);
+                match found {
+                    Some((_, text)) => Ok((path.clone(), text.clone())),
+                    None => Err(SourceError::Failed {
+                        message: format!("{path} is not in {url}"),
+                    }),
+                }
+            })
+            .collect()
+    }
+
     fn remove(&self, id: &str) -> Result<(), SourceError> {
         self.record(Call::Remove(id.into()));
         self.check(id, Method::Remove)?;
@@ -204,6 +268,17 @@ impl Source for &FakeSource {
     }
     fn tags(&self, url: &str) -> Result<Vec<String>, SourceError> {
         (**self).tags(url)
+    }
+    fn outline(&self, url: &str, git_ref: &str) -> Result<Outline, SourceError> {
+        (**self).outline(url, git_ref)
+    }
+    fn read(
+        &self,
+        url: &str,
+        pin: &Pin,
+        paths: &[String],
+    ) -> Result<Vec<(String, String)>, SourceError> {
+        (**self).read(url, pin, paths)
     }
     fn remove(&self, id: &str) -> Result<(), SourceError> {
         (**self).remove(id)
