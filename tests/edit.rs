@@ -1,5 +1,5 @@
 use refs_cli::diagnostic::EditError;
-use refs_cli::edit::{AddRepo, Edit, Target};
+use refs_cli::edit::{AddRepo, Edit, RefChange, Target};
 
 fn text_of(edit: Edit, text: &str) -> Result<String, EditError> {
     edit.apply(text).map(|applied| applied.text)
@@ -383,4 +383,69 @@ fn a_repo_not_written_as_a_table_is_refused_with_a_hint() {
         assert_eq!(codes(&err), ["refs::config::unreadable"]);
         assert!(err.to_string().contains("rewrite it as one"), "{err}");
     }
+}
+
+fn change(text: &str, changes: &[(&str, &str)]) -> Result<String, EditError> {
+    let changes: Vec<_> = changes
+        .iter()
+        .map(|&(id, git_ref)| RefChange { id, git_ref })
+        .collect();
+    text_of(Edit::Change(&changes), text)
+}
+
+const PINNED: &str = r#"[repos.solid]
+url = "https://github.com/solidjs/solid"
+ref = "solid-js@1.0.0" # what the lockfile said
+description = "kept"
+
+# The router.
+[repos.router]
+url = "https://github.com/solidjs/solid-router"
+"#;
+
+#[test]
+fn change_replaces_the_ref_in_place_and_keeps_everything_else() {
+    let changed = change(PINNED, &[("solid", "solid-js@2.0.0")]).unwrap();
+    assert_eq!(
+        changed,
+        PINNED.replace("\"solid-js@1.0.0\"", "\"solid-js@2.0.0\"")
+    );
+}
+
+#[test]
+fn change_adds_a_ref_after_the_last_key_of_a_repo_without_one() {
+    let changed = change(PINNED, &[("router", "v1.2.3")]).unwrap();
+    assert_eq!(changed, format!("{PINNED}ref = \"v1.2.3\"\n"));
+}
+
+#[test]
+fn change_moves_several_repos_in_one_edit() {
+    let changed = change(PINNED, &[("solid", "next"), ("router", "main")]).unwrap();
+    let config = refs_cli::config::parse(&changed).unwrap();
+    assert_eq!(
+        config.repos["solid"]
+            .git_ref
+            .as_ref()
+            .map(|r| r.as_ref().as_str()),
+        Some("next")
+    );
+    assert_eq!(
+        config.repos["router"]
+            .git_ref
+            .as_ref()
+            .map(|r| r.as_ref().as_str()),
+        Some("main")
+    );
+    assert!(changed.contains("# what the lockfile said"), "{changed}");
+}
+
+#[test]
+fn change_with_nothing_to_change_gives_back_the_same_bytes() {
+    assert_eq!(change(PINNED, &[]).unwrap(), PINNED);
+}
+
+#[test]
+fn change_rejects_an_id_that_is_not_in_the_config() {
+    let err = change(PINNED, &[("nope", "v1")]).unwrap_err();
+    assert_eq!(codes(&err), ["refs::config::unknown_repo"]);
 }

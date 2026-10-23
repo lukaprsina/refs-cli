@@ -60,6 +60,15 @@ pub enum Edit<'a> {
     Remove(&'a str),
     Disable(Target<'a>),
     Enable(Target<'a>),
+    /// Set the `ref` of existing repos; an empty list changes nothing.
+    Change(&'a [RefChange<'a>]),
+}
+
+/// The new `ref` of the repo `id`.
+#[derive(Debug, Clone, Copy)]
+pub struct RefChange<'a> {
+    pub id: &'a str,
+    pub git_ref: &'a str,
 }
 
 /// What an edit gave: the new text, that text parsed, and the Group it had to create for it.
@@ -78,6 +87,7 @@ impl Edit<'_> {
             Edit::Remove(id) => (remove(text, id)?, None),
             Edit::Disable(target) => (disable(text, *target)?, None),
             Edit::Enable(target) => (enable(text, *target)?, None),
+            Edit::Change(changes) => (change(text, changes)?, None),
         };
         let config = config::parse(&text)?;
         Ok(Applied {
@@ -244,6 +254,17 @@ fn set_key(text: &str, table: &Table, key: &str, value: &str) -> String {
         }
     }
     out
+}
+
+/// Set `ref` on each repo of `changes`, one after the other, each cut by text.
+fn change(text: &str, changes: &[RefChange]) -> Result<String, EditError> {
+    changes.iter().try_fold(text.to_owned(), |text, change| {
+        let target = Target::Repo(change.id);
+        check_exists(&text, target)?;
+        let doc = parse(&text)?;
+        let git_ref = toml_edit::Value::from(change.git_ref).to_string();
+        Ok(set_key(&text, table_of(&doc, target)?, "ref", &git_ref))
+    })
 }
 
 /// Remove the `enabled` key of the repo or group (spec §6.4: absent means enabled).
