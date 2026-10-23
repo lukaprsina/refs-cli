@@ -122,7 +122,7 @@ Flags: `refs <command> --help`. `--offline` (any command) never contacts the net
 
 - Linters, formatters and type checkers may scan `.references/`. `refs sync` and `refs add` say which of Prettier, ESLint, Oxlint and tsc do not exclude it and what to add; refs never edits their files. Not detected: Ruff, Biome, Stylelint, and editors (`files.exclude`, `search.exclude`); exclude `.references/` there yourself. Silence one with `tooling_ignore = ["tsc"]` at the top of `refs.toml`.
 - `rg` skips `.references/` by default; pass the path (`rg foo .references/solid`).
-- Checkouts are read-only. `sync` refuses to touch one with local changes; `--force` discards them.
+- Checkouts are read-only. `sync` and every command that edits `refs.toml` refuse to touch one with local changes (an edit that is refused writes nothing); `--force` discards them.
 - Claude Code ignores `AGENTS.md` if a `CLAUDE.md` exists; add `CLAUDE.md` to `agents_files`.
 
 ## Thanks

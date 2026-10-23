@@ -109,6 +109,20 @@ struct EditFlags {
     /// Only edit refs.toml; do not lock or sync
     #[arg(long)]
     no_sync: bool,
+    /// Discard local changes in a checkout the edit moves or removes
+    #[arg(long, conflicts_with = "no_sync")]
+    force: bool,
+}
+
+impl EditFlags {
+    /// What the sync an edit runs takes from the command line.
+    fn sync_flags(&self, asking: &Asking) -> SyncFlags {
+        SyncFlags {
+            offline: asking.offline,
+            force: self.force,
+            ..SyncFlags::default()
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -397,10 +411,6 @@ fn run_config<'a>(
     mut asking: Asking,
     console: &mut Console,
 ) -> u8 {
-    let flags_for_sync = SyncFlags {
-        offline: asking.offline,
-        ..SyncFlags::default()
-    };
     let (flags, edit) = match command {
         ConfigCommand::List(args) if args.status => {
             return with_source(make_source, root, config, console, |source, console| {
@@ -412,6 +422,7 @@ fn run_config<'a>(
             return 0;
         }
         ConfigCommand::Add { repo, flags } => {
+            let flags_for_sync = flags.sync_flags(&asking);
             let mut add = |source: Option<&dyn Source>, console: &mut Console| {
                 add(
                     source,
@@ -439,7 +450,7 @@ fn run_config<'a>(
         print_report(&sync::edit_only(root, &edit), false, console)
     } else {
         with_source(make_source, root, config, console, |source, console| {
-            let report = sync::edit(source, root, &edit, &flags_for_sync);
+            let report = sync::edit(source, root, &edit, &flags.sync_flags(&asking));
             print_report(&report, false, console)
         })
     }

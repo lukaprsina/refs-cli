@@ -468,3 +468,101 @@ fn a_failed_refs_toml_write_still_reports_the_lock_it_pruned() {
 
     assert_eq!(report.changes, [Changed::Lock]);
 }
+
+/// `a` synced, then its Checkout gets a local change.
+fn synced_then_a_is_dirty() -> (TempDir, FakeSource) {
+    let dir = project();
+    let source = FakeSource::new();
+    let first = enable(&dir, &source, "a");
+    assert_eq!(first.outcome, Outcome::InSync);
+    let refs_cli::source::Observed::At { pin, paths, .. } =
+        refs_cli::source::Source::inspect(&source, "a").unwrap()
+    else {
+        panic!("a is checked out");
+    };
+    source.seed(
+        "a",
+        refs_cli::source::Observed::At {
+            pin,
+            paths,
+            dirty_files: vec!["notes.txt".into()],
+        },
+    );
+    (dir, source)
+}
+
+fn forced() -> SyncFlags {
+    SyncFlags {
+        force: true,
+        ..SyncFlags::default()
+    }
+}
+
+fn on_disk(dir: &TempDir) -> [Option<String>; 3] {
+    ["refs.toml", "refs.lock", "AGENTS.md"].map(|name| read(dir, name))
+}
+
+#[test]
+fn an_edit_that_stage_two_refuses_writes_nothing_and_a_retry_refuses_the_same() {
+    for the_edit in [Edit::Remove("a"), Edit::Disable(Target::Repo("a"))] {
+        let (dir, source) = synced_then_a_is_dirty();
+        let before = on_disk(&dir);
+
+        for _ in 0..2 {
+            let edited = run_edit(&dir, &source, &the_edit);
+
+            assert_eq!(edited.outcome, Outcome::Refused, "{the_edit:?}");
+            assert_eq!(edited.hint, Some(Hint::ConfigUnchanged), "{the_edit:?}");
+            assert!(edited.changes.is_empty(), "{the_edit:?}");
+            assert!(
+                messages(&edited).contains("notes.txt"),
+                "{}",
+                messages(&edited)
+            );
+            assert_eq!(on_disk(&dir), before, "{the_edit:?}");
+            assert!(checked_out(&source, "a"), "{the_edit:?}");
+        }
+    }
+}
+
+#[test]
+fn force_discards_the_changes_an_edit_would_have_been_refused_for() {
+    for the_edit in [Edit::Remove("a"), Edit::Disable(Target::Repo("a"))] {
+        let (dir, source) = synced_then_a_is_dirty();
+
+        let edited = edit(&source, dir.path(), &the_edit, &forced());
+
+        assert_eq!(edited.outcome, Outcome::InSync, "{the_edit:?}");
+        assert!(edited.changes.contains(&Changed::Config), "{the_edit:?}");
+        assert!(!read(&dir, "refs.lock").unwrap().contains("id = \"a\""));
+        assert!(!checked_out(&source, "a"), "{the_edit:?}");
+    }
+}
+
+#[test]
+fn adding_onto_a_foreign_directory_writes_nothing() {
+    let dir = project();
+    let source = FakeSource::new();
+    source.seed("b", refs_cli::source::Observed::Foreign);
+    let before = on_disk(&dir);
+
+    let edited = add(&dir, &source, "b", &forced());
+
+    assert_eq!(edited.outcome, Outcome::Refused);
+    assert_eq!(edited.hint, Some(Hint::ConfigUnchanged));
+    assert_eq!(on_disk(&dir), before);
+}
+
+#[test]
+fn an_edit_whose_stage_two_cannot_be_observed_writes_nothing() {
+    let dir = project();
+    let source = FakeSource::new();
+    source.fail("b", Method::Inspect, "permission denied");
+    let before = on_disk(&dir);
+
+    let edited = add(&dir, &source, "b", &SyncFlags::default());
+
+    assert_eq!(edited.outcome, Outcome::Failed);
+    assert_eq!(edited.hint, Some(Hint::ConfigUnchangedTryNoSync));
+    assert_eq!(on_disk(&dir), before);
+}

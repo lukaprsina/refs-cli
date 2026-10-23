@@ -586,6 +586,56 @@ fn remove_syncs_too_and_no_sync_leaves_that_to_the_user() {
     assert!(!p.lock_text().unwrap().contains("id = "));
 }
 
+/// `a` and `b` synced, then `a`'s Checkout gets a local change.
+fn synced_then_a_is_dirty() -> Project {
+    use refs_cli::source::Source;
+    let p = Project::new(AB);
+    assert_eq!(p.run(&["sync"]), 0);
+    let Observed::At { pin, paths, .. } = p.source.inspect("a").unwrap() else {
+        panic!("a is checked out");
+    };
+    p.source.seed(
+        "a",
+        Observed::At {
+            pin,
+            paths,
+            dirty_files: vec!["notes.txt".into()],
+        },
+    );
+    p
+}
+
+#[test]
+fn remove_of_a_dirty_checkout_exits_1_and_changes_nothing_until_forced() {
+    let p = synced_then_a_is_dirty();
+    let files = |p: &Project| {
+        ["refs.toml", "refs.lock", "AGENTS.md"].map(|name| fs::read(p.path(name)).unwrap())
+    };
+    let before = files(&p);
+
+    assert_eq!(p.run(&["remove", "a"]), 1);
+    assert_eq!(p.run(&["remove", "a"]), 1, "a retry refuses the same way");
+    assert_eq!(files(&p), before);
+
+    assert_eq!(p.run(&["remove", "a", "--force"]), 0);
+    assert!(
+        !fs::read_to_string(p.path("refs.toml"))
+            .unwrap()
+            .contains("[repos.a]")
+    );
+    assert_eq!(p.run(&["sync", "--check"]), 0);
+}
+
+#[test]
+fn force_is_accepted_by_every_edit_but_not_with_no_sync() {
+    let p = synced_then_a_is_dirty();
+
+    assert_eq!(p.run(&["disable", "a", "--force"]), 0);
+    assert_eq!(p.run(&["enable", "a", "--force"]), 0);
+    assert_eq!(p.run(&["add", "https://github.com/o/c", "--force"]), 0);
+    assert_eq!(p.run(&["remove", "a", "--force", "--no-sync"]), 2);
+}
+
 #[test]
 fn list_status_succeeds_through_the_source_and_plain_list_does_too() {
     let p = Project::new(AB);

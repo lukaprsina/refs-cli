@@ -412,14 +412,14 @@ pub enum Refusal {
     #[error("`{id}` is a directory refs did not create")]
     #[diagnostic(
         code(refs::sync::foreign_dir),
-        help("move or delete it, then sync again; refs never removes it, even with --force")
+        help("move or delete it, then try again; refs never removes it, even with --force")
     )]
     ForeignDir { id: String },
 
     #[error("`{id}` has local changes: {}", .files.join(", "))]
     #[diagnostic(
         code(refs::sync::dirty_checkout),
-        help("untracked files count too; `refs sync --force` discards them")
+        help("untracked files count too; pass `--force` to discard them")
     )]
     DirtyCheckout { id: String, files: Vec<String> },
 

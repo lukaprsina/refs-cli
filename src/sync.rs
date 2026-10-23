@@ -112,23 +112,23 @@ fn finish(stage_one: StageOne, drift: Vec<Drift>, mut stage_two: Report) -> Repo
 }
 
 /// What every run starts from: the active set, the Lock on disk (if any) and how it differs.
-struct Preflight<'a> {
+struct Observation<'a> {
     active: ActiveSet<'a>,
     old: Option<Lock>,
     drift: Vec<Drift>,
 }
 
-fn preflight<'a>(root: &Path, config: &'a Config) -> Result<Preflight<'a>, Report> {
+fn observe<'a>(root: &Path, config: &'a Config) -> Result<Observation<'a>, Report> {
     let active = active(config);
     let old = Lock::read(&Lock::path(root)).map_err(Report::failed)?;
     let drift = lock_drift(&active, old.as_ref());
-    Ok(Preflight { active, old, drift })
+    Ok(Observation { active, old, drift })
 }
 
 /// `refs lock`: stage 1 and a write.
 pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags) -> Report {
-    let Preflight { active, old, drift } = match preflight(root, config) {
-        Ok(preflight) => preflight,
+    let Observation { active, old, drift } = match observe(root, config) {
+        Ok(observation) => observation,
         Err(report) => return report,
     };
     match stage_one(source, &active, old, flags, root) {
@@ -143,8 +143,8 @@ pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
 }
 
 fn run_sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
-    let Preflight { active, old, drift } = match preflight(root, config) {
-        Ok(preflight) => preflight,
+    let Observation { active, old, drift } = match observe(root, config) {
+        Ok(observation) => observation,
         Err(report) => return report,
     };
     let stage_one = if flags.check {
@@ -203,21 +203,33 @@ fn plan_and_apply(
     let stage_two = if flags.check {
         check(plan, !drift.is_empty())
     } else {
-        let dir = config.settings.references_dir();
-        let mut report = apply(source, root, dir, plan, flags);
-        // Only a run that got through, as `-q` hides notes only then (`print_report`); with no
-        // active Repo there is no references directory to keep out.
-        if report.outcome == Outcome::InSync && active.repos().next().is_some() {
-            let gaps = tooling::gaps(root, dir, &config.tooling_ignored());
-            report.diagnostics.extend(
-                gaps.into_iter()
-                    .map(|gap| Note::ToolingGap { gap })
-                    .map(miette::Report::new),
-            );
-        }
-        report
+        apply_plan(source, root, config, active, plan, flags)
     };
     finish(stage_one, drift, stage_two)
+}
+
+/// Apply the stage 2 plan and, for a run that got through, add the notes about tooling.
+fn apply_plan(
+    source: &dyn Source,
+    root: &Path,
+    config: &Config,
+    active: &ActiveSet,
+    plan: Plan,
+    flags: &SyncFlags,
+) -> Report {
+    let dir = config.settings.references_dir();
+    let mut report = apply(source, root, dir, plan, flags);
+    // Only a run that got through, as `-q` hides notes only then (`print_report`); with no
+    // active Repo there is no references directory to keep out.
+    if report.outcome == Outcome::InSync && active.repos().next().is_some() {
+        let gaps = tooling::gaps(root, dir, &config.tooling_ignored());
+        report.diagnostics.extend(
+            gaps.into_iter()
+                .map(|gap| Note::ToolingGap { gap })
+                .map(miette::Report::new),
+        );
+    }
+    report
 }
 
 /// A failed edit: `refs.toml` is as it was, and `--no-sync` would not help.
@@ -294,7 +306,8 @@ pub fn edit_only(root: &Path, edit: &Edit) -> Report {
 /// Stage 1 runs against the edited config, and `refs.toml` is written only if it passes
 /// (stage 1 writes the Lock), then stage 2 runs on the Lock stage 1 produced, so each Repo
 /// is verified once. A Repo that cannot be locked blocks the edit: nothing is written and the
-/// error names it. The one exception is an edit that only shrinks the active set (`remove`,
+/// error names it. A stage 2 refusal blocks it the same way (`plan_checkouts` is planned on
+/// the Lock before anything is written). The one exception is an edit that only shrinks the active set (`remove`,
 /// `disable`) while the Lock covers every remaining Repo: the Lock is pruned, with nothing
 /// resolved or verified, so a Repo the edit did not touch cannot block it. A stage 2 failure
 /// keeps the edit and the Lock; `refs sync` retries it.
@@ -313,8 +326,8 @@ pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) ->
     if applied.unchanged() {
         return sync(source, root, config, flags);
     }
-    let Preflight { active, old, drift } = match preflight(root, config) {
-        Ok(preflight) => preflight,
+    let Observation { active, old, drift } = match observe(root, config) {
+        Ok(observation) => observation,
         Err(report) => return report.with_hint(Hint::ConfigUnchanged),
     };
     let lock = match shrunk_lock(&active, old.as_ref()) {
@@ -327,6 +340,27 @@ pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) ->
             }
         },
     };
+    // Stage 2's refusals are predictable, so they are found before anything is written: an
+    // edit that stage 2 would refuse changes nothing, and a retry refuses the same way. What
+    // cannot be observed is treated alike, since then nothing says stage 2 would not refuse.
+    let plan = match plan_stage_two(source, root, config, &active, &lock, flags.force) {
+        Ok(plan) if plan.refusals.is_empty() => plan,
+        Ok(plan) => {
+            let refused = Report {
+                diagnostics: plan.refusals.into_iter().map(miette::Report::new).collect(),
+                ..Report::new(Outcome::Refused)
+            };
+            return refused.with_drift(drift).with_hint(Hint::ConfigUnchanged);
+        }
+        Err(errors) => {
+            let unobserved = Report {
+                diagnostics: errors,
+                ..Report::new(Outcome::Failed)
+            };
+            let hint = Hint::ConfigUnchangedTryNoSync;
+            return unobserved.with_drift(drift).with_hint(hint);
+        }
+    };
     let stage_one = match commit(root, old.as_ref(), lock) {
         Ok(stage_one) => stage_one,
         Err(report) => return report.with_drift(drift).with_hint(Hint::ConfigUnchanged),
@@ -334,9 +368,9 @@ pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) ->
     if let Err(e) = project::write_config(root, &applied.after) {
         return finish(stage_one, drift, rejected(e));
     }
-    let report = plan_and_apply(source, root, config, &active, stage_one, drift, flags)
+    let stage_two = apply_plan(source, root, config, &active, plan, flags)
         .hint_if_incomplete(Hint::FixOrRemoveThenSync);
-    applied.written(report)
+    applied.written(finish(stage_one, drift, stage_two))
 }
 
 /// Stage 1 as `lock` and `sync` run it: resolve and verify, then write the Lock.
