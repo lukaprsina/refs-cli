@@ -5,6 +5,7 @@ use std::fs;
 
 use refs_cli::config::parse;
 use refs_cli::edit::{AddRepo, Edit, Target};
+use refs_cli::plan::Upgrade;
 use refs_cli::source::fake::{Call, FakeSource, Method};
 use refs_cli::sync::{Changed, Hint, Outcome, Report, SyncFlags, edit, edit_only};
 use tempfile::TempDir;
@@ -544,6 +545,57 @@ fn force_discards_the_changes_an_edit_would_have_been_refused_for() {
         assert!(!read(&dir, "refs.lock").unwrap().contains("id = \"a\""));
         assert!(!checked_out(&source, "a"), "{the_edit:?}");
     }
+}
+
+const SHA_1: &str = "1111111111111111111111111111111111111111";
+const SHA_2: &str = "2222222222222222222222222222222222222222";
+
+fn upgrading_a() -> SyncFlags {
+    SyncFlags {
+        upgrade: Upgrade::Ids(vec!["a".into()]),
+        ..SyncFlags::default()
+    }
+}
+
+#[test]
+fn an_edit_that_changes_nothing_still_upgrades_the_ids_it_is_given() {
+    let dir = project();
+    let source = FakeSource::new();
+    source.set_commit("a", SHA_1);
+    enable(&dir, &source, "a");
+    source.set_commit("a", SHA_2);
+    let config = read(&dir, "refs.toml");
+
+    let edited = edit(
+        &source,
+        dir.path(),
+        &Edit::Enable(Target::Repo("a")),
+        &upgrading_a(),
+    );
+
+    assert_eq!(edited.outcome, Outcome::InSync);
+    assert!(!edited.changes.contains(&Changed::Config));
+    assert!(edited.changes.contains(&Changed::Lock));
+    assert!(read(&dir, "refs.lock").unwrap().contains(SHA_2));
+    assert_eq!(read(&dir, "refs.toml"), config);
+}
+
+#[test]
+fn an_edit_that_changes_nothing_but_stage_two_refuses_writes_nothing() {
+    let (dir, source) = synced_then_a_is_dirty();
+    source.set_commit("a", SHA_2);
+    let before = on_disk(&dir);
+
+    let edited = edit(
+        &source,
+        dir.path(),
+        &Edit::Enable(Target::Repo("a")),
+        &upgrading_a(),
+    );
+
+    assert_eq!(edited.outcome, Outcome::Refused);
+    assert!(messages(&edited).contains("notes.txt"));
+    assert_eq!(on_disk(&dir), before);
 }
 
 #[test]

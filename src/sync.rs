@@ -13,8 +13,8 @@ use crate::exclude;
 use crate::lock::Lock;
 pub use crate::plan::{Checkout, Hint, Outcome};
 use crate::plan::{
-    Checkouts, Drift, ExcludeAction, LockFlags, Plan, RepoAction, Step, check_outcome, lock_drift,
-    locked, plan_checkouts, plan_lock, shrunk_lock,
+    Checkouts, Drift, ExcludeAction, LockFlags, Plan, RepoAction, Step, Upgrade, check_outcome,
+    lock_drift, locked, plan_checkouts, plan_lock, shrunk_lock,
 };
 use crate::project;
 use crate::source::{MaterialiseOpts, Source, VerifyOpts};
@@ -25,6 +25,8 @@ pub struct SyncFlags {
     pub offline: bool,
     pub force: bool,
     pub check: bool,
+    /// Floating Repos to re-resolve in the Lock; only an edit sets it, `sync` has no such flag.
+    pub upgrade: Upgrade,
 }
 
 /// Something a run changed on disk, for the CLI to say.
@@ -162,11 +164,11 @@ fn run_sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
     plan_and_apply(source, root, config, &active, stage_one, drift, flags)
 }
 
-/// Stage 1 as `sync` runs it: only `offline` carries over.
+/// Stage 1 as `sync` and an edit run it.
 fn lock_flags(flags: &SyncFlags) -> LockFlags {
     LockFlags {
+        upgrade: flags.upgrade.clone(),
         offline: flags.offline,
-        ..LockFlags::default()
     }
 }
 
@@ -272,6 +274,9 @@ impl Applied {
     /// `report` of a run that came after the edit was written: what the edit did is said
     /// first.
     fn written(self, mut report: Report) -> Report {
+        if self.unchanged() {
+            return report;
+        }
         let mut edit = vec![match self.created {
             Some(path) => Changed::ConfigCreated(path),
             None => Changed::Config,
@@ -313,19 +318,32 @@ pub fn edit_only(root: &Path, edit: &Edit) -> Report {
 /// keeps the edit and the Lock; `refs sync` retries it.
 /// The report says the write of `refs.toml` first (`Changed::Config`, then any `Group`), and
 /// has a `Hint` for an edit that was not written: a write that fails says only that
-/// `refs.toml` is as it was. An edit that changes nothing writes nothing and just syncs. `flags.check` is not for
-/// this function: it writes. The Lock is written before `refs.toml`, so a failed write of
-/// `refs.toml` leaves a Lock with an entry the config does not have, which the next `sync`
-/// removes.
+/// `refs.toml` is as it was. An edit that changes nothing goes the same way and writes no
+/// `refs.toml`, so `flags.upgrade` can move a Lock entry alone and a refusal still blocks it;
+/// its failures are hinted as a failed `sync` is. `flags.check` is not for this function: it
+/// writes. The Lock is written before `refs.toml`, so a failed write of `refs.toml` leaves a
+/// Lock with an entry the config does not have, which the next `sync` removes.
 pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) -> Report {
     let applied = match Applied::read(root, edit) {
         Ok(applied) => applied,
         Err(report) => return report,
     };
-    let config = &applied.config;
-    if applied.unchanged() {
-        return sync(source, root, config, flags);
+    let unchanged = applied.unchanged();
+    let report = apply_edit(source, root, applied, flags);
+    if unchanged {
+        // "refs.toml is as it was" says nothing about an edit that had nothing to write.
+        Report {
+            hint: None,
+            ..report
+        }
+        .hint_if_incomplete(Hint::RunSyncOnceFixed)
+    } else {
+        report
     }
+}
+
+fn apply_edit(source: &dyn Source, root: &Path, applied: Applied, flags: &SyncFlags) -> Report {
+    let config = &applied.config;
     let Observation { active, old, drift } = match observe(root, config) {
         Ok(observation) => observation,
         Err(report) => return report.with_hint(Hint::ConfigUnchanged),
@@ -348,7 +366,9 @@ pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) ->
         Ok(stage_one) => stage_one,
         Err(report) => return report.with_drift(drift).with_hint(Hint::ConfigUnchanged),
     };
-    if let Err(e) = project::write_config(root, &applied.after) {
+    if !applied.unchanged()
+        && let Err(e) = project::write_config(root, &applied.after)
+    {
         return finish(stage_one, drift, rejected(e));
     }
     let stage_two = apply_plan(source, root, config, &active, plan, flags)

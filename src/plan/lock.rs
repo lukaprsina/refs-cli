@@ -44,7 +44,7 @@ pub struct LockFlags {
     pub offline: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub enum Upgrade {
     #[default]
     None,

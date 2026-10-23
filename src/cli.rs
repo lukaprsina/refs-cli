@@ -579,6 +579,7 @@ fn run_source<'a>(
                     offline,
                     force: args.force,
                     check: args.check,
+                    ..SyncFlags::default()
                 };
                 (sync::sync(source, root, config, &flags), args.check)
             }
