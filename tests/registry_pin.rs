@@ -5,7 +5,7 @@
 use std::fs;
 
 use refs_cli::prompt::Abort;
-use refs_cli::registry::pin::{Say, Stop, pin};
+use refs_cli::registry::pin::{Pinned, Say, Stop, pin};
 use refs_cli::registry::{Ecosystem, Package};
 use refs_cli::source::fake::{FakeSource, Method};
 use tempfile::TempDir;
@@ -38,6 +38,9 @@ version = "1.0.200"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 "#;
 
+const HINT: &str = "use `--ref` to track a branch or choose another tag";
+const NOT_PINNED: &str =
+    "no version is pinned; the Ref is the remote's default branch unless one is given";
 const FOLLOWS: &str = "the repo follows the remote's default branch";
 
 /// What was said, in order: `status: ...` or `warning: ...`.
@@ -85,7 +88,7 @@ fn run(
     version: Option<&str>,
     dir: &TempDir,
     source: Option<&FakeSource>,
-) -> (Result<Option<String>, Stop>, Vec<String>) {
+) -> (Result<Pinned, Stop>, Vec<String>) {
     let mut say = Lines::default();
     let source = source.map(|s| s as &dyn refs_cli::source::Source);
     let pinned = pin(&serde(), version, URL, dir.path(), source, None, &mut say);
@@ -96,10 +99,12 @@ fn run(
 fn a_version_given_is_pinned_to_its_tag_without_reading_a_lockfile() {
     let dir = project(Some(TWO_SERDES));
     let (pinned, said) = run(Some("1.0.150"), &dir, Some(&tagged(&["v1.0.150"])));
-    assert_eq!(pinned.unwrap().as_deref(), Some("v1.0.150"));
+    assert_eq!(pinned.unwrap(), Pinned::Tag("v1.0.150".into()));
     assert_eq!(
         said,
-        ["status: pinned `serde@1.0.150` to the tag `v1.0.150`"]
+        [format!(
+            "status: pinned `serde@1.0.150` to the tag `v1.0.150`; {HINT}"
+        )]
     );
 }
 
@@ -107,11 +112,11 @@ fn a_version_given_is_pinned_to_its_tag_without_reading_a_lockfile() {
 fn a_version_with_no_tag_follows_the_default_branch_with_a_warning() {
     let dir = project(None);
     let (pinned, said) = run(Some("1.0.150"), &dir, Some(&tagged(&["v1.0.149"])));
-    assert_eq!(pinned.unwrap(), None);
+    assert_eq!(pinned.unwrap(), Pinned::FollowsDefault);
     assert_eq!(
         said,
         [format!(
-            "warning: serde@1.0.150 is not tagged in {URL}; {FOLLOWS}"
+            "warning: serde@1.0.150 is not tagged in {URL}; {FOLLOWS}; {HINT}"
         )]
     );
 }
@@ -131,14 +136,14 @@ fn a_person_is_asked_before_an_untagged_version_follows_the_default_branch() {
         Some(&mut yes),
         &mut say,
     );
-    assert_eq!(pinned.unwrap(), None);
+    assert_eq!(pinned.unwrap(), Pinned::FollowsDefault);
     assert_eq!(
         yes.questions(),
         [format!(
             "serde@1.0.150 is not tagged in {URL}. Follow the remote's default branch instead?"
         )]
     );
-    assert!(say.0.is_empty());
+    assert_eq!(say.0, [format!("status: {FOLLOWS}; {HINT}")]);
 
     let mut no = Script::takes_defaults(false);
     let pinned = pin(
@@ -157,11 +162,11 @@ fn a_person_is_asked_before_an_untagged_version_follows_the_default_branch() {
 fn without_tags_to_list_a_version_is_not_pinned() {
     let dir = project(None);
     let (pinned, said) = run(Some("1.0.150"), &dir, None);
-    assert_eq!(pinned.unwrap(), None);
+    assert_eq!(pinned.unwrap(), Pinned::FollowsDefault);
     assert_eq!(
         said,
         [format!(
-            "warning: `serde@1.0.150` is not pinned to a tag, as `--no-sync` lists no tags; {FOLLOWS}"
+            "warning: `serde@1.0.150` is not pinned to a tag, as `--no-sync` lists no tags; {FOLLOWS}; {HINT}"
         )]
     );
 }
@@ -170,11 +175,11 @@ fn without_tags_to_list_a_version_is_not_pinned() {
 fn no_lockfile_follows_the_default_branch() {
     let dir = project(None);
     let (pinned, said) = run(None, &dir, Some(&tagged(&["v1.0.200"])));
-    assert_eq!(pinned.unwrap(), None);
+    assert_eq!(pinned.unwrap(), Pinned::Unpinned);
     assert_eq!(
         said,
         [format!(
-            "status: no Package lockfile found for `serde`; {FOLLOWS}"
+            "status: no Package lockfile found for `serde`; {NOT_PINNED}"
         )]
     );
 }
@@ -183,12 +188,12 @@ fn no_lockfile_follows_the_default_branch() {
 fn the_used_version_is_pinned_to_its_tag_and_the_file_read_is_named() {
     let dir = project(Some(ONE_SERDE));
     let (pinned, said) = run(None, &dir, Some(&tagged(&["v1.0.199", "v1.0.200"])));
-    assert_eq!(pinned.unwrap().as_deref(), Some("v1.0.200"));
+    assert_eq!(pinned.unwrap(), Pinned::Tag("v1.0.200".into()));
     assert_eq!(
         said,
         [
             "status: `serde` is 1.0.200 in Cargo.lock".to_owned(),
-            "status: pinned `serde@1.0.200` to the tag `v1.0.200`".to_owned()
+            format!("status: pinned `serde@1.0.200` to the tag `v1.0.200`; {HINT}")
         ]
     );
 }
@@ -197,7 +202,7 @@ fn the_used_version_is_pinned_to_its_tag_and_the_file_read_is_named() {
 fn a_used_version_with_no_tag_still_names_what_was_read() {
     let dir = project(Some(ONE_SERDE));
     let (pinned, said) = run(None, &dir, Some(&tagged(&[])));
-    assert_eq!(pinned.unwrap(), None);
+    assert_eq!(pinned.unwrap(), Pinned::FollowsDefault);
     assert_eq!(said[0], "status: `serde` is 1.0.200 in Cargo.lock");
     assert!(said[1].starts_with("warning: serde@1.0.200 is not tagged in"));
 }
@@ -209,10 +214,12 @@ fn a_package_the_lockfile_lacks_follows_the_default_branch() {
     let mut say = Lines::default();
     let source = tagged(&[]);
     let pinned = pin(&other, None, URL, dir.path(), Some(&source), None, &mut say);
-    assert_eq!(pinned.unwrap(), None);
+    assert_eq!(pinned.unwrap(), Pinned::Unpinned);
     assert_eq!(
         say.0,
-        [format!("status: `tokio` is not in Cargo.lock; {FOLLOWS}")]
+        [format!(
+            "status: `tokio` is not in Cargo.lock; {NOT_PINNED}"
+        )]
     );
 }
 
@@ -231,7 +238,7 @@ fn several_versions_are_asked_and_the_one_chosen_is_pinned() {
         Some(&mut picks),
         &mut say,
     );
-    assert_eq!(pinned.unwrap().as_deref(), Some("v1.0.100"));
+    assert_eq!(pinned.unwrap(), Pinned::Tag("v1.0.100".into()));
     assert_eq!(
         picks.questions(),
         ["Cargo.lock has several versions of `serde`: 1.0.100, 1.0.200. Which one?"]
@@ -256,12 +263,12 @@ fn several_versions_with_no_one_to_ask_are_refused() {
 fn an_unreadable_lockfile_follows_the_default_branch_and_says_why() {
     let dir = project(Some("this is not toml ["));
     let (pinned, said) = run(None, &dir, Some(&tagged(&[])));
-    assert_eq!(pinned.unwrap(), None);
+    assert_eq!(pinned.unwrap(), Pinned::Unpinned);
     assert!(
         said[0].starts_with("warning: cannot read Cargo.lock: "),
         "{said:?}"
     );
-    assert!(said[0].ends_with(FOLLOWS));
+    assert!(said[0].ends_with(NOT_PINNED));
 }
 
 #[test]

@@ -34,8 +34,20 @@ pub enum Stop {
     Refused(String),
 }
 
-/// The tag that `package`, in the repo at `url`, is pinned to, or `None` to follow the remote's
-/// default branch. With a `version` that is the one used; without, the project at `root` is
+/// What `pin` settled for a registry add's Ref.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Pinned {
+    /// The Version tag of the version given or read from the lockfile.
+    Tag(String),
+    /// A version was chosen but has no tag, or no tags could be listed: the remote's default
+    /// branch, decided already.
+    FollowsDefault,
+    /// No version was given and the lockfile gave none (missing, unreadable, or without the
+    /// Package). The caller may ask for the Ref.
+    Unpinned,
+}
+
+/// What `package`, in the repo at `url`, is pinned to (see `Pinned`). With a `version` that is the one used; without, the project at `root` is
 /// asked through its Package lockfile (`used::find`, then `Found::pick`). The tag for the
 /// version is one of the `source`'s tags (`tag_for`); `--no-sync` has no `source`. A version
 /// with no tag is never pinned silently: with a `prompter` the person is asked whether to follow
@@ -48,7 +60,7 @@ pub fn pin(
     source: Option<&dyn Source>,
     prompter: Option<&mut (dyn Prompter + '_)>,
     say: &mut dyn Say,
-) -> Result<Option<String>, Stop> {
+) -> Result<Pinned, Stop> {
     let mut pinning = Pinning {
         package,
         url,
@@ -64,6 +76,9 @@ pub fn pin(
 }
 
 const FOLLOWS: &str = "the repo follows the remote's default branch";
+const NOT_PINNED: &str =
+    "no version is pinned; the Ref is the remote's default branch unless one is given";
+const HINT: &str = "use `--ref` to track a branch or choose another tag";
 
 struct Pinning<'a, 'p> {
     package: &'a Package,
@@ -81,20 +96,21 @@ impl Pinning<'_, '_> {
         file.display().to_string()
     }
 
-    fn read_lockfile(&mut self) -> Result<Option<String>, Stop> {
+    fn read_lockfile(&mut self) -> Result<Pinned, Stop> {
         let name = &self.package.name;
         let found = match used::find(self.package, self.root) {
             Lookup::Found(found) => found,
             Lookup::Missing => {
-                self.say
-                    .status(format!("no Package lockfile found for `{name}`; {FOLLOWS}"));
-                return Ok(None);
+                self.say.status(format!(
+                    "no Package lockfile found for `{name}`; {NOT_PINNED}"
+                ));
+                return Ok(Pinned::Unpinned);
             }
             Lookup::Unreadable { file, why } => {
                 let file = self.name(&file);
                 self.say
-                    .warning(format!("cannot read {file}: {why}; {FOLLOWS}"));
-                return Ok(None);
+                    .warning(format!("cannot read {file}: {why}; {NOT_PINNED}"));
+                return Ok(Pinned::Unpinned);
             }
         };
         let file = self.name(&found.file);
@@ -107,8 +123,8 @@ impl Pinning<'_, '_> {
         match found.pick() {
             Pick::Nothing => {
                 self.say
-                    .status(format!("`{name}` is not in {file}; {FOLLOWS}"));
-                Ok(None)
+                    .status(format!("`{name}` is not in {file}; {NOT_PINNED}"));
+                Ok(Pinned::Unpinned)
             }
             Pick::One(version) => {
                 self.say.status(format!("`{name}` is {version} in {file}"));
@@ -142,29 +158,34 @@ impl Pinning<'_, '_> {
             .map_err(Stop::Asked)
     }
 
-    /// The tag `version` was released as, if the `source` lists one.
-    fn settle(&mut self, version: &str) -> Result<Option<String>, Stop> {
+    /// Pins `version` to the tag it was released as, if the `source` lists one; otherwise follows
+    /// the default branch (asked first when there is someone to ask).
+    fn settle(&mut self, version: &str) -> Result<Pinned, Stop> {
         let name = &self.package.name;
         let Some(source) = self.source else {
             self.say.warning(format!(
-                "`{name}@{version}` is not pinned to a tag, as `--no-sync` lists no tags; {FOLLOWS}"
+                "`{name}@{version}` is not pinned to a tag, as `--no-sync` lists no tags; {FOLLOWS}; {HINT}"
             ));
-            return Ok(None);
+            return Ok(Pinned::FollowsDefault);
         };
         let tags = source.tags(self.url).map_err(Stop::Source)?;
         if let Some(tag) = tag_for(name, version, &tags) {
-            self.say
-                .status(format!("pinned `{name}@{version}` to the tag `{tag}`"));
-            return Ok(Some(tag.to_owned()));
+            self.say.status(format!(
+                "pinned `{name}@{version}` to the tag `{tag}`; {HINT}"
+            ));
+            return Ok(Pinned::Tag(tag.to_owned()));
         }
         let untagged = format!("{name}@{version} is not tagged in {}", self.url);
         let Some(prompter) = self.prompter.as_deref_mut() else {
-            self.say.warning(format!("{untagged}; {FOLLOWS}"));
-            return Ok(None);
+            self.say.warning(format!("{untagged}; {FOLLOWS}; {HINT}"));
+            return Ok(Pinned::FollowsDefault);
         };
         let question = format!("{untagged}. Follow the remote's default branch instead?");
         match prompter.confirm(&question).map_err(Stop::Asked)? {
-            true => Ok(None),
+            true => {
+                self.say.status(format!("{FOLLOWS}; {HINT}"));
+                Ok(Pinned::FollowsDefault)
+            }
             false => Err(Stop::Asked(Abort::Cancelled)),
         }
     }

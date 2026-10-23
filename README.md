@@ -56,6 +56,8 @@ created checkout `solid`
 updated AGENTS.md
 ```
 
+A registry shorthand (`npm:name`) pins the version your lockfile or `@version` gives and does not ask for the ref (`--ref` overrides the pin); with no lockfile pin it asks, and an empty answer follows the default branch. `npm:name@next` is refused: `next` looks like a tag, and `npm:name --ref next` follows a git ref named `next`, which may not be the dist-tag.
+
 Flags skip the questions. Without a terminal, or with `--no-input`, nothing is asked, so scripts pass a URL and flags.
 
 The result is in `refs.toml`, which you can also write by hand:

@@ -172,7 +172,9 @@ pub enum RegistryError {
     #[error("`{tag}` looks like a tag, not a version")]
     #[diagnostic(
         code(refs::registry::tag_not_version),
-        help("to follow it, write `{bare} --ref {tag}`")
+        help(
+            "to follow a git ref named `{tag}`, which may not be the dist-tag, write `{bare} --ref {tag}`"
+        )
     )]
     TagNotVersion { tag: String, bare: String },
 

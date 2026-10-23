@@ -13,7 +13,7 @@ use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit};
 use crate::packages::{infer, manifest_paths};
 use crate::prompt::{self, Abort, Known, PackagesFor, Prompter};
-use crate::registry::pin::{Say, Stop, pin};
+use crate::registry::pin::{Pinned, Say, Stop, pin};
 use crate::registry::{self, Registry, RegistryError};
 use crate::source::{Outline, Source};
 use crate::sync::{self, Report, SyncFlags};
@@ -113,8 +113,9 @@ fn prepare(
              use `--ref` and `--paths` to choose a ref and directories"
         ));
     }
-    // A registry add has chosen its Ref (a tag, or the default branch), so it is not asked.
+    // A registry add has chosen its Ref (a tag, or the default branch) unless nothing was pinned.
     let registry_add = expanded.requested.is_some();
+    let mut ask_ref = !registry_add;
     let registry_description = expanded.description;
     let mut repo = expanded.repo;
     // A `ref` given with a version was refused by `expand`; without one it is kept as it is.
@@ -123,10 +124,17 @@ fn prepare(
         let package = &requested.package;
         let url = &repo.url;
         let prompter = asking.prompter();
-        repo.git_ref = pin(package, version, url, root, source, prompter, say)?;
+        repo.git_ref = match pin(package, version, url, root, source, prompter, say)? {
+            Pinned::Tag(tag) => Some(tag),
+            Pinned::FollowsDefault => None,
+            Pinned::Unpinned => {
+                ask_ref = true;
+                None
+            }
+        };
     }
     if repo.git_ref.is_none()
-        && !registry_add
+        && ask_ref
         && let Some(prompter) = asking.prompter()
     {
         repo.git_ref = prompt::ask_ref(prompter).map_err(Failure::Asked)?;

@@ -443,7 +443,7 @@ fn a_version_with_no_tag_asks_and_continues_on_yes() {
     assert!(dir.path().join("refs.lock").exists());
     // The person just said to follow the default branch: the Ref is not asked again.
     assert!(
-        !prompter.questions().iter().any(|q| q.starts_with("Ref")),
+        !prompter.questions().contains(&REF_QUESTION),
         "{:?}",
         prompter.questions()
     );
@@ -477,6 +477,7 @@ fn a_registry_add_offers_the_registrys_description_and_it_can_be_cleared() {
 
     let dir = project();
     let mut cleared = Script::new([
+        Answer::Text(""),
         Answer::Yes(true),
         Answer::Clear,
         Answer::Text(""),
@@ -493,8 +494,36 @@ fn a_registry_add_offers_the_registrys_description_and_it_can_be_cleared() {
     assert!(!config_text(dir.path()).contains("description"));
 }
 
+const BARE: [&str; 7] = [
+    "npm:foo-js",
+    "--id",
+    "foo",
+    "--group",
+    "g",
+    "--description",
+    "d",
+];
+
 #[test]
-fn a_bare_registry_add_does_not_ask_for_the_ref() {
+fn a_registry_add_with_nothing_pinned_asks_for_the_ref() {
+    let dir = project();
+    let source = FakeSource::new();
+    let mut prompter = Script::takes_defaults(true).picking("Ref", Some("next"));
+
+    let run = add_asking(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &BARE,
+        Some(&mut prompter),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(config_text(dir.path()).contains("ref = \"next\""));
+}
+
+#[test]
+fn an_empty_answer_to_the_ref_follows_the_default_branch() {
     let dir = project();
     let source = FakeSource::new();
     let mut prompter = Script::takes_defaults(true);
@@ -503,24 +532,95 @@ fn a_bare_registry_add_does_not_ask_for_the_ref() {
         dir.path(),
         &foo_registry(),
         &source,
-        &[
-            "npm:foo-js",
-            "--id",
-            "foo",
-            "--group",
-            "g",
-            "--description",
-            "d",
-        ],
+        &BARE,
         Some(&mut prompter),
     );
 
     assert_eq!(run.code, 0, "{}", run.err);
     assert!(
-        !prompter.questions().iter().any(|q| q.starts_with("Ref")),
+        prompter.questions().contains(&REF_QUESTION),
         "{:?}",
         prompter.questions()
     );
+    assert!(!config_text(dir.path()).contains("ref = "));
+}
+
+const REF_QUESTION: &str = "Ref (empty: the remote's default branch)";
+const REF_HINT: &str = "use `--ref` to track a branch or choose another tag";
+
+#[test]
+fn a_package_the_lockfile_lacks_is_asked_for_the_ref() {
+    let dir = project();
+    write(dir.path(), "package-lock.json", NPM_LOCK_ONE);
+    let registry = FakeRegistry::new().with(Ecosystem::Npm, "bar", found(FOO, None));
+    let mut prompter = Script::takes_defaults(true);
+    let mut args = BARE;
+    args[0] = "npm:bar";
+
+    let run = add_asking(
+        dir.path(),
+        &registry,
+        &FakeSource::new(),
+        &args,
+        Some(&mut prompter),
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(prompter.questions().contains(&REF_QUESTION));
+}
+
+/// `refs add npm:foo-js …` with the pin from `args[0]` and `lock`, asked by a terminal.
+fn pinned_add(lock: bool, first: &str) -> (Run, Vec<String>) {
+    let dir = project();
+    if lock {
+        write(dir.path(), "package-lock.json", NPM_LOCK_ONE);
+    }
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["foo-js-1.2.3"]);
+    let mut prompter = Script::takes_defaults(true);
+    let mut args = BARE;
+    args[0] = first;
+    let run = add_asking(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &args,
+        Some(&mut prompter),
+    );
+    let asked = prompter
+        .questions()
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    (run, asked)
+}
+
+#[test]
+fn a_pin_from_the_lockfile_is_not_asked_and_hints_at_the_ref_flag() {
+    let (run, asked) = pinned_add(true, "npm:foo-js");
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(!asked.iter().any(|q| q == REF_QUESTION), "{asked:?}");
+    assert!(run.err.contains(REF_HINT), "{}", run.err);
+}
+
+#[test]
+fn a_version_given_is_not_asked_and_hints_at_the_ref_flag() {
+    let (run, asked) = pinned_add(false, "npm:foo-js@1.2.3");
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(!asked.iter().any(|q| q == REF_QUESTION), "{asked:?}");
+    assert!(run.err.contains(REF_HINT), "{}", run.err);
+}
+
+#[test]
+fn a_registry_add_with_no_one_to_ask_does_not_ask_for_the_ref() {
+    let dir = project();
+
+    let run = add(dir.path(), &foo_registry(), &FakeSource::new(), &BARE);
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(!config_text(dir.path()).contains("ref = "));
 }
 
 #[test]
@@ -607,7 +707,8 @@ fn a_tag_in_place_of_a_version_is_refused_with_the_ref_form() {
         assert_eq!(run.code, 1, "{tag}: {}", run.err);
         assert!(
             run.err.contains(&format!("`{tag}` looks like a tag"))
-                && run.err.contains(&format!("npm:foo-js --ref {tag}")),
+                && run.err.contains(&format!("npm:foo-js --ref {tag}"))
+                && run.err.contains("may not be the dist-tag"),
             "{tag}: {}",
             run.err
         );
