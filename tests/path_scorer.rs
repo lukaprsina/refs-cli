@@ -45,3 +45,14 @@ fn nothing_typed_keeps_path_order_and_a_subsequence_still_matches() {
     assert_eq!(ranked("", &options), options);
     assert!(ranked("pksol", &options).contains(&"packages/solid"));
 }
+
+#[test]
+fn on_an_equal_match_the_shallower_path_comes_first() {
+    let options: Vec<String> = ["a/b/lib", "b/lib", "c/d/e/lib", "lib"]
+        .map(String::from)
+        .to_vec();
+    assert_eq!(
+        ranked("lib", &options),
+        ["lib", "b/lib", "a/b/lib", "c/d/e/lib"]
+    );
+}

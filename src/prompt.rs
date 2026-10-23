@@ -427,9 +427,10 @@ impl Prompter for Terminal {
 }
 
 /// Scores an option (a path) against what has been typed, for `inquire`: fuzzy, with the bonuses
-/// of path matching. `inquire` sorts by score and leaves ties in no order, so the option's
-/// position, which is path order, breaks them: `packages/solid` stays above
-/// `packages/solid-element`.
+/// of path matching. `inquire` sorts by score and leaves ties in no order, so a tie is broken
+/// by depth (the shallower path first, once something is typed) and then by the option's
+/// position, which is path order: `packages/solid` stays above `packages/solid-element`, and
+/// `lib` above `third_party/x/lib`. With nothing typed the list stays in path order.
 pub fn path_scorer() -> impl Fn(&str, &String, &str, usize) -> Option<i64> {
     use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
     use nucleo_matcher::{Config, Matcher, Utf32Str};
@@ -443,7 +444,11 @@ pub fn path_scorer() -> impl Fn(&str, &String, &str, usize) -> Option<i64> {
             AtomKind::Fuzzy,
         );
         let score = pattern.score(Utf32Str::new(path, buffer), matcher)?;
-        Some(i64::from(score) * 1_000_000 - position as i64)
+        let depth = match input.is_empty() {
+            true => 0,
+            false => path.matches('/').count() as i64,
+        };
+        Some(i64::from(score) * 1_000_000_000 - depth * 1_000_000 - position as i64)
     }
 }
 
