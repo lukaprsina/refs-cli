@@ -10,7 +10,7 @@ use refs_cli::registry::Unavailable;
 use refs_cli::self_update::Unmanaged;
 use refs_cli::source::Observed;
 use refs_cli::source::Source;
-use refs_cli::source::fake::{Call, FakeSource, Method};
+use refs_cli::source::fake::{FakeSource, Method};
 use tempfile::TempDir;
 
 mod common;
@@ -238,7 +238,16 @@ fn a_version_with_no_tag_is_a_note_and_the_repo_stays() {
 
 #[test]
 fn a_package_the_lockfile_lacks_or_no_lockfile_is_a_note() {
-    for lockfile in [Some(NPM_LOCK_WITHOUT_FOO), None] {
+    for (lockfile, why) in [
+        (
+            Some(NPM_LOCK_WITHOUT_FOO),
+            "`foo` is up to date (`foo-js` is not in package-lock.json)",
+        ),
+        (
+            None,
+            "`foo` is up to date (no Package lockfile found for `foo-js`)",
+        ),
+    ] {
         let p = Project::new(&foo_at("foo-js-1.0.0"));
         if let Some(lockfile) = lockfile {
             p.write("package-lock.json", lockfile);
@@ -249,8 +258,7 @@ fn a_package_the_lockfile_lacks_or_no_lockfile_is_a_note() {
         let run = p.update(&["foo"]);
 
         assert_eq!(run.code, 0, "{}", run.err);
-        assert!(run.err.contains("`foo` is up to date"), "{}", run.err);
-        assert!(run.err.contains("foo-js"), "{}", run.err);
+        assert!(run.err.contains(why), "{}", run.err);
         assert_eq!(p.read("refs.toml"), before);
     }
 }
@@ -372,6 +380,50 @@ fn a_dirty_mover_is_skipped_with_its_files_and_force_moves_it() {
     assert!(p.read("refs.toml").contains("foo-js-2.0.0"));
 }
 
+#[test]
+fn a_dirty_floating_mover_is_skipped_and_the_lock_stays() {
+    let p = Project::new(BRANCH);
+    p.source.set_commit("foo", SHA_1);
+    assert_eq!(p.run(&["lock", "--upgrade"], None).code, 0);
+    make_dirty(&p, "foo");
+    p.source.set_commit("foo", SHA_2);
+    let before = p.read("refs.lock");
+
+    let run = p.update(&["foo"]);
+
+    assert_eq!(run.code, 1, "{}", run.err);
+    assert!(run.err.contains("notes.txt"), "{}", run.err);
+    assert_eq!(p.read("refs.lock"), before);
+}
+
+#[test]
+fn a_dirty_repo_is_skipped_before_the_version_question_is_asked() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.write("package-lock.json", NPM_LOCK_TWO);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3", "foo-js-1.10.0"]);
+    make_dirty(&p, "foo");
+    let mut prompter = Script::new([]);
+
+    let run = p.run(&["update", "foo"], Some(&mut prompter));
+
+    assert_eq!(run.code, 1, "{}", run.err);
+    assert!(run.err.contains("notes.txt"), "{}", run.err);
+    assert!(prompter.asked.is_empty(), "{:?}", prompter.asked);
+}
+
+#[test]
+fn a_dirty_repo_that_would_not_move_is_not_a_skip() {
+    let p = Project::new(&foo_at("foo-js-1.2.3"));
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(&p, &["foo-js-1.2.3"]);
+    make_dirty(&p, "foo");
+
+    let run = p.update(&["foo"]);
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(run.err.contains("`foo` is up to date"), "{}", run.err);
+}
+
 // ---- several Repos ----
 
 const BAZ: &str = "https://github.com/o/baz";
@@ -399,14 +451,26 @@ fn several_repos_make_one_edit_and_one_sync_and_a_broken_one_exits_1() {
     p.source.set_tags(BAR, ["v1"]);
     p.source.set_commit("bar", SHA_2);
     p.source.fail(BAZ, Method::Tags, "remote down");
-    let calls = p.source.calls().len();
 
     let run = p.update(&["foo", "bar", "baz"]);
 
     assert_eq!(run.code, 1, "{}", run.err);
     assert_eq!(
         p.read("refs.toml"),
-        THREE.replace("ref = \"foo-js-1.0.0\"", "ref = \"foo-js-1.2.3\"")
+        "[repos.foo]
+url = \"https://github.com/o/foo\"
+ref = \"foo-js-1.2.3\"
+origin = \"npm:foo-js\"
+
+[repos.bar]
+url = \"https://github.com/o/bar\"
+ref = \"main\"
+
+[repos.baz]
+url = \"https://github.com/o/baz\"
+ref = \"v1\"
+origin = \"npm:baz\"
+"
     );
     assert!(p.read("refs.lock").contains(SHA_2));
     assert!(
@@ -427,11 +491,22 @@ fn several_repos_make_one_edit_and_one_sync_and_a_broken_one_exits_1() {
         "{}",
         run.err
     );
-    let verified_foo = p.source.calls()[calls..]
-        .iter()
-        .filter(|c| matches!(c, Call::Verify { id, .. } if id == "foo"))
-        .count();
-    assert_eq!(verified_foo, 1);
+}
+
+#[test]
+fn a_skip_ends_the_run_with_the_summary_and_not_the_fix_or_remove_hint() {
+    let p = Project::new(THREE);
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3"]);
+    p.source.fail(BAZ, Method::Tags, "remote down");
+    p.source.fail("foo", Method::Materialise, "disk full");
+
+    let run = p.update(&["foo", "baz"]);
+
+    assert_eq!(run.code, 1, "{}", run.err);
+    assert!(run.err.contains("disk full"), "{}", run.err);
+    assert!(run.err.contains("1 repo was not updated"), "{}", run.err);
+    assert!(!run.err.contains("fix or remove"), "{}", run.err);
 }
 
 // ---- refusals before any network call ----

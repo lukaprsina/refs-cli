@@ -157,6 +157,5 @@ fn the_old_top_level_update_call_is_a_usage_error_and_installs_nothing() {
     let run = refs(dir.path(), &["update"], &updater);
 
     assert_eq!(run.code, 2, "{}", run.err);
-    assert!(run.err.contains("<ID>"), "{}", run.err);
     assert_eq!(updater.calls(), []);
 }

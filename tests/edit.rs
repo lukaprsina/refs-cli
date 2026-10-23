@@ -408,7 +408,15 @@ fn change_replaces_the_ref_in_place_and_keeps_everything_else() {
     let changed = change(PINNED, &[("solid", "solid-js@2.0.0")]).unwrap();
     assert_eq!(
         changed,
-        PINNED.replace("\"solid-js@1.0.0\"", "\"solid-js@2.0.0\"")
+        r#"[repos.solid]
+url = "https://github.com/solidjs/solid"
+ref = "solid-js@2.0.0" # what the lockfile said
+description = "kept"
+
+# The router.
+[repos.router]
+url = "https://github.com/solidjs/solid-router"
+"#
     );
 }
 
@@ -421,22 +429,19 @@ fn change_adds_a_ref_after_the_last_key_of_a_repo_without_one() {
 #[test]
 fn change_moves_several_repos_in_one_edit() {
     let changed = change(PINNED, &[("solid", "next"), ("router", "main")]).unwrap();
-    let config = refs_cli::config::parse(&changed).unwrap();
     assert_eq!(
-        config.repos["solid"]
-            .git_ref
-            .as_ref()
-            .map(|r| r.as_ref().as_str()),
-        Some("next")
+        changed,
+        r#"[repos.solid]
+url = "https://github.com/solidjs/solid"
+ref = "next" # what the lockfile said
+description = "kept"
+
+# The router.
+[repos.router]
+url = "https://github.com/solidjs/solid-router"
+ref = "main"
+"#
     );
-    assert_eq!(
-        config.repos["router"]
-            .git_ref
-            .as_ref()
-            .map(|r| r.as_ref().as_str()),
-        Some("main")
-    );
-    assert!(changed.contains("# what the lockfile said"), "{changed}");
 }
 
 #[test]

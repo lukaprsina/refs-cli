@@ -30,3 +30,4 @@ status: proposed
 
 - Amends ADR 0009 ("the prefix and version are never stored": the prefix is now kept as the Origin, the version still is not) and the glossary's **Registry**.
 - `Repo` is `deny_unknown_fields`: `origin` is a config-format change, and a Repo added before it has none until it is hand-edited in.
+- Shipped with #81: `refs update <id…> [--ref] [--force]` (the lockfile and branch moves, the dirty skip, one edit and one sync), `Edit::Change` and the `refs self update` rename. Still deferred: the break policy and `Update?` (#82), the bare-`update` picker (#83) and `--list` (#84). The ADR stays `proposed` until those land.

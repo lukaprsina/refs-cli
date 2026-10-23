@@ -25,7 +25,8 @@ pub struct SyncFlags {
     pub offline: bool,
     pub force: bool,
     pub check: bool,
-    /// Floating Repos to re-resolve in the Lock; only an edit sets it, `sync` has no such flag.
+    /// Floating Repos to re-resolve in the Lock. `update` sets it; `sync` has no such flag, but
+    /// reads it all the same (through `lock_flags`), as does `lock --upgrade`.
     pub upgrade: Upgrade,
 }
 

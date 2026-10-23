@@ -66,6 +66,10 @@ enum Command {
     #[command(subcommand, name = "self")]
     SelfCommand(SelfCommand),
     /// Move repos to the version the project uses now, or to a ref given
+    ///
+    /// A repo that cannot be assessed, or has uncommitted changes, is skipped and named; the
+    /// rest are moved. A failure the remote causes after that, when the edited config is
+    /// resolved and verified, blocks the whole run.
     Update(UpdateArgs),
     #[command(flatten)]
     Config(ConfigCommand),
@@ -682,9 +686,11 @@ fn run_update(
 ) -> u8 {
     match update::run(source, root, config, request, prompter, console) {
         Ok(done) => {
-            let code = done
-                .report
-                .map_or(0, |report| print_report(&report, false, console));
+            // The summary below is what ends a run that skipped Repos, not the hint to fix one.
+            let code = done.report.map_or(0, |report| {
+                let hint = report.hint.filter(|_| done.skipped == 0);
+                print_report(&Report { hint, ..report }, false, console)
+            });
             match done.skipped {
                 0 => code,
                 skipped => {

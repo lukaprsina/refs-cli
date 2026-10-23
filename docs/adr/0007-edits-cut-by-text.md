@@ -2,9 +2,9 @@
 status: accepted
 ---
 
-# `remove`, `enable` and `disable` edit `refs.toml` by text, not through a `toml_edit` document
+# `remove`, `enable`, `disable` and `Edit::Change` edit `refs.toml` by text, not through a `toml_edit` document
 
-Spec §6.3 says to use `toml_edit` for writes. `add` does (it renders the new table with it), but `remove`, `enable` and `disable` locate spans with `toml_edit` and splice the original text. Re-serialising a `toml_edit` document in their place was tried and rejected.
+Spec §6.3 says to use `toml_edit` for writes. `add` does (it renders the new table with it), but `remove`, `enable`, `disable` and `Edit::Change` (which sets the `ref` of an existing Repo for `update`) locate spans with `toml_edit` and splice the original text. Re-serialising a `toml_edit` document in their place was tried and rejected.
 
 ## Why
 

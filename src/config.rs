@@ -133,9 +133,12 @@ impl Repo {
 
     /// The ref to resolve: `HEAD` when none is configured.
     pub fn effective_ref(&self) -> &str {
-        self.git_ref
-            .as_ref()
-            .map_or("HEAD", |r| r.as_ref().as_str())
+        self.configured_ref().unwrap_or("HEAD")
+    }
+
+    /// The `ref` as written, if there is one.
+    pub fn configured_ref(&self) -> Option<&str> {
+        self.git_ref.as_ref().map(|r| r.as_ref().as_str())
     }
 }
 
