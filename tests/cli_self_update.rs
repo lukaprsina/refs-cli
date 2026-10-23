@@ -67,7 +67,7 @@ fn self_update_when_already_current_says_so() {
 }
 
 #[test]
-fn quiet_silences_the_status_line() {
+fn quiet_silences_the_self_update_status_line() {
     let dir = TempDir::new().unwrap();
 
     let run = refs(
@@ -81,7 +81,7 @@ fn quiet_silences_the_status_line() {
 }
 
 #[test]
-fn check_exits_3_when_a_newer_release_exists_and_installs_nothing() {
+fn self_update_check_exits_3_when_a_newer_release_exists_and_installs_nothing() {
     let dir = TempDir::new().unwrap();
     let updater = FakeUpdater::release("0.1.0", "0.2.0");
 
@@ -97,7 +97,7 @@ fn check_exits_3_when_a_newer_release_exists_and_installs_nothing() {
 }
 
 #[test]
-fn check_on_the_latest_release_is_up_to_date() {
+fn self_update_check_on_the_latest_release_is_up_to_date() {
     let dir = TempDir::new().unwrap();
     let updater = FakeUpdater::current();
 
@@ -109,7 +109,7 @@ fn check_on_the_latest_release_is_up_to_date() {
 }
 
 #[test]
-fn a_binary_the_installer_did_not_put_there_is_told_how_to_update() {
+fn self_update_on_a_binary_the_installer_did_not_put_there_says_how_to_update() {
     let dir = TempDir::new().unwrap();
 
     for args in [&["self", "update"][..], &["self", "update", "--check"]] {

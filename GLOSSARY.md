@@ -43,7 +43,7 @@ A name published on a Registry: the ecosystem and the name together (`npm:@scope
 _Avoid_: Release, Dependency
 
 **Origin**:
-The Package a Repo was added from, kept so `update` can read the Package lockfile again and name the Version tag. Absent for a Repo added by URL or Forge. It is only intent: the Lock never records it and `lock` and `sync` never read it.
+The Package a Repo was added from, kept so `refs update` can read the Package lockfile again and name the Version tag. Absent for a Repo added by URL or Forge. It is only intent: the Lock never records it and `lock` and `sync` never read it.
 _Avoid_: Provenance, Source
 
 **Forge**:

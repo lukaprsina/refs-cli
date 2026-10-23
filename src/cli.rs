@@ -352,7 +352,7 @@ pub fn run_on<'a>(
     match cli.command {
         Command::Init(args) => init(start, args.here, &mut console),
         Command::SelfCommand(SelfCommand::Update(args)) => {
-            self_update(outside.updater, args.check, &mut console)
+            run_self_update(outside.updater, args.check, &mut console)
         }
         Command::Config(command) => match load_for(&command, start, &mut console) {
             Ok((root, config)) => {
@@ -635,7 +635,7 @@ fn init(start: &Path, here: bool, console: &mut Console) -> u8 {
 
 /// `refs self update`: install the latest release over this one, or with `--check` only say
 /// whether there is one (exit 3, as `sync --check` does for a project that is out of date).
-fn self_update(updater: &dyn Updater, check: bool, console: &mut Console) -> u8 {
+fn run_self_update(updater: &dyn Updater, check: bool, console: &mut Console) -> u8 {
     if check {
         return match updater.is_update_available() {
             Ok(true) => {
