@@ -75,6 +75,32 @@ pub fn pin(
     }
 }
 
+/// Which of `versions` of `name` to use: asked, with the highest as the default, or refused
+/// without someone to ask; the refusal ends with `instead`, what to do.
+pub fn choose_version(
+    prompter: Option<&mut (dyn Prompter + '_)>,
+    name: &str,
+    versions: &[&str],
+    file: &str,
+    instead: &str,
+) -> Result<String, Stop> {
+    let list = versions.join(", ");
+    let Some(prompter) = prompter else {
+        return Err(Stop::Refused(format!(
+            "{file} has several versions of `{name}` ({list}), and none is the one the \
+             project asks for; {instead}"
+        )));
+    };
+    let one_of_them = |answer: &str| match versions.contains(&answer) {
+        true => Ok(()),
+        false => Err(format!("one of {list}")),
+    };
+    let message = format!("{file} has several versions of `{name}`: {list}. Which one?");
+    prompter
+        .text(&message, versions.last().copied(), &one_of_them)
+        .map_err(Stop::Asked)
+}
+
 const FOLLOWS: &str = "the repo follows the remote's default branch";
 const NOT_PINNED: &str =
     "no version is pinned; the Ref is the remote's default branch unless one is given";
@@ -131,31 +157,16 @@ impl Pinning<'_, '_> {
                 self.settle(version)
             }
             Pick::Several(versions) => {
-                let version = self.choose(&versions, &file)?;
+                let version = choose_version(
+                    self.prompter.as_deref_mut(),
+                    name,
+                    &versions,
+                    &file,
+                    &format!("give one as `{name}@version`"),
+                )?;
                 self.settle(&version)
             }
         }
-    }
-
-    /// Which of `versions` to use: asked, with the highest as the default, or refused without
-    /// someone to ask.
-    fn choose(&mut self, versions: &[&str], file: &str) -> Result<String, Stop> {
-        let name = &self.package.name;
-        let list = versions.join(", ");
-        let Some(prompter) = self.prompter.as_deref_mut() else {
-            return Err(Stop::Refused(format!(
-                "{file} has several versions of `{name}` ({list}), and none is the one the \
-                 project asks for; give one as `{name}@version`"
-            )));
-        };
-        let one_of_them = |answer: &str| match versions.contains(&answer) {
-            true => Ok(()),
-            false => Err(format!("one of {list}")),
-        };
-        let message = format!("{file} has several versions of `{name}`: {list}. Which one?");
-        prompter
-            .text(&message, versions.last().copied(), &one_of_them)
-            .map_err(Stop::Asked)
     }
 
     /// Pins `version` to the tag it was released as, if the `source` lists one; otherwise follows

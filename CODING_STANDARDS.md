@@ -31,6 +31,7 @@ Scripted stand-ins, each given to `cli::run_on`:
 - Package lockfiles: `registry::used::used_versions` is tested as data per format (`tests/registry_used.rs`), `registry::used::find` and `worktree::candidate_dirs` over temp directories (`tests/registry_used_find.rs`, `tests/worktree.rs`).
 - Tooling gaps: `tooling::gaps` over temp directories (`tests/tooling.rs`); the note on `sync`, `add` and `--check` through `cli::run_with` (`tests/cli_output.rs`).
 - What `add` pins a registry package to: `registry::pin::pin` over temp directories, a scripted tag list and scripted answers, including its wording and questions (`tests/registry_pin.rs`); and end to end through `cli::run_with` (`tests/cli_registry.rs`).
+- `refs update`: through `cli::run_on` with a `FakeSource`, real Package lockfiles in a temp directory, and `registry::Unavailable` (which errors if called: `update` never asks the Registry), each run starting from a synced project (`tests/cli_update.rs`). The Ref policy lives in `update` and is tested through the command, not as helpers.
 - Tags: `Source::tags` is a row of the `Source` contract (`tests/contract.rs`), run against the fake and git; `registry::tag::tag_for` is tested as data (`tests/registry_tag.rs`).
 
 Three adapters have no test. After changing one, check it by hand:

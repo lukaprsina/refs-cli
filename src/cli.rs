@@ -26,6 +26,7 @@ use crate::registry::{self, Registry};
 use crate::self_update::{self, Updater};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
+use crate::update;
 
 const EXIT_ERROR: u8 = 1;
 const EXIT_USAGE: u8 = 2;
@@ -64,6 +65,8 @@ enum Command {
     /// Manage this program
     #[command(subcommand, name = "self")]
     SelfCommand(SelfCommand),
+    /// Move repos to the version the project uses now, or to a ref given
+    Update(UpdateArgs),
     #[command(flatten)]
     Config(ConfigCommand),
     #[command(flatten)]
@@ -152,6 +155,19 @@ struct InitArgs {
     /// Create a project here even below a directory that already has a refs.toml
     #[arg(long)]
     here: bool,
+}
+
+#[derive(Debug, Args)]
+struct UpdateArgs {
+    /// The repos to move
+    #[arg(required = true, value_name = "ID")]
+    ids: Vec<String>,
+    /// Set the ref of the one repo named, without reading a lockfile
+    #[arg(long = "ref", value_name = "REF")]
+    git_ref: Option<String>,
+    /// Move a repo whose checkout has uncommitted changes, discarding them
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -354,6 +370,27 @@ pub fn run_on<'a>(
         Command::SelfCommand(SelfCommand::Update(args)) => {
             run_self_update(outside.updater, args.check, &mut console)
         }
+        Command::Update(args) => match load(start, &mut console) {
+            Ok((root, config)) => {
+                let prompter = outside.prompter.filter(|_| !cli.no_input);
+                with_source(
+                    make_source,
+                    &root,
+                    &config,
+                    &mut console,
+                    |source, console| {
+                        let request = update::Request {
+                            ids: &args.ids,
+                            git_ref: args.git_ref.as_deref(),
+                            force: args.force,
+                            offline: cli.offline,
+                        };
+                        run_update(source, &root, &config, &request, prompter, console)
+                    },
+                )
+            }
+            Err(code) => code,
+        },
         Command::Config(command) => match load_for(&command, start, &mut console) {
             Ok((root, config)) => {
                 let prompter = outside.prompter.filter(|_| !cli.no_input);
@@ -631,6 +668,44 @@ fn init(start: &Path, here: bool, console: &mut Console) -> u8 {
             0
         }
         Err(report) => fail(report, console),
+    }
+}
+
+/// `refs update`, then its report and the count of the Repos it skipped.
+fn run_update(
+    source: &dyn Source,
+    root: &Path,
+    config: &Config,
+    request: &update::Request,
+    prompter: Option<&mut dyn Prompter>,
+    console: &mut Console,
+) -> u8 {
+    match update::run(source, root, config, request, prompter, console) {
+        Ok(done) => {
+            let code = done
+                .report
+                .map_or(0, |report| print_report(&report, false, console));
+            match done.skipped {
+                0 => code,
+                skipped => {
+                    console.problem(match skipped {
+                        1 => "1 repo was not updated".to_owned(),
+                        n => format!("{n} repos were not updated"),
+                    });
+                    code.max(EXIT_ERROR)
+                }
+            }
+        }
+        Err(update::Failure::Refused(why)) => {
+            console.problem(format_args!("error: {why}"));
+            EXIT_ERROR
+        }
+        Err(update::Failure::Usage(why)) => {
+            console.problem(format_args!("error: {why}"));
+            EXIT_USAGE
+        }
+        Err(update::Failure::Lock(e)) => fail(e, console),
+        Err(update::Failure::Asked(abort)) => aborted(abort, console),
     }
 }
 

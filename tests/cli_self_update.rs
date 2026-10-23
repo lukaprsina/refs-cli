@@ -150,13 +150,13 @@ fn a_failed_self_update_is_an_error_even_with_quiet() {
 }
 
 #[test]
-fn the_old_top_level_update_is_not_a_command() {
+fn the_old_top_level_update_call_is_a_usage_error_and_installs_nothing() {
     let dir = TempDir::new().unwrap();
     let updater = FakeUpdater::release("0.1.0", "0.2.0");
 
     let run = refs(dir.path(), &["update"], &updater);
 
     assert_eq!(run.code, 2, "{}", run.err);
-    assert!(run.err.contains("unrecognized subcommand"), "{}", run.err);
+    assert!(run.err.contains("<ID>"), "{}", run.err);
     assert_eq!(updater.calls(), []);
 }

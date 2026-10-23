@@ -23,4 +23,5 @@ pub mod source;
 pub mod status;
 pub mod sync;
 pub mod tooling;
+pub mod update;
 pub mod worktree;

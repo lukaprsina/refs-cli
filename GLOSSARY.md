@@ -55,7 +55,7 @@ Files inside a Repo's Paths that are worth reading first.
 _Avoid_: Entry points, hints
 
 **Ref**:
-A branch, tag or full commit SHA naming what to follow in a Repo.
+A branch, tag or full commit SHA naming what to follow in a Repo. `refs update` treats them by what the Ref is: a **tag Ref** is a Ref the remote lists as a tag (it follows the Package lockfile when the Repo has an Origin); a **branch Ref** is no Ref, or one that is not a tag (it follows the remote, and moves when the remote's commit differs from the Lock's); a commit has no news.
 _Avoid_: Version, revision
 
 **Package lockfile**:
@@ -63,11 +63,11 @@ A file written by a package manager (`Cargo.lock`, `package-lock.json`, `pnpm-lo
 _Avoid_: Lock, lockfile
 
 **Version tag**:
-The tag of a Repo that a package's version was released as, found by exact match on the names that package's releases use (`name@1.2.3`, `name-v1.2.3`, `v1.2.3`, ...). It becomes the Ref of a Repo added as `npm:name@1.2.3`, or with a Used version found in the Package lockfile. A version with no Version tag is never pinned silently.
+The tag of a Repo that a package's version was released as, found by exact match on the names that package's releases use (`name@1.2.3`, `name-v1.2.3`, `v1.2.3`, ...). It becomes the Ref of a Repo added as `npm:name@1.2.3`, or with a Used version found in the Package lockfile, and the new Ref of a Repo that `refs update` moves. A version with no Version tag is never pinned silently.
 _Avoid_: Release tag, version Ref
 
 **Used version**:
-The version of a package that a project's Package lockfile says the project uses. For a Python package only a version from PyPI's own index counts. It picks a Ref, through its Version tag, when a Repo is added from a registry.
+The version of a package that a project's Package lockfile says the project uses. For a Python package only a version from PyPI's own index counts. It picks a Ref, through its Version tag, when a Repo is added from a registry or moved by `refs update`.
 _Avoid_: Installed version, locked version, Ref
 
 ### Pinning
