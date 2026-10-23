@@ -74,6 +74,28 @@ impl Package {
             name: name.into(),
         }
     }
+
+    /// The Package an `origin` in `refs.toml` names (GLOSSARY: **Origin**): a registry prefix and
+    /// a name, as `Display` writes it. No version, no URL, and no name a registry could not hold.
+    pub fn from_origin(origin: &str) -> Result<Package, &'static str> {
+        let (ecosystem, name, version) =
+            parse_shorthand(origin).ok_or("an origin starts with `npm:`, `cargo:` or `pypi:`")?;
+        if version.is_some() {
+            return Err("an origin names a package, not a version");
+        }
+        if name.is_empty()
+            || name.contains(|c: char| c.is_whitespace() || c.is_control() || c == ':')
+        {
+            return Err("an origin is a prefix and a package name, such as `npm:solid-js`");
+        }
+        Ok(Package::new(ecosystem, name))
+    }
+}
+
+impl std::fmt::Display for Package {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.ecosystem.spec().prefix, self.name)
+    }
 }
 
 /// What a registry says about where a package lives.
@@ -313,7 +335,7 @@ pub fn expand(
             exact_version(version).map_err(|why| match looks_like_tag(version) {
                 true => RegistryError::TagNotVersion {
                     tag: version.to_owned(),
-                    bare: format!("{}{name}", ecosystem.spec().prefix),
+                    bare: Package::new(ecosystem, name).to_string(),
                 },
                 false => RegistryError::BadVersion {
                     shorthand: repo.url.clone(),
@@ -341,6 +363,7 @@ pub fn expand(
     }
     let mut expanded = repo.clone();
     expanded.url = found.url;
+    expanded.origin = Some(package.to_string());
     if expanded.paths.is_empty() {
         expanded.paths.extend(found.directory);
     }

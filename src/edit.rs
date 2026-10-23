@@ -39,6 +39,9 @@ pub struct AddRepo {
     /// Repo-relative files worth reading first
     #[arg(long, num_args = 1.., value_name = "PATH")]
     pub start: Vec<String>,
+    /// The Package a registry shorthand named, kept as the Repo's `origin`; set by `registry::expand`
+    #[arg(skip)]
+    pub origin: Option<String>,
 }
 
 impl AddRepo {
@@ -144,6 +147,9 @@ fn repo_table(req: &AddRepo) -> Table {
     }
     if let Some(description) = &req.description {
         table["description"] = value(description);
+    }
+    if let Some(origin) = &req.origin {
+        table["origin"] = value(origin);
     }
     for (key, items) in [
         ("paths", &req.paths),

@@ -91,6 +91,44 @@ fn repo_group_must_exist() {
 }
 
 #[test]
+fn origin_is_a_registry_prefix_and_a_name_and_nothing_else() {
+    for good in [
+        "npm:solid-js",
+        "npm:@scope/name",
+        "cargo:serde",
+        "pypi:requests",
+    ] {
+        parse(&repo(&format!(
+            "origin = \"{good}\"
+"
+        )))
+        .unwrap();
+    }
+    for bad in [
+        "npm:solid-js@2.0.0",
+        "cargo:serde@1.0.0",
+        "https://github.com/o/a",
+        "gh:o/a",
+        "npm:",
+        "solid-js",
+        "npm:two words",
+        "npm:a:b",
+        "",
+    ] {
+        code_and_span(
+            &repo(&format!(
+                "origin = \"{bad}\"
+"
+            )),
+            "refs::config::bad_origin",
+            &format!("\"{bad}\""),
+        );
+    }
+    // a Repo without one is valid
+    parse(&repo("")).unwrap();
+}
+
+#[test]
 fn start_is_inside_paths_or_a_root_file() {
     let with = |start: &str| {
         repo(&format!(

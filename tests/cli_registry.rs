@@ -97,7 +97,11 @@ fn an_npm_shorthand_writes_the_expanded_url_the_directory_and_the_name() {
     );
     assert!(config.contains("paths = [\"packages/foo\"]"), "{config}");
     assert!(config.contains("packages = [\"@o/foo-js\"]"), "{config}");
-    assert!(!config.contains("npm:"), "{config}");
+    assert!(config.contains("origin = \"npm:@o/foo-js\""), "{config}");
+    assert!(
+        !config.contains("url = \"npm:") && !config.contains("@o/foo-js@"),
+        "{config}"
+    );
 }
 
 #[test]
@@ -121,6 +125,10 @@ fn cargo_and_pypi_shorthands_write_the_url_and_the_name() {
             "{config}"
         );
         assert!(config.contains("packages = [\"foo\"]"), "{config}");
+        assert!(
+            config.contains(&format!("origin = \"{prefix}:foo\"")),
+            "{config}"
+        );
         assert!(!config.contains("paths"), "{config}");
     }
 }
@@ -1175,6 +1183,7 @@ fn a_forge_shorthand_writes_the_full_url_without_the_network() {
         assert_eq!(run.code, 0, "{shorthand}: {}", run.err);
         let config = config_text(dir.path());
         assert!(config.contains(&format!("url = \"{url}\"")), "{config}");
+        assert!(!config.contains("origin"), "{config}");
         assert!(
             !config.contains("gh:") && !config.contains("github:"),
             "{config}"
@@ -1528,4 +1537,37 @@ fn paths_given_by_flag_win_over_the_registrys_directory_and_are_not_asked() {
     assert!(config_text(dir.path()).contains("paths = [\"packages/bar\"]"));
     assert!(yes.offered[0].contains(&"packages/bar/README.md".to_owned()));
     assert!(!yes.offered[0].contains(&"packages/foo/README.md".to_owned()));
+}
+
+#[test]
+fn a_repo_with_an_origin_locks_syncs_and_lists_without_the_registry() {
+    let dir = project();
+    fs::write(
+        dir.path().join("refs.toml"),
+        "[repos.foo]\nurl = \"https://github.com/o/foo\"\norigin = \"npm:foo-js\"\n",
+    )
+    .unwrap();
+    let source = FakeSource::new();
+
+    for command in ["lock", "sync", "list"] {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = run_on(
+            ["refs", command].map(Into::into),
+            dir.path(),
+            |_, _| Ok(Box::new(&source)),
+            &mut out,
+            &mut err,
+            Terminal::default(),
+            Outside {
+                prompter: None,
+                updater: &Unmanaged,
+                registry: &refs_cli::registry::Unavailable,
+            },
+        );
+        let err = String::from_utf8(err).unwrap();
+        assert_eq!(code, 0, "{command}: {err}");
+    }
+
+    let lock = fs::read_to_string(dir.path().join("refs.lock")).unwrap();
+    assert!(lock.contains("foo") && !lock.contains("origin"), "{lock}");
 }

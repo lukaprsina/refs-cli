@@ -100,6 +100,10 @@ pub enum ConfigProblem {
     #[diagnostic(code(refs::config::bad_ref))]
     BadRef,
 
+    #[error("invalid `origin`: {why}")]
+    #[diagnostic(code(refs::config::bad_origin))]
+    BadOrigin { why: &'static str },
+
     #[error("invalid group name")]
     #[diagnostic(
         code(refs::config::bad_group_name),
@@ -130,6 +134,7 @@ impl ConfigProblem {
             ConfigProblem::BadPath { .. } | ConfigProblem::BadSettingsPath { .. } => "not allowed",
             ConfigProblem::BadUrl { .. } => "rejected",
             ConfigProblem::BadRef => "git would read this as an option",
+            ConfigProblem::BadOrigin { .. } => "rejected",
             ConfigProblem::BadGroupName => "rendered as a heading",
             ConfigProblem::UnsafeText => "rejected",
         }

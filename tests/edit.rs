@@ -60,10 +60,15 @@ fn add_writes_every_option_it_is_given() {
         paths: vec!["src".into()],
         packages: vec!["@solidjs/router".into()],
         start: vec!["README.md".into()],
+        origin: Some("npm:@solidjs/router".into()),
     };
     let config = refs_cli::config::parse(&add(CONFIG, &req).unwrap()).unwrap();
     let (id, repo) = config.repos.last().unwrap();
     assert_eq!(id.as_ref(), "router");
+    assert_eq!(
+        repo.origin.as_ref().unwrap().as_ref(),
+        "npm:@solidjs/router"
+    );
     assert_eq!(repo.url.as_ref(), "https://github.com/solidjs/solid-router");
     assert_eq!(repo.group.as_ref().unwrap().as_ref(), "solid");
     assert_eq!(repo.git_ref.as_ref().unwrap().as_ref(), "next");

@@ -5,6 +5,7 @@ use toml::Spanned;
 use miette::NamedSource;
 
 use crate::diagnostic::{ConfigError, ConfigErrors, ConfigProblem};
+use crate::registry::Package;
 use crate::tooling;
 
 pub type Id = Spanned<String>;
@@ -103,6 +104,8 @@ pub struct Repo {
     #[serde(rename = "ref")]
     pub git_ref: Option<Spanned<String>>,
     pub description: Option<Spanned<String>>,
+    /// The Package the Repo was added from (`npm:solid-js`); only `add` writes it.
+    pub origin: Option<Spanned<String>>,
     #[serde(default)]
     pub paths: Vec<Spanned<String>>,
     #[serde(default)]
@@ -230,6 +233,11 @@ impl Validator<'_> {
             && git_ref.get_ref().starts_with('-')
         {
             self.report(git_ref, ConfigProblem::BadRef);
+        }
+        if let Some(origin) = &repo.origin
+            && let Err(why) = Package::from_origin(origin.get_ref())
+        {
+            self.report(origin, ConfigProblem::BadOrigin { why });
         }
         for text in repo
             .description
