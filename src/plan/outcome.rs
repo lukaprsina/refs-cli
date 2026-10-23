@@ -41,4 +41,7 @@ pub enum Hint {
     ConfigUnchanged,
     /// Stage 1 blocked the edit, so `refs.toml` is as it was; `--no-sync` writes it anyway.
     ConfigUnchangedTryNoSync,
+    /// Stage 2 could not be observed (the references directory or an Agent file could not
+    /// be read), so `refs.toml` is as it was; `--no-sync` writes it anyway.
+    ConfigUnchangedUnobserved,
 }

@@ -306,7 +306,7 @@ pub fn edit_only(root: &Path, edit: &Edit) -> Report {
 /// Stage 1 runs against the edited config, and `refs.toml` is written only if it passes
 /// (stage 1 writes the Lock), then stage 2 runs on the Lock stage 1 produced, so each Repo
 /// is verified once. A Repo that cannot be locked blocks the edit: nothing is written and the
-/// error names it. A stage 2 refusal blocks it the same way (`plan_checkouts` is planned on
+/// error names it. A stage 2 refusal blocks it the same way (`plan_stage_two` is planned on
 /// the Lock before anything is written). The one exception is an edit that only shrinks the active set (`remove`,
 /// `disable`) while the Lock covers every remaining Repo: the Lock is pruned, with nothing
 /// resolved or verified, so a Repo the edit did not touch cannot block it. A stage 2 failure
@@ -340,26 +340,9 @@ pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) ->
             }
         },
     };
-    // Stage 2's refusals are predictable, so they are found before anything is written: an
-    // edit that stage 2 would refuse changes nothing, and a retry refuses the same way. What
-    // cannot be observed is treated alike, since then nothing says stage 2 would not refuse.
-    let plan = match plan_stage_two(source, root, config, &active, &lock, flags.force) {
-        Ok(plan) if plan.refusals.is_empty() => plan,
-        Ok(plan) => {
-            let refused = Report {
-                diagnostics: plan.refusals.into_iter().map(miette::Report::new).collect(),
-                ..Report::new(Outcome::Refused)
-            };
-            return refused.with_drift(drift).with_hint(Hint::ConfigUnchanged);
-        }
-        Err(errors) => {
-            let unobserved = Report {
-                diagnostics: errors,
-                ..Report::new(Outcome::Failed)
-            };
-            let hint = Hint::ConfigUnchangedTryNoSync;
-            return unobserved.with_drift(drift).with_hint(hint);
-        }
+    let plan = match stage_two_gate(source, root, config, &active, &lock, flags.force) {
+        Ok(plan) => plan,
+        Err(report) => return report.with_drift(drift),
     };
     let stage_one = match commit(root, old.as_ref(), lock) {
         Ok(stage_one) => stage_one,
@@ -371,6 +354,33 @@ pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) ->
     let stage_two = apply_plan(source, root, config, &active, plan, flags)
         .hint_if_incomplete(Hint::FixOrRemoveThenSync);
     applied.written(finish(stage_one, drift, stage_two))
+}
+
+/// The stage 2 plan an edit may apply. Stage 2's refusals are predictable, so they are found
+/// before anything is written: an edit that stage 2 would refuse changes nothing, and a retry
+/// refuses the same way. What cannot be observed is treated alike, since then nothing says
+/// stage 2 would not refuse.
+fn stage_two_gate<'a>(
+    source: &dyn Source,
+    root: &Path,
+    config: &Config,
+    active: &ActiveSet<'a>,
+    lock: &Lock,
+    force: bool,
+) -> Result<Plan<'a>, Report> {
+    match plan_stage_two(source, root, config, active, lock, force) {
+        Ok(plan) if plan.refusals.is_empty() => Ok(plan),
+        Ok(plan) => Err(Report {
+            diagnostics: plan.refusals.into_iter().map(miette::Report::new).collect(),
+            ..Report::new(Outcome::Refused)
+        }
+        .with_hint(Hint::ConfigUnchanged)),
+        Err(errors) => Err(Report {
+            diagnostics: errors,
+            ..Report::new(Outcome::Failed)
+        }
+        .with_hint(Hint::ConfigUnchangedUnobserved)),
+    }
 }
 
 /// Stage 1 as `lock` and `sync` run it: resolve and verify, then write the Lock.

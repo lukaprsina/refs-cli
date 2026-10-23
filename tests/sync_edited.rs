@@ -332,6 +332,13 @@ fn an_edit_carries_the_hint_for_what_it_left_behind() {
     let edited = add(&dir, &source, "b", &SyncFlags::default());
     assert_eq!(edited.hint, Some(Hint::ConfigUnchangedTryNoSync));
 
+    // Refused by stage 2: nothing was written, and `--force` is in the diagnostic.
+    let (dir, source) = synced_then_a_is_dirty();
+    let edited = run_edit(&dir, &source, &Edit::Remove("a"));
+    assert!(!edited.changes.contains(&Changed::Config));
+    assert_eq!(edited.outcome, Outcome::Refused);
+    assert_eq!(edited.hint, Some(Hint::ConfigUnchanged));
+
     // Rejected as an edit: `--no-sync` would not help.
     let (dir, source) = (project(), FakeSource::new());
     let edited = run_edit(&dir, &source, &Edit::Remove("nope"));
@@ -563,6 +570,74 @@ fn an_edit_whose_stage_two_cannot_be_observed_writes_nothing() {
     let edited = add(&dir, &source, "b", &SyncFlags::default());
 
     assert_eq!(edited.outcome, Outcome::Failed);
-    assert_eq!(edited.hint, Some(Hint::ConfigUnchangedTryNoSync));
+    assert_eq!(edited.hint, Some(Hint::ConfigUnchangedUnobserved));
     assert_eq!(on_disk(&dir), before);
+}
+
+#[test]
+fn an_edit_whose_agent_file_cannot_be_read_writes_nothing() {
+    let dir = project();
+    fs::create_dir(dir.path().join("AGENTS.md")).unwrap();
+    let source = FakeSource::new();
+    let before = on_disk(&dir);
+
+    let edited = add(&dir, &source, "b", &SyncFlags::default());
+
+    assert_eq!(edited.outcome, Outcome::Failed);
+    assert_eq!(edited.hint, Some(Hint::ConfigUnchangedUnobserved));
+    assert_eq!(on_disk(&dir), before);
+    assert_eq!(read(&dir, "refs.lock"), None);
+}
+
+#[test]
+fn add_onto_a_dirty_checkout_of_the_same_id_is_refused_until_forced() {
+    let dir = project();
+    let source = FakeSource::new();
+    assert_eq!(
+        add(&dir, &source, "b", &SyncFlags::default()).outcome,
+        Outcome::InSync
+    );
+    // `b` leaves refs.toml but its Checkout stays, as an edit by hand would leave it; then it
+    // gets other `paths` and a local change.
+    fs::write(dir.path().join("refs.toml"), BEFORE).unwrap();
+    let refs_cli::source::Observed::At { pin, .. } =
+        refs_cli::source::Source::inspect(&source, "b").unwrap()
+    else {
+        panic!("b is checked out");
+    };
+    source.seed(
+        "b",
+        refs_cli::source::Observed::At {
+            pin,
+            paths: vec!["docs".into()],
+            dirty_files: vec!["notes.txt".into()],
+        },
+    );
+    let before = on_disk(&dir);
+
+    let refused = add(&dir, &source, "b", &SyncFlags::default());
+    assert_eq!(refused.outcome, Outcome::Refused);
+    assert_eq!(on_disk(&dir), before);
+
+    let forced = add(&dir, &source, "b", &forced());
+    assert_eq!(forced.outcome, Outcome::InSync);
+    assert_eq!(read(&dir, "refs.toml").unwrap(), AFTER);
+}
+
+#[test]
+fn the_help_of_a_refusal_names_no_command() {
+    use miette::Diagnostic;
+    use refs_cli::diagnostic::Refusal;
+    let dirty = Refusal::DirtyCheckout {
+        id: "a".into(),
+        files: vec!["x".into()],
+    };
+    let foreign = Refusal::ForeignDir { id: "a".into() };
+    for refusal in [dirty, foreign] {
+        let help = refusal.help().unwrap().to_string();
+        assert!(
+            !help.contains("refs sync") && !help.contains("sync again"),
+            "{help}"
+        );
+    }
 }
