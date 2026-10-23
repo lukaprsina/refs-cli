@@ -686,11 +686,9 @@ fn run_update(
 ) -> u8 {
     match update::run(source, root, config, request, prompter, console) {
         Ok(done) => {
-            // The summary below is what ends a run that skipped Repos, not the hint to fix one.
-            let code = done.report.map_or(0, |report| {
-                let hint = report.hint.filter(|_| done.skipped == 0);
-                print_report(&Report { hint, ..report }, false, console)
-            });
+            let code = done
+                .report
+                .map_or(0, |report| print_report(&report, false, console));
             match done.skipped {
                 0 => code,
                 skipped => {

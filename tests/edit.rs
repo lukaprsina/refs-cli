@@ -423,7 +423,19 @@ url = "https://github.com/solidjs/solid-router"
 #[test]
 fn change_adds_a_ref_after_the_last_key_of_a_repo_without_one() {
     let changed = change(PINNED, &[("router", "v1.2.3")]).unwrap();
-    assert_eq!(changed, format!("{PINNED}ref = \"v1.2.3\"\n"));
+    assert_eq!(
+        changed,
+        r#"[repos.solid]
+url = "https://github.com/solidjs/solid"
+ref = "solid-js@1.0.0" # what the lockfile said
+description = "kept"
+
+# The router.
+[repos.router]
+url = "https://github.com/solidjs/solid-router"
+ref = "v1.2.3"
+"#
+    );
 }
 
 #[test]

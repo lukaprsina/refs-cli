@@ -424,6 +424,68 @@ fn a_dirty_repo_that_would_not_move_is_not_a_skip() {
     assert!(run.err.contains("`foo` is up to date"), "{}", run.err);
 }
 
+#[test]
+fn a_checkout_that_is_not_there_yet_does_not_hold_a_mover_back() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.source.seed("foo", Observed::Absent);
+
+    let run = p.update(&["foo", "--ref", "foo-js-2.0.0"]);
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(p.read("refs.toml").contains("foo-js-2.0.0"));
+}
+
+#[test]
+fn a_checkout_that_cannot_be_inspected_holds_a_mover_but_not_a_stayer() {
+    let p = Project::new(&foo_at("foo-js-1.2.3"));
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(&p, &["foo-js-1.2.3"]);
+    p.source.fail("foo", Method::Inspect, "unreadable");
+
+    let stays = p.update(&["foo"]);
+    assert_eq!(stays.code, 0, "{}", stays.err);
+    assert!(stays.err.contains("`foo` is up to date"), "{}", stays.err);
+
+    let moves = p.update(&["foo", "--ref", "foo-js-2.0.0"]);
+    assert_eq!(moves.code, 1, "{}", moves.err);
+    assert!(moves.err.contains("unreadable"), "{}", moves.err);
+}
+
+#[test]
+fn a_ref_the_remote_no_longer_has_is_skipped() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.source.set_tags(FOO, ["foo-js-2.0.0"]);
+    p.source.fail("foo", Method::Resolve, "no such ref");
+    let before = (p.read("refs.toml"), p.read("refs.lock"));
+
+    let run = p.update(&["foo"]);
+
+    assert_eq!(run.code, 1, "{}", run.err);
+    assert!(run.err.contains("no such ref"), "{}", run.err);
+    assert_eq!((p.read("refs.toml"), p.read("refs.lock")), before);
+}
+
+#[test]
+fn a_lock_only_move_that_stage_two_refuses_writes_nothing_and_says_to_sync_once_fixed() {
+    let p = Project::new(THREE);
+    p.source.set_commit("bar", SHA_1);
+    assert_eq!(p.run(&["lock", "--upgrade"], None).code, 0);
+    p.source.set_commit("bar", SHA_2);
+    p.source.seed("foo", Observed::Foreign);
+    let before = p.read("refs.lock");
+
+    let run = p.update(&["bar"]);
+
+    assert_eq!(run.code, 1, "{}", run.err);
+    assert!(
+        run.err
+            .contains("run `refs sync` once the problem is fixed"),
+        "{}",
+        run.err
+    );
+    assert_eq!(p.read("refs.lock"), before);
+}
+
 // ---- several Repos ----
 
 const BAZ: &str = "https://github.com/o/baz";

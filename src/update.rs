@@ -93,7 +93,7 @@ pub fn run(
         root,
         lock,
         prompter,
-        dirt: None,
+        held: None,
     };
     let (mut moves, mut skipped) = (Vec::<Move>::new(), 0);
     let mut seen = Vec::<&str>::new();
@@ -147,7 +147,11 @@ pub fn run(
         },
         ..SyncFlags::default()
     };
-    let report = sync::edit(source, root, &Edit::Change(&changes), &flags);
+    let mut report = sync::edit(source, root, &Edit::Change(&changes), &flags);
+    if skipped > 0 {
+        // The run ends with the count of skipped Repos, not the hint to fix a broken one.
+        report.hint = None;
+    }
     if !report.changes.is_empty() {
         for found in moves {
             say.status(found.line);
@@ -190,15 +194,16 @@ struct Assessing<'a, 'p> {
     root: &'a Path,
     lock: Option<Lock>,
     prompter: Option<&'a mut (dyn Prompter + 'p)>,
-    /// Why the Repo being assessed may not be moved: its Checkout has uncommitted changes.
-    dirt: Option<String>,
+    /// Why the Repo being assessed may not be moved: its Checkout has uncommitted changes, or
+    /// cannot be inspected. A Repo that stays is not held by it.
+    held: Option<String>,
 }
 
 impl Assessing<'_, '_> {
     fn assess(&mut self, repo: RepoRef, request: &Request) -> Result<Assessed, Stop> {
-        self.dirt = match request.force {
+        self.held = match request.force {
             true => None,
-            false => self.dirt_of(repo.id)?,
+            false => self.hold_of(repo.id),
         };
         let found = match request.git_ref {
             Some(git_ref) => self.set(repo, git_ref)?,
@@ -321,20 +326,21 @@ impl Assessing<'_, '_> {
         }))
     }
 
-    /// The uncommitted changes in the Checkout of `id`, said as a reason not to move it.
-    fn dirt_of(&self, id: &str) -> Result<Option<String>, Stop> {
-        Ok(match self.source.inspect(id).map_err(skip)? {
-            Observed::At { dirty_files, .. } if !dirty_files.is_empty() => Some(format!(
+    /// The reason not to move the Checkout of `id`, if there is one.
+    fn hold_of(&self, id: &str) -> Option<String> {
+        match self.source.inspect(id) {
+            Ok(Observed::At { dirty_files, .. }) if !dirty_files.is_empty() => Some(format!(
                 "its checkout has uncommitted changes ({}); `--force` discards them",
                 dirty_files.join(", ")
             )),
+            Err(e) => Some(format!("its checkout cannot be inspected: {e}")),
             _ => None,
-        })
+        }
     }
 
     /// A Repo that moves is left alone if its Checkout has changes `--force` was not given for.
     fn must_be_clean(&self) -> Result<(), Stop> {
-        self.dirt.as_ref().map_or(Ok(()), |why| Err(skip(why)))
+        self.held.as_ref().map_or(Ok(()), |why| Err(skip(why)))
     }
 }
 
