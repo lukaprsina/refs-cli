@@ -12,6 +12,11 @@ fn within(path: &str, dir: &str) -> bool {
     path == dir || path.strip_prefix(dir).is_some_and(|r| r.starts_with('/'))
 }
 
+/// Whether `dir` is a dot directory (`.github`): tooling, not what the Repo documents.
+fn dotted(dir: &str) -> bool {
+    dir.starts_with('.')
+}
+
 /// Directories that hold dependencies, build output, examples or test fixtures, and dot
 /// directories: what is in them is not what the Repo documents.
 fn skipped(dir: &str) -> bool {
@@ -25,7 +30,7 @@ fn skipped(dir: &str) -> bool {
         "test",
         "tests",
     ];
-    dir.starts_with('.') || SKIPPED.contains(&dir)
+    dotted(dir) || SKIPPED.contains(&dir)
 }
 
 /// Whether the file at `path` is one a Checkout of `chosen` (the Repo's `paths`; empty is the
@@ -53,11 +58,13 @@ pub fn shallowest(mut found: Vec<String>, cap: usize) -> (Vec<String>, usize) {
     (found, left)
 }
 
-/// The directories of the repo, in path order, and how many were left out past the cap.
+/// The directories of the repo, in path order, and how many were left out past the cap. Dot
+/// directories and what is below them are not offered; `--paths` can still name one.
 pub fn directories(paths: &[String]) -> (Vec<String>, usize) {
     let all: BTreeSet<String> = paths
         .iter()
         .flat_map(|path| path.match_indices('/').map(|(i, _)| path[..i].to_owned()))
+        .filter(|dir| !dir.split('/').any(dotted))
         .collect();
     let (mut dirs, left) = shallowest(all.into_iter().collect(), MAX_LISTED);
     dirs.sort();

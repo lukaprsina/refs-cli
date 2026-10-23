@@ -74,6 +74,20 @@ fn directories_come_from_every_level_in_path_order() {
 }
 
 #[test]
+fn dot_directories_and_what_is_below_them_are_not_offered() {
+    let paths = strings(&[
+        ".github/workflows/ci.yml",
+        ".changeset/x.md",
+        "packages/a/x.rs",
+        "packages/.cache/y",
+    ]);
+    assert_eq!(
+        directories(&paths),
+        (strings(&["packages", "packages/a"]), 0)
+    );
+}
+
+#[test]
 fn past_the_cap_the_shallowest_stay_and_the_rest_are_counted() {
     let mut paths: Vec<String> = (0..5000).map(|i| format!("d{i:04}/f.rs")).collect();
     paths.push("a/b/c/f.rs".into());

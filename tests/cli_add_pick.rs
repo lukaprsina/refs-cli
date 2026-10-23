@@ -97,6 +97,29 @@ fn the_directories_of_the_repo_are_offered_and_the_picked_ones_written() {
 }
 
 #[test]
+fn dot_directories_are_not_offered_but_paths_can_still_name_one() {
+    let dir = project();
+    let files = ["packages/a/x.rs", ".github/workflows/ci.yml"];
+    let source = serving(&files);
+    let mut script = customizing([Answer::Pick(&["packages"]), Answer::Pick(&[])]);
+
+    let run = add_foo(dir.path(), &source, &[], Some(&mut script));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(script.offered[0], ["packages", "packages/a"]);
+
+    let dir = project();
+    let run = add_foo(dir.path(), &source, &["--paths", ".github"], None);
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        config_text(dir.path()).contains(r#"paths = [".github"]"#),
+        "{}",
+        config_text(dir.path())
+    );
+}
+
+#[test]
 fn selecting_nothing_writes_neither_paths_nor_start() {
     let dir = project();
     let source = serving(&["README.md", "docs/a.md"]);
