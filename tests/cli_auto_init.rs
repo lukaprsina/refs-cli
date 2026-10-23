@@ -7,8 +7,8 @@ use std::process::Command;
 
 use refs_cli::cli::{Outside, Terminal, run_on};
 use refs_cli::prompt::Prompter;
+use refs_cli::self_update::Unmanaged;
 use refs_cli::source::fake::FakeSource;
-use refs_cli::update::Unmanaged;
 use tempfile::TempDir;
 
 mod common;

@@ -1,13 +1,13 @@
-//! `refs update` through `cli::run_on`, with the updater scripted: nothing here touches the
-//! network or the installed binary. The `Source` factory panics, as `update` needs no project
+//! `refs self update` through `cli::run_on`, with the updater scripted: nothing here touches the
+//! network or the installed binary. The `Source` factory panics, as `self update` needs no project
 //! and no checkouts.
 
 use std::path::Path;
 
 use refs_cli::cli::{Outside, Terminal, run_on};
 use refs_cli::diagnostic::SourceError;
+use refs_cli::self_update::fake::{Call, FakeUpdater};
 use refs_cli::source::Source;
-use refs_cli::update::fake::{Call, FakeUpdater};
 use tempfile::TempDir;
 
 struct Run {
@@ -22,7 +22,9 @@ fn refs(dir: &Path, args: &[&str], updater: &FakeUpdater) -> Run {
     let code = run_on(
         args.map(Into::into),
         dir,
-        |_, _| -> Result<Box<dyn Source>, SourceError> { panic!("`update` asked for a Source") },
+        |_, _| -> Result<Box<dyn Source>, SourceError> {
+            panic!("`self update` asked for a Source")
+        },
         &mut out,
         &mut err,
         Terminal::default(),
@@ -40,11 +42,11 @@ fn refs(dir: &Path, args: &[&str], updater: &FakeUpdater) -> Run {
 }
 
 #[test]
-fn update_installs_the_newer_release_and_says_which() {
+fn self_update_installs_the_newer_release_and_says_which() {
     let dir = TempDir::new().unwrap();
     let updater = FakeUpdater::release("0.1.0", "0.2.0");
 
-    let run = refs(dir.path(), &["update"], &updater);
+    let run = refs(dir.path(), &["self", "update"], &updater);
 
     assert_eq!(run.code, 0, "{}", run.err);
     assert_eq!(run.err, "updated refs from 0.1.0 to 0.2.0\n");
@@ -53,11 +55,11 @@ fn update_installs_the_newer_release_and_says_which() {
 }
 
 #[test]
-fn update_when_already_current_says_so() {
+fn self_update_when_already_current_says_so() {
     let dir = TempDir::new().unwrap();
     let updater = FakeUpdater::current();
 
-    let run = refs(dir.path(), &["update"], &updater);
+    let run = refs(dir.path(), &["self", "update"], &updater);
 
     assert_eq!(run.code, 0, "{}", run.err);
     assert_eq!(run.err, "up to date\n");
@@ -70,7 +72,7 @@ fn quiet_silences_the_status_line() {
 
     let run = refs(
         dir.path(),
-        &["-q", "update"],
+        &["-q", "self", "update"],
         &FakeUpdater::release("0.1.0", "0.2.0"),
     );
 
@@ -83,12 +85,12 @@ fn check_exits_3_when_a_newer_release_exists_and_installs_nothing() {
     let dir = TempDir::new().unwrap();
     let updater = FakeUpdater::release("0.1.0", "0.2.0");
 
-    let run = refs(dir.path(), &["update", "--check"], &updater);
+    let run = refs(dir.path(), &["self", "update", "--check"], &updater);
 
     assert_eq!(run.code, 3, "{}", run.err);
     assert_eq!(
         run.err,
-        "out of date: a newer release is available; run `refs update`\n"
+        "out of date: a newer release is available; run `refs self update`\n"
     );
     assert_eq!(run.out, "");
     assert_eq!(updater.calls(), [Call::Check]);
@@ -99,7 +101,7 @@ fn check_on_the_latest_release_is_up_to_date() {
     let dir = TempDir::new().unwrap();
     let updater = FakeUpdater::current();
 
-    let run = refs(dir.path(), &["update", "--check"], &updater);
+    let run = refs(dir.path(), &["self", "update", "--check"], &updater);
 
     assert_eq!(run.code, 0, "{}", run.err);
     assert_eq!(run.err, "up to date\n");
@@ -110,7 +112,7 @@ fn check_on_the_latest_release_is_up_to_date() {
 fn a_binary_the_installer_did_not_put_there_is_told_how_to_update() {
     let dir = TempDir::new().unwrap();
 
-    for args in [&["update"][..], &["update", "--check"]] {
+    for args in [&["self", "update"][..], &["self", "update", "--check"]] {
         let run = refs(dir.path(), args, &FakeUpdater::unmanaged());
 
         assert_eq!(run.code, 1, "{args:?}");
@@ -130,12 +132,12 @@ fn a_binary_the_installer_did_not_put_there_is_told_how_to_update() {
 }
 
 #[test]
-fn a_failed_update_is_an_error_even_with_quiet() {
+fn a_failed_self_update_is_an_error_even_with_quiet() {
     let dir = TempDir::new().unwrap();
 
     let run = refs(
         dir.path(),
-        &["-q", "update"],
+        &["-q", "self", "update"],
         &FakeUpdater::failing("connection refused"),
     );
 
@@ -145,4 +147,16 @@ fn a_failed_update_is_an_error_even_with_quiet() {
         "{}",
         run.err
     );
+}
+
+#[test]
+fn the_old_top_level_update_is_not_a_command() {
+    let dir = TempDir::new().unwrap();
+    let updater = FakeUpdater::release("0.1.0", "0.2.0");
+
+    let run = refs(dir.path(), &["update"], &updater);
+
+    assert_eq!(run.code, 2, "{}", run.err);
+    assert!(run.err.contains("unrecognized subcommand"), "{}", run.err);
+    assert_eq!(updater.calls(), []);
 }

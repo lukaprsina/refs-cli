@@ -2,7 +2,7 @@
 
 use std::cell::RefCell;
 
-use super::{Installed, UpdateError, Updater};
+use super::{Installed, SelfUpdateError, Updater};
 
 /// One call the fake received, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,12 +12,12 @@ pub enum Call {
 }
 
 pub struct FakeUpdater {
-    outcome: Result<Option<Installed>, UpdateError>,
+    outcome: Result<Option<Installed>, SelfUpdateError>,
     calls: RefCell<Vec<Call>>,
 }
 
 impl FakeUpdater {
-    fn with(outcome: Result<Option<Installed>, UpdateError>) -> Self {
+    fn with(outcome: Result<Option<Installed>, SelfUpdateError>) -> Self {
         Self {
             outcome,
             calls: RefCell::default(),
@@ -39,12 +39,12 @@ impl FakeUpdater {
 
     /// No install receipt for this binary.
     pub fn unmanaged() -> Self {
-        Self::with(Err(UpdateError::NotInstalledByInstaller))
+        Self::with(Err(SelfUpdateError::NotInstalledByInstaller))
     }
 
     /// The lookup or the install failed with `why`.
     pub fn failing(why: &str) -> Self {
-        Self::with(Err(UpdateError::Failed(why.into())))
+        Self::with(Err(SelfUpdateError::Failed(why.into())))
     }
 
     pub fn calls(&self) -> Vec<Call> {
@@ -53,12 +53,12 @@ impl FakeUpdater {
 }
 
 impl Updater for FakeUpdater {
-    fn is_update_available(&self) -> Result<bool, UpdateError> {
+    fn is_update_available(&self) -> Result<bool, SelfUpdateError> {
         self.calls.borrow_mut().push(Call::Check);
         self.outcome.clone().map(|installed| installed.is_some())
     }
 
-    fn install(&self) -> Result<Option<Installed>, UpdateError> {
+    fn install(&self) -> Result<Option<Installed>, SelfUpdateError> {
         self.calls.borrow_mut().push(Call::Install);
         self.outcome.clone()
     }

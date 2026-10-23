@@ -9,8 +9,8 @@ use refs_cli::cli::{Outside, Terminal, run_on};
 use refs_cli::prompt::Prompter;
 use refs_cli::registry::fake::FakeRegistry;
 use refs_cli::registry::{Ecosystem, Found};
+use refs_cli::self_update::Unmanaged;
 use refs_cli::source::fake::{Call, FakeSource, Method};
-use refs_cli::update::Unmanaged;
 use tempfile::TempDir;
 
 mod common;

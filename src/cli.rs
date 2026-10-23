@@ -23,9 +23,9 @@ use crate::project;
 use crate::prompt::{self, Prompter};
 use crate::registry::pin::Say;
 use crate::registry::{self, Registry};
+use crate::self_update::{self, Updater};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
-use crate::update::{self, Updater};
 
 const EXIT_ERROR: u8 = 1;
 const EXIT_USAGE: u8 = 2;
@@ -53,16 +53,17 @@ pub struct Cli {
     command: Command,
 }
 
-/// The commands, by what they need: `init` and `update` run where there may be no project
-/// (`update` is about the program, not a project), the config commands read and edit
+/// The commands, by what they need: `init` and `self` run where there may be no project
+/// (`self` is about the program, not a project), the config commands read and edit
 /// `refs.toml` and ask for a `Source` only to sync after an edit (unless `--no-sync`) or to
 /// show `list --status`, and the rest act on the project through one.
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Set up a project: refs.toml, the managed block and the git exclude rule
     Init(InitArgs),
-    /// Replace this program with the latest release
-    Update(UpdateArgs),
+    /// Manage this program
+    #[command(subcommand, name = "self")]
+    SelfCommand(SelfCommand),
     #[command(flatten)]
     Config(ConfigCommand),
     #[command(flatten)]
@@ -153,8 +154,14 @@ struct InitArgs {
     here: bool,
 }
 
+#[derive(Debug, Subcommand)]
+enum SelfCommand {
+    /// Replace this program with the latest release
+    Update(SelfUpdateArgs),
+}
+
 #[derive(Debug, Args)]
-struct UpdateArgs {
+struct SelfUpdateArgs {
     /// Install nothing; exit 3 if a newer release exists
     #[arg(long)]
     check: bool,
@@ -253,7 +260,7 @@ pub fn run<'a>(
         terminal,
         Outside {
             prompter: interactive.then_some(&mut prompter as &mut dyn Prompter),
-            updater: &update::Axo,
+            updater: &self_update::Axo,
             registry: &registry::Http,
         },
     )
@@ -286,7 +293,7 @@ pub fn run_with<'a>(
         Terminal::default(),
         Outside {
             prompter: None,
-            updater: &update::Unmanaged,
+            updater: &self_update::Unmanaged,
             registry: &registry::Unavailable,
         },
     )
@@ -296,7 +303,7 @@ pub fn run_with<'a>(
 pub struct Outside<'a> {
     /// Who to ask. `None` means there is nobody; `--no-input` ignores a given prompter.
     pub prompter: Option<&'a mut dyn Prompter>,
-    /// What `update` installs through.
+    /// What `self update` installs through.
     pub updater: &'a dyn Updater,
     /// Where `add npm:...` looks packages up.
     pub registry: &'a dyn Registry,
@@ -344,7 +351,9 @@ pub fn run_on<'a>(
     };
     match cli.command {
         Command::Init(args) => init(start, args.here, &mut console),
-        Command::Update(args) => update(outside.updater, args.check, &mut console),
+        Command::SelfCommand(SelfCommand::Update(args)) => {
+            self_update(outside.updater, args.check, &mut console)
+        }
         Command::Config(command) => match load_for(&command, start, &mut console) {
             Ok((root, config)) => {
                 let prompter = outside.prompter.filter(|_| !cli.no_input);
@@ -624,13 +633,14 @@ fn init(start: &Path, here: bool, console: &mut Console) -> u8 {
     }
 }
 
-/// `refs update`: install the latest release over this one, or with `--check` only say
+/// `refs self update`: install the latest release over this one, or with `--check` only say
 /// whether there is one (exit 3, as `sync --check` does for a project that is out of date).
-fn update(updater: &dyn Updater, check: bool, console: &mut Console) -> u8 {
+fn self_update(updater: &dyn Updater, check: bool, console: &mut Console) -> u8 {
     if check {
         return match updater.is_update_available() {
             Ok(true) => {
-                console.problem("out of date: a newer release is available; run `refs update`");
+                console
+                    .problem("out of date: a newer release is available; run `refs self update`");
                 EXIT_OUT_OF_DATE
             }
             Ok(false) => {

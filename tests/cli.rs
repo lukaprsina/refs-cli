@@ -146,8 +146,8 @@ fn a_bare_upgrade_reaches_the_plan_as_all_and_ids_as_ids() {
 #[test]
 fn a_usage_error_is_styled_only_for_a_terminal() {
     use refs_cli::cli::{Outside, Terminal, run_on, run_with};
+    use refs_cli::self_update::Unmanaged;
     use refs_cli::source::Source;
-    use refs_cli::update::Unmanaged;
     let p = Project::new(AB);
     let args = || ["refs", "sync", "--frobnicate"].map(std::ffi::OsString::from);
     let source = |_: &_, _: &_| Ok(Box::new(&p.source) as Box<dyn Source>);
@@ -191,8 +191,8 @@ fn a_usage_error_is_styled_only_for_a_terminal() {
 /// `refs list` on a project with one disabled repo, with the streams styled as given.
 fn list_output(args: &[&str], terminal: refs_cli::cli::Terminal) -> String {
     use refs_cli::cli::{Outside, run_on};
+    use refs_cli::self_update::Unmanaged;
     use refs_cli::source::Source;
-    use refs_cli::update::Unmanaged;
     let p = Project::new(
         "[repos.a]
 url = \"https://github.com/o/a\"

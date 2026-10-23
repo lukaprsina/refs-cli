@@ -1,4 +1,4 @@
-//! `refs update`: replace the running binary with the latest release. The release lookup and
+//! `refs self update`: replace the running binary with the latest release. The release lookup and
 //! the install go through the `Updater` seam, so tests script the outcomes and only
 //! `cli::run` puts the network behind it (`Axo`, axoupdater from cargo-dist). Nothing here
 //! decides anything: it reports what the installer did.
@@ -23,27 +23,27 @@ pub struct Installed {
 
 /// Why an update could not be checked or installed.
 #[derive(Debug, Clone, PartialEq, Eq, Error, Diagnostic)]
-pub enum UpdateError {
+pub enum SelfUpdateError {
     /// No install receipt for this binary: it was not put here by the cargo-dist installer.
     #[error("this `refs` was not installed with the cargo-dist installer")]
     #[diagnostic(
-        code(refs::update::not_installed_by_installer),
+        code(refs::self_update::not_installed_by_installer),
         help("update it the way you installed it")
     )]
     NotInstalledByInstaller,
 
     #[error("could not update: {0}")]
-    #[diagnostic(code(refs::update::failed))]
+    #[diagnostic(code(refs::self_update::failed))]
     Failed(String),
 }
 
 /// Finds and installs releases of `refs`.
 pub trait Updater {
     /// Whether a release newer than the running one exists. Installs nothing.
-    fn is_update_available(&self) -> Result<bool, UpdateError>;
+    fn is_update_available(&self) -> Result<bool, SelfUpdateError>;
 
     /// Install the latest release over the running binary: `None` when it already is.
-    fn install(&self) -> Result<Option<Installed>, UpdateError>;
+    fn install(&self) -> Result<Option<Installed>, SelfUpdateError>;
 }
 
 /// The updater for a run with no installer behind it, such as `cli::run_with`: it never
@@ -51,12 +51,12 @@ pub trait Updater {
 pub struct Unmanaged;
 
 impl Updater for Unmanaged {
-    fn is_update_available(&self) -> Result<bool, UpdateError> {
-        Err(UpdateError::NotInstalledByInstaller)
+    fn is_update_available(&self) -> Result<bool, SelfUpdateError> {
+        Err(SelfUpdateError::NotInstalledByInstaller)
     }
 
-    fn install(&self) -> Result<Option<Installed>, UpdateError> {
-        Err(UpdateError::NotInstalledByInstaller)
+    fn install(&self) -> Result<Option<Installed>, SelfUpdateError> {
+        Err(SelfUpdateError::NotInstalledByInstaller)
     }
 }
 
@@ -68,7 +68,7 @@ impl Axo {
     /// An updater loaded from this binary's receipt. A receipt for a binary in another
     /// directory counts as none. axoupdater compares only directories, so a `cargo install`
     /// into the installer's own directory (`CARGO_HOME/bin`) still passes.
-    fn load() -> Result<AxoUpdater, UpdateError> {
+    fn load() -> Result<AxoUpdater, SelfUpdateError> {
         let mut updater = AxoUpdater::new_for(APP);
         // The installer would write to our stdout and stderr, past `-q`; a failed install
         // carries its captured output in the error instead.
@@ -84,18 +84,18 @@ impl Axo {
         updater.load_receipt().map_err(from_axo)?;
         match updater.check_receipt_is_for_this_executable() {
             Ok(true) => Ok(updater),
-            Ok(false) => Err(UpdateError::NotInstalledByInstaller),
+            Ok(false) => Err(SelfUpdateError::NotInstalledByInstaller),
             Err(e) => Err(from_axo(e)),
         }
     }
 }
 
 impl Updater for Axo {
-    fn is_update_available(&self) -> Result<bool, UpdateError> {
+    fn is_update_available(&self) -> Result<bool, SelfUpdateError> {
         Self::load()?.is_update_needed_sync().map_err(from_axo)
     }
 
-    fn install(&self) -> Result<Option<Installed>, UpdateError> {
+    fn install(&self) -> Result<Option<Installed>, SelfUpdateError> {
         let installed = Self::load()?.run_sync().map_err(from_axo)?;
         Ok(installed.map(|done| Installed {
             from: done.old_version.map(|v| v.to_string()),
@@ -104,11 +104,11 @@ impl Updater for Axo {
     }
 }
 
-fn from_axo(error: AxoupdateError) -> UpdateError {
+fn from_axo(error: AxoupdateError) -> SelfUpdateError {
     match error {
         AxoupdateError::NoReceipt { .. } | AxoupdateError::ReceiptLoadFailed { .. } => {
-            UpdateError::NotInstalledByInstaller
+            SelfUpdateError::NotInstalledByInstaller
         }
-        other => UpdateError::Failed(other.to_string()),
+        other => SelfUpdateError::Failed(other.to_string()),
     }
 }

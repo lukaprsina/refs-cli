@@ -22,7 +22,7 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/lukaprsina/refs-cl
 
 With a Rust toolchain: `cargo binstall refs-cli` (prebuilt binary) or `cargo install refs-cli` (builds from source).
 
-Update with `refs update`; it works for installs made by the installers above, not by cargo. If GitHub rate-limits the lookup, set `AXOUPDATER_GITHUB_TOKEN`, e.g. `AXOUPDATER_GITHUB_TOKEN=$(gh auth token) refs update`.
+Update with `refs self update`; it works for installs made by the installers above, not by cargo. If GitHub rate-limits the lookup, set `AXOUPDATER_GITHUB_TOKEN`, e.g. `AXOUPDATER_GITHUB_TOKEN=$(gh auth token) refs self update`.
 
 Release artifacts carry GitHub artifact attestations:
 
@@ -114,7 +114,7 @@ Commit `refs.toml`, `refs.lock` and `AGENTS.md`. `.references/` is excluded thro
 | `refs list` | Show the repos; `--status` adds the lock and checkout state |
 | `refs lock` | Resolve refs to commits in `refs.lock`; `--upgrade` moves floating refs |
 | `refs sync` | Make checkouts and the block match `refs.lock`; `--check` exits 3 when out of date, for CI |
-| `refs update` | Replace this program with the latest release |
+| `refs self update` | Replace this program with the latest release |
 
 Flags: `refs <command> --help`. `--offline` (any command) never contacts the network. Exit codes: 0 ok, 1 error, 2 usage, 3 out of date (`--check`).
 

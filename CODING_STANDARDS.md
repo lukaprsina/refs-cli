@@ -22,7 +22,7 @@ Assert what the user sees: stdout, stderr, exit code, files on disk, the Plan as
 
 Scripted stand-ins, each given to `cli::run_on`:
 
-- `refs update`: `update::fake::FakeUpdater` (`tests/cli_update.rs`). `cli::run_with` gets `update::Unmanaged`, so only `cli::run` reaches axoupdater.
+- `refs self update`: `self_update::fake::FakeUpdater` (`tests/cli_self_update.rs`). `cli::run_with` gets `self_update::Unmanaged`, so only `cli::run` reaches axoupdater.
 - Registry lookups: `registry::fake::FakeRegistry` (`tests/cli_registry.rs`). The adapters are tested through their pure `found(body)` functions against recorded response bodies (`tests/registry.rs`); `registry::Http` through its pure `request_url` and `interpret` (`tests/registry_http.rs`).
 - Prompts: the scripted `Prompter` shared by the tests (`tests/common/script.rs`, used by `tests/cli_prompt.rs`).
 - Packages inferred on `add`: `packages::manifest_paths` and `packages::infer` as data over paths and text (`tests/packages.rs`); the add pipeline through `cli::run_on` with a scripted `Prompter` and a `FakeSource` that serves the Manifests (`tests/cli_add_packages.rs`).
@@ -35,6 +35,6 @@ Scripted stand-ins, each given to `cli::run_on`:
 
 Three adapters have no test. After changing one, check it by hand:
 
-- `update::Axo`: `refs update` against a real installer install.
+- `self_update::Axo`: `refs self update` against a real installer install.
 - `registry::Http`: `refs add --no-sync` with `npm:`, `cargo:` and `pypi:` names against the real registries.
 - `prompt::Terminal` (`inquire`): `refs add` in a real terminal; check Enter, Tab and Esc (Esc cancels: checked), and the `pick` multi-select (type to filter, Space to select).
