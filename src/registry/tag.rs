@@ -30,11 +30,10 @@ pub fn split(tag: &str) -> Option<(&str, semver::Version)> {
         .find_map(|(at, _)| Some((&tag[..at], semver::Version::parse(&tag[at..]).ok()?)))
 }
 
-/// The tag in `tags` with the highest version among those with the same prefix as `current`
-/// (equal, not "starts with": `react-` is not `react-dom-`), so a sibling Package of a monorepo
-/// is never chosen. A stable `current` ignores prereleases, and build metadata does not make a
-/// version newer: `current` itself is the answer when nothing is. None when `current` has no
-/// version.
+/// The tag in `tags` with the highest version, if it is newer than `current`, among those with
+/// the same prefix (equal, not "starts with": `react-` is not `react-dom-`), so a sibling Package
+/// of a monorepo is never chosen. A stable `current` ignores prereleases, and build metadata does
+/// not make a version newer. None when nothing is newer, or when `current` has no version.
 pub fn newest<'t>(current: &str, tags: &'t [String]) -> Option<&'t str> {
     let (prefix, version) = split(current)?;
     let stable = version.pre.is_empty();
@@ -45,5 +44,4 @@ pub fn newest<'t>(current: &str, tags: &'t [String]) -> Option<&'t str> {
         })
         .max_by(|(_, (_, a)), (_, (_, b))| a.cmp_precedence(b))
         .map(|(tag, _)| tag)
-        .or_else(|| tags.iter().map(String::as_str).find(|tag| *tag == current))
 }

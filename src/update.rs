@@ -26,7 +26,7 @@ use crate::plan::Upgrade;
 use crate::prompt::{Abort, Broken, Prompter, fill_update};
 use crate::registry::Package;
 use crate::registry::pin::{Say, Stop, choose_version};
-use crate::registry::tag::{newest, tag_for};
+use crate::registry::tag::{newest, split, tag_for};
 use crate::registry::used::{self, Lookup, Pick};
 use crate::source::{Observed, Outline, Source};
 use crate::sync::{self, Report, SyncFlags};
@@ -627,12 +627,14 @@ fn moves(found: &Result<Assessed, String>) -> bool {
 /// Where `repo` moves from the tag `current` when no Package lockfile answers: the newest tag of
 /// its own kind (`tag::newest`). A tag with no version stays, with a note pointing at `--ref`.
 fn by_kind(repo: RepoRef, current: &str, tags: &[String]) -> Assessed {
-    match newest(current, tags) {
-        None => Assessed::Stay(format!(
+    if split(current).is_none() {
+        return Assessed::Stay(format!(
             "not moved: `{current}` has no version to compare; use `--ref` to move it"
-        )),
-        Some(tag) if tag == current => Assessed::Stay("up to date".into()),
+        ));
+    }
+    match newest(current, tags) {
         Some(tag) => moved_to(repo.id, current, tag),
+        None => Assessed::Stay("up to date".into()),
     }
 }
 

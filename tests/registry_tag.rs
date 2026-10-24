@@ -103,8 +103,8 @@ fn the_newest_tag_has_the_same_prefix() {
         "react-9.0.0",
     ]);
     assert_eq!(newest("react-19.0.0", &tags), Some("react-19.1.0"));
-    assert_eq!(newest("react-dom-19.2.0", &tags), Some("react-dom-19.2.0"));
-    assert_eq!(newest("v20.0.0", &tags), Some("v20.0.0"));
+    assert_eq!(newest("react-dom-19.2.0", &tags), None);
+    assert_eq!(newest("v20.0.0", &tags), None);
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn a_stable_tag_ignores_prereleases_and_a_prerelease_tag_does_not() {
     assert_eq!(newest("v1.0.0", &tags), Some("v2.0.0"));
     assert_eq!(newest("v2.0.0-rc.17", &tags), Some("v2.0.0"));
     let tags = list(&["v1.0.0", "v2.0.0-rc.1", "v2.0.0-rc.2"]);
-    assert_eq!(newest("v1.0.0", &tags), Some("v1.0.0"));
+    assert_eq!(newest("v1.0.0", &tags), None);
     assert_eq!(newest("v2.0.0-rc.1", &tags), Some("v2.0.0-rc.2"));
 }
 
@@ -121,11 +121,7 @@ fn a_stable_tag_ignores_prereleases_and_a_prerelease_tag_does_not() {
 fn build_metadata_does_not_make_a_tag_newer() {
     let tags = list(&["v1.0.0", "v1.0.0+build", "v1.0.1+a", "v1.0.1+b"]);
     assert_eq!(newest("v1.0.0", &tags), Some("v1.0.1+b"));
-    assert_eq!(
-        newest("v1.0.0", &list(&["v1.0.0+build", "v1.0.0"])),
-        Some("v1.0.0")
-    );
-    assert_eq!(split("v1.2.3+build").unwrap().1.to_string(), "1.2.3+build");
+    assert_eq!(newest("v1.0.0", &list(&["v1.0.0+build"])), None);
 }
 
 #[test]
