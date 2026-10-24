@@ -31,6 +31,19 @@ pub fn manifest_paths(paths: &[String], chosen: &[String]) -> (Vec<String>, usiz
     listing::shallowest(found.cloned().collect(), MAX_MANIFESTS)
 }
 
+/// The names of the packages that the Manifests among `manifests` (path and text) give for a
+/// Checkout of `chosen`.
+pub fn packages_for(manifests: &[(String, String)], chosen: &[String]) -> Vec<String> {
+    let read: Vec<String> = manifests.iter().map(|(path, _)| path.clone()).collect();
+    let held = manifest_paths(&read, chosen).0;
+    let held: Vec<_> = manifests
+        .iter()
+        .filter(|(path, _)| held.contains(path))
+        .cloned()
+        .collect();
+    infer(&held).packages
+}
+
 /// What the Manifests among `files` (path and text) say.
 pub fn infer(files: &[(String, String)]) -> Inferred {
     let mut names = BTreeSet::new();

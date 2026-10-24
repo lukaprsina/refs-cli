@@ -642,3 +642,165 @@ fn cancelling_the_version_question_edits_nothing() {
     assert!(run.err.contains("cancelled"), "{}", run.err);
     assert_eq!((p.read("refs.toml"), p.read("refs.lock")), before);
 }
+
+// ---- what the new Ref breaks ----
+
+/// `foo` pinned to `foo-js-1.0.0` with docs in two directories and a file to start from.
+fn foo_with_docs() -> String {
+    format!(
+        "[repos.foo]\nurl = \"{FOO}\"\nref = \"foo-js-1.0.0\"\norigin = \"npm:foo-js\"\n\
+         paths = [\"docs\", \"old\"]\nstart = [\"docs/intro.md\", \"old/a.md\"]\n"
+    )
+}
+
+/// The remote now has `docs` and `docs/intro.md` but no `old`, and a tag for the lockfile's version.
+fn old_is_gone(p: &Project) {
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(p, &["foo-js-1.0.0", "foo-js-1.2.3"]);
+    p.source.set_tree(
+        FOO,
+        SHA_2,
+        &[("docs/intro.md", "# intro"), ("docs/more.md", "# more")],
+    );
+}
+
+#[test]
+fn a_move_that_loses_a_path_asks_update_and_n_changes_nothing() {
+    let p = Project::new(&foo_with_docs());
+    old_is_gone(&p);
+    let before = (p.read("refs.toml"), p.read("refs.lock"));
+    let mut prompter = Script::new([Answer::Yes(false)]);
+
+    let run = p.run(&["update", "foo"], Some(&mut prompter));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(prompter.questions(), ["Update?"]);
+    assert!(run.err.contains("paths `old`"), "{}", run.err);
+    assert!(run.err.contains("start `old/a.md`"), "{}", run.err);
+    assert_eq!((p.read("refs.toml"), p.read("refs.lock")), before);
+}
+
+#[test]
+fn yes_asks_only_the_broken_fields_with_the_valid_entries_ticked() {
+    let p = Project::new(&foo_with_docs());
+    old_is_gone(&p);
+    let mut prompter = Script::new([
+        Answer::Yes(true),
+        Answer::Pick(&["docs"]),
+        Answer::Pick(&["docs/intro.md"]),
+    ]);
+
+    let run = p.run(&["update", "foo"], Some(&mut prompter));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(prompter.questions().len(), 3, "{:?}", prompter.questions());
+    assert_eq!(prompter.preselected, [["docs"], ["docs/intro.md"]]);
+    assert!(prompter.offered[0].contains(&"old".to_owned()));
+    assert!(prompter.offered[1].contains(&"old/a.md".to_owned()));
+    assert_eq!(
+        p.read("refs.toml"),
+        format!(
+            "[repos.foo]\nurl = \"{FOO}\"\nref = \"foo-js-1.2.3\"\norigin = \"npm:foo-js\"\n\
+             paths = [\"docs\"]\nstart = [\"docs/intro.md\"]\n"
+        )
+    );
+    assert!(p.read("refs.lock").contains("ref = \"foo-js-1.2.3\""));
+}
+
+#[test]
+fn a_move_that_loses_nothing_asks_nothing() {
+    let p = Project::new(&foo_with_docs());
+    old_is_gone(&p);
+    p.source.set_tree(
+        FOO,
+        SHA_2,
+        &[("docs/intro.md", "#"), ("old/a.md", "#"), ("old/b.md", "#")],
+    );
+    let mut prompter = Script::new([]);
+
+    let run = p.run(&["update", "foo"], Some(&mut prompter));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(prompter.questions().is_empty());
+    assert!(p.read("refs.toml").contains("ref = \"foo-js-1.2.3\""));
+}
+
+#[test]
+fn a_vanished_package_is_kept_and_warned_about() {
+    let config = format!(
+        "[repos.foo]\nurl = \"{FOO}\"\nref = \"foo-js-1.0.0\"\norigin = \"npm:foo-js\"\n\
+         paths = [\"docs\", \"old\"]\npackages = [\"foo-js\", \"left-pad\"]\n"
+    );
+    let p = Project::new(&config);
+    old_is_gone(&p);
+    p.source.set_tree(
+        FOO,
+        SHA_2,
+        &[
+            ("docs/a.md", "#"),
+            ("docs/package.json", r#"{"name":"foo-js"}"#),
+        ],
+    );
+    let mut prompter = Script::new([
+        Answer::Yes(true),
+        Answer::Pick(&["docs"]),
+        Answer::Pick(&["foo-js", "left-pad"]),
+    ]);
+
+    let run = p.run(&["update", "foo"], Some(&mut prompter));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(run.err.contains("`left-pad`"), "{}", run.err);
+    assert_eq!(prompter.preselected[1], ["foo-js", "left-pad"]);
+    assert!(
+        p.read("refs.toml")
+            .contains("packages = [\"foo-js\", \"left-pad\"]")
+    );
+}
+
+#[test]
+fn without_a_terminal_a_break_skips_that_repo_and_writes_nothing() {
+    let p = Project::new(&foo_with_docs());
+    old_is_gone(&p);
+    let before = (p.read("refs.toml"), p.read("refs.lock"));
+
+    let run = p.update(&["foo"]);
+
+    assert_eq!(run.code, 1, "{}", run.err);
+    assert!(run.err.contains("`old`"), "{}", run.err);
+    assert_eq!((p.read("refs.toml"), p.read("refs.lock")), before);
+}
+
+#[test]
+fn cancelling_update_edits_nothing() {
+    let p = Project::new(&foo_with_docs());
+    old_is_gone(&p);
+    let before = (p.read("refs.toml"), p.read("refs.lock"));
+    let mut prompter = Script::new([Answer::Yes(true), Answer::Cancel]);
+
+    let run = p.run(&["update", "foo"], Some(&mut prompter));
+
+    assert_ne!(run.code, 0);
+    assert_eq!((p.read("refs.toml"), p.read("refs.lock")), before);
+}
+
+#[test]
+fn a_deleted_ref_is_asked_again_in_a_terminal_and_an_error_without_one() {
+    let p = Project::new(&format!("[repos.foo]\nurl = \"{FOO}\"\nref = \"gone\"\n"));
+    p.source.lose_ref(FOO, "gone");
+    let before = (p.read("refs.toml"), p.read("refs.lock"));
+
+    let without = p.update(&["foo"]);
+    assert_eq!(without.code, 1, "{}", without.err);
+    assert!(without.err.contains("--ref"), "{}", without.err);
+    assert_eq!((p.read("refs.toml"), p.read("refs.lock")), before);
+
+    let mut prompter = Script::new([Answer::Text("main")]);
+    let asked = p.run(&["update", "foo"], Some(&mut prompter));
+    assert_eq!(asked.code, 0, "{}", asked.err);
+    assert_eq!(
+        prompter.asked,
+        [("Ref".to_owned(), Some("gone".to_owned()))]
+    );
+    assert!(p.read("refs.toml").contains("ref = \"main\""));
+}

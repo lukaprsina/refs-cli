@@ -201,6 +201,10 @@ fn materialise(
         .map_err(code)
 }
 
+fn strings(items: &[&str]) -> Vec<String> {
+    items.iter().map(|i| i.to_string()).collect()
+}
+
 fn names(files: &[&str]) -> BTreeSet<String> {
     files.iter().map(|f| f.to_string()).collect()
 }
@@ -846,6 +850,29 @@ fn a_real_remote_serves_a_blobless_fetch() {
 
 mod outline {
     use super::*;
+
+    #[test]
+    fn the_break_rule_and_verify_reject_the_same_missing_entries() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let outline = env.source().outline(&remote.url(), "main").unwrap();
+        let cases: [(&[&str], &[&str], Option<&str>); 3] = [
+            (&["docs/guide"], &["docs/guide/a.md"], None),
+            (&["docs/nope"], &[], Some("refs::git::path_missing")),
+            (
+                &["docs"],
+                &["docs/MIGRATION.md"],
+                Some("refs::git::start_missing"),
+            ),
+        ];
+        for (paths, start, rejected) in cases {
+            let (p, s): (Vec<_>, Vec<_>) = (strings(paths), strings(start));
+            let gone = refs_cli::listing::gone(&outline.paths, &p, &s);
+            let repo = remote.repo(paths, start);
+            let verified = verify(&env.source(), &remote, &repo, ONLINE);
+            assert_eq!(gone.is_empty(), rejected.is_none(), "{paths:?} {start:?}");
+            assert_eq!(verified.err().as_deref(), rejected, "{paths:?} {start:?}");
+        }
+    }
 
     #[test]
     fn lists_every_path_and_fetches_no_blob() {

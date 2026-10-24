@@ -2,9 +2,9 @@
 //! through the `Prompter` seam, so tests script the answers and only `cli::run` puts a
 //! terminal behind it. Nothing here edits a file; it only completes an `AddRepo`.
 
-use crate::config::{self, Config};
-use crate::edit::{AddRepo, id_from_url};
-use crate::listing;
+use crate::config::{self, Config, Repo};
+use crate::edit::{AddRepo, Fields, id_from_url};
+use crate::listing::{self, Gone};
 use crate::registry;
 use crate::registry::pin::Say;
 use crate::source::{Outline, Pin};
@@ -132,13 +132,13 @@ pub fn fill_add(
             repo.description = non_empty(answer);
         }
         if paths_open {
-            repo.paths = ask_paths(prompter, listed, &repo.paths, say)?;
+            repo.paths = ask_paths(prompter, listed, (&repo.paths, &repo.paths), say)?;
             if packages_open {
                 repo.packages = packages_for(&repo.paths);
             }
         }
         if start_open {
-            repo.start = ask_start(prompter, listed, &repo.paths, say)?;
+            repo.start = ask_start(prompter, listed, &repo.paths, (&[], &[]), say)?;
         }
         if packages_open && !repo.packages.is_empty() {
             if let Some(left) = summed.checked_sub(repo.packages.len()).filter(|n| *n > 0) {
@@ -146,12 +146,77 @@ pub fn fill_add(
                     "packages: left out {left} of {summed} that are outside the chosen paths; name others with `--packages`"
                 ));
             }
-            let message = "Packages (type to filter; none selected: none)";
-            repo.packages = prompter.pick(message, &repo.packages, &repo.packages)?;
+            repo.packages = ask_packages(prompter, &repo.packages, &repo.packages)?;
         }
     }
     repo.id = Some(id).filter(|id| *id != suggested);
     Ok(())
+}
+
+/// What `update` knows of a Repo that its new Ref breaks.
+pub struct Broken<'a> {
+    pub id: &'a str,
+    pub to: &'a str,
+    pub repo: &'a Repo,
+    /// The files of the new tree.
+    pub listed: &'a [String],
+    pub gone: &'a Gone,
+    /// The `packages` that the Manifests of the new tree no longer give.
+    pub vanished: &'a [String],
+    pub packages_for: &'a PackagesFor<'a>,
+}
+
+/// Say what the new Ref took away and ask `Update?`. On yes, re-ask only the broken fields, each
+/// starting from `refs.toml` with the entries that are still valid ticked and the missing ones
+/// offered unticked; the `packages` are kept, and asked again only when the `paths` were. On no
+/// there is nothing to change.
+pub fn fill_update(
+    broken: &Broken,
+    prompter: &mut dyn Prompter,
+    say: &mut dyn Say,
+) -> Result<Option<Fields>, Abort> {
+    let Broken {
+        id, to, repo, gone, ..
+    } = *broken;
+    say.shown(format!("`{id}`: `{to}` no longer has {gone}"));
+    if !broken.vanished.is_empty() {
+        let names: Vec<_> = broken.vanished.iter().map(|n| format!("`{n}`")).collect();
+        say.warning(format!(
+            "`{id}`: `{to}` has no package {}; kept",
+            names.join(", ")
+        ));
+    }
+    if !prompter.confirm("Update?")? {
+        return Ok(None);
+    }
+    let valid = |items: Vec<String>, gone: &[String]| -> Vec<String> {
+        items.into_iter().filter(|i| !gone.contains(i)).collect()
+    };
+    let listed = Some(broken.listed);
+    let mut fixed = Fields::default();
+    let mut paths = repo.path_strings();
+    if !gone.paths.is_empty() {
+        let ticked = valid(paths.clone(), &gone.paths);
+        paths = ask_paths(prompter, listed, (&paths, &ticked), say)?;
+        let kept = repo.package_strings();
+        let offered = listing::with_ticked((broken.packages_for)(&paths), &kept);
+        if !offered.is_empty() {
+            fixed.packages = Some(ask_packages(prompter, &offered, &kept)?);
+        }
+        fixed.paths = Some(paths.clone());
+    }
+    if !gone.start.is_empty() {
+        let offered = repo.start_strings();
+        let ticked = valid(offered.clone(), &gone.start);
+        fixed.start = Some(ask_start(
+            prompter,
+            listed,
+            &paths,
+            (&offered, &ticked),
+            say,
+        )?);
+    }
+    Ok(Some(fixed))
 }
 
 const DESCRIPTION: &str = "Description (one line on what the repo is)";
@@ -181,26 +246,31 @@ fn summary(repo: &AddRepo, id: &str, pin: Option<&Pin>) -> Vec<String> {
     .to_vec()
 }
 
-/// The directories to check out: picked from those of the `listed` repo with `current` ticked,
-/// else typed.
+/// What a picker offers beyond what the tree lists, and which of it starts ticked. A ticked
+/// entry is always offered.
+type Entries<'a> = (&'a [String], &'a [String]);
+
+/// The directories to check out: picked from those of the `listed` repo, else typed. Of the
+/// `(offered, ticked)` entries the first are offered even if the tree lacks them, and the
+/// second start ticked.
 fn ask_paths(
     prompter: &mut dyn Prompter,
     listed: Option<&[String]>,
-    current: &[String],
+    (offered, ticked): Entries,
     say: &mut dyn Say,
 ) -> Result<Vec<String>, Abort> {
     let Some(listed) = listed else {
         return ask_words(prompter, "Paths to check out (space-separated)");
     };
     let (dirs, left) = listing::directories(listed);
-    let dirs = listing::with_ticked(dirs, current);
+    let dirs = listing::with_ticked(dirs, offered);
     let message = "Paths to check out (type to filter; none selected: the whole repo)";
     let picked = pick_capped(
         prompter,
         say,
         message,
         dirs,
-        current,
+        ticked,
         left,
         ("directories", "--paths"),
     )?;
@@ -208,20 +278,32 @@ fn ask_paths(
 }
 
 /// The files to read first: picked from the docs files the Checkout of `paths` will hold, else
-/// typed.
+/// typed. `(offered, ticked)` are as for `ask_paths`.
 fn ask_start(
     prompter: &mut dyn Prompter,
     listed: Option<&[String]>,
     paths: &[String],
+    (offered, ticked): Entries,
     say: &mut dyn Say,
 ) -> Result<Vec<String>, Abort> {
     let Some(listed) = listed else {
         return ask_words(prompter, "Files to read first (space-separated)");
     };
     let (files, left) = listing::start_files(listed, paths);
+    let files = listing::with_ticked(files, offered);
     let message = "Files to read first (type to filter; none selected: none)";
     let flag = ("files", "--start");
-    pick_capped(prompter, say, message, files, &[], left, flag)
+    pick_capped(prompter, say, message, files, ticked, left, flag)
+}
+
+/// The packages to document: picked from `offered`, with `ticked` ticked.
+fn ask_packages(
+    prompter: &mut dyn Prompter,
+    offered: &[String],
+    ticked: &[String],
+) -> Result<Vec<String>, Abort> {
+    let message = "Packages (type to filter; none selected: none)";
+    prompter.pick(message, offered, ticked)
 }
 
 /// A selection from `options`, with `ticked` ticked, of which `left` more were cut off: said, with

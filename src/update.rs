@@ -15,10 +15,13 @@ use std::path::Path;
 use crate::active::active;
 use crate::config::{Config, RepoRef, is_full_sha};
 use crate::diagnostic::LockError;
-use crate::edit::{Edit, RefChange};
+use crate::diagnostic::SourceError;
+use crate::edit::{Edit, Fields, RepoChange};
+use crate::listing;
 use crate::lock::Lock;
+use crate::packages::{self, manifest_paths};
 use crate::plan::Upgrade;
-use crate::prompt::{Abort, Prompter};
+use crate::prompt::{Abort, Broken, Prompter, fill_update};
 use crate::registry::Package;
 use crate::registry::pin::{Say, Stop, choose_version};
 use crate::registry::tag::tag_for;
@@ -93,6 +96,7 @@ pub fn run(
         root,
         lock,
         prompter,
+        say: &mut *say,
         held: None,
     };
     let (mut moves, mut skipped) = (Vec::<Move>::new(), 0);
@@ -105,14 +109,16 @@ pub fn run(
         let repo = active.get(id).expect("the ids were checked");
         match assessing.assess(repo, request) {
             Ok(Assessed::Move(found)) => moves.push(found),
-            Ok(Assessed::Stay(note)) => say.status(note),
+            Ok(Assessed::Stay(note)) => assessing.say.status(note),
             Err(stop) => {
                 let why = match stop {
                     Stop::Asked(abort) => return Err(Failure::Asked(abort)),
                     Stop::Source(e) => e.to_string(),
                     Stop::Refused(why) => why,
                 };
-                say.shown(format!("`{id}` was not updated: {why}"));
+                assessing
+                    .say
+                    .shown(format!("`{id}` was not updated: {why}"));
                 skipped += 1;
             }
         }
@@ -123,14 +129,15 @@ pub fn run(
             skipped,
         });
     }
-    let changes: Vec<RefChange> = moves
+    let changes: Vec<RepoChange> = moves
         .iter()
-        .filter_map(|found| match &found.how {
-            How::Ref(to) => Some(RefChange {
-                id: &found.id,
-                git_ref: to,
-            }),
-            How::Commit => None,
+        .map(|found| RepoChange {
+            id: &found.id,
+            git_ref: match &found.how {
+                How::Ref(to) => Some(to),
+                How::Commit => None,
+            },
+            fields: found.fields.clone(),
         })
         .collect();
     let upgrade: Vec<String> = moves
@@ -169,6 +176,8 @@ struct Move {
     how: How,
     /// `id  old → new`
     line: String,
+    /// The lists the new Ref made the person set again.
+    fields: Fields,
 }
 
 enum How {
@@ -194,6 +203,7 @@ struct Assessing<'a, 'p> {
     root: &'a Path,
     lock: Option<Lock>,
     prompter: Option<&'a mut (dyn Prompter + 'p)>,
+    say: &'a mut dyn Say,
     /// Why the Repo being assessed may not be moved: its Checkout has uncommitted changes, or
     /// cannot be inspected. A Repo that stays is not held by it.
     held: Option<String>,
@@ -209,10 +219,61 @@ impl Assessing<'_, '_> {
             Some(git_ref) => self.set(repo, git_ref)?,
             None => self.follow(repo)?,
         };
-        if matches!(found, Assessed::Move(_)) {
-            self.must_be_clean()?;
+        let Assessed::Move(found) = found else {
+            return Ok(found);
+        };
+        self.must_be_clean()?;
+        self.mend(repo, found)
+    }
+
+    /// Outline where `found` goes. If that tree lacks a `path` or `start` file of the Repo, say
+    /// so and ask `Update?`: yes sets the broken fields again, no leaves the Repo as it is.
+    fn mend(&mut self, repo: RepoRef, mut found: Move) -> Result<Assessed, Stop> {
+        let (id, url) = (repo.id, repo.repo.url.as_ref());
+        let to = match &found.how {
+            How::Ref(to) => to,
+            How::Commit => repo.repo.effective_ref(),
+        };
+        let outline = self.source.outline(url, to).map_err(skip)?;
+        let (paths, start) = (repo.repo.path_strings(), repo.repo.start_strings());
+        let gone = listing::gone(&outline.paths, &paths, &start);
+        if gone.is_empty() {
+            return Ok(Assessed::Move(found));
         }
-        Ok(found)
+        let Some(prompter) = self.prompter.as_deref_mut() else {
+            return Err(skip(format!(
+                "`{to}` no longer has {gone}; run `refs update {id}` in a terminal to choose others"
+            )));
+        };
+        let (manifests, _) = manifest_paths(&outline.paths, &[]);
+        let manifests = self
+            .source
+            .read(url, &outline.pin, &manifests)
+            .map_err(skip)?;
+        let packages_for = |paths: &[String]| packages::packages_for(&manifests, paths);
+        let have = packages_for(&paths);
+        let vanished: Vec<String> = (repo.repo.package_strings().into_iter())
+            .filter(|name| !have.contains(name))
+            .collect();
+        let broken = Broken {
+            id,
+            to,
+            repo: repo.repo,
+            listed: &outline.paths,
+            gone: &gone,
+            vanished: &vanished,
+            packages_for: &packages_for,
+        };
+        match fill_update(&broken, prompter, self.say).map_err(Stop::Asked)? {
+            Some(fields) => {
+                found.fields = fields;
+                Ok(Assessed::Move(found))
+            }
+            None => Ok(Assessed::Stay(format!(
+                "`{id}` is left at `{}`",
+                repo.repo.effective_ref()
+            ))),
+        }
     }
 
     /// `--ref`: the Ref asked for, if the remote has it.
@@ -222,8 +283,6 @@ impl Assessing<'_, '_> {
         if git_ref == current {
             return Ok(Assessed::Stay(format!("`{id}` is already at `{current}`")));
         }
-        let url = repo.repo.url.as_ref();
-        self.source.outline(url, git_ref).map_err(skip)?;
         Ok(moved_to(id, current, git_ref))
     }
 
@@ -303,14 +362,17 @@ impl Assessing<'_, '_> {
     }
 
     /// A branch Ref moves when the remote's commit is not the Lock's.
-    fn by_remote(&self, repo: RepoRef) -> Result<Assessed, Stop> {
+    fn by_remote(&mut self, repo: RepoRef) -> Result<Assessed, Stop> {
         let id = repo.id;
         let Some(locked) = self.lock.as_ref().and_then(|lock| lock.get(id)) else {
             return Ok(Assessed::Stay(format!(
                 "`{id}` is not locked yet; `refs sync` locks it"
             )));
         };
-        let now = self.source.resolve(repo).map_err(skip)?;
+        let now = match self.source.resolve(repo) {
+            Err(SourceError::RefNotFound { .. }) => return self.ask_ref(repo),
+            now => now.map_err(skip)?,
+        };
         if now.sha() == locked.pin.sha() {
             return Ok(Assessed::Stay(format!("`{id}` is up to date")));
         }
@@ -323,7 +385,29 @@ impl Assessing<'_, '_> {
                 now.short_id(),
                 repo.repo.effective_ref()
             ),
+            fields: Fields::default(),
         }))
+    }
+
+    /// The Ref of `repo` is gone from the remote: ask for another, starting from the old one.
+    fn ask_ref(&mut self, repo: RepoRef) -> Result<Assessed, Stop> {
+        self.must_be_clean()?;
+        let (id, old, url) = (repo.id, repo.repo.effective_ref(), repo.repo.url.as_ref());
+        let Some(prompter) = self.prompter.as_deref_mut() else {
+            return Err(skip(format!(
+                "`{old}` is no longer in {url}; use `refs update {id} --ref <ref>`"
+            )));
+        };
+        self.say
+            .shown(format!("`{id}`: `{old}` is no longer in {url}"));
+        let valid = |new: &str| match new.trim().is_empty() {
+            true => Err("a Ref is needed".to_owned()),
+            false => Ok(()),
+        };
+        let new = prompter
+            .text("Ref", Some(old), &valid)
+            .map_err(Stop::Asked)?;
+        Ok(moved_to(id, old, new.trim()))
     }
 
     /// The reason not to move the Checkout of `id`, if there is one.
@@ -349,5 +433,6 @@ fn moved_to(id: &str, from: &str, to: &str) -> Assessed {
         id: id.into(),
         how: How::Ref(to.into()),
         line: format!("{id}  {from} → {to}"),
+        fields: Fields::default(),
     })
 }

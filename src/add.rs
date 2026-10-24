@@ -11,7 +11,7 @@ use std::path::Path;
 use crate::config::Config;
 use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit};
-use crate::packages::{infer, manifest_paths};
+use crate::packages::{self, infer, manifest_paths};
 use crate::prompt::{self, Abort, Known, PackagesFor, Prompter};
 use crate::registry::pin::{Pinned, Say, Stop, pin};
 use crate::registry::{self, Registry, RegistryError};
@@ -164,16 +164,7 @@ fn prepare(
         outline = Some(looked);
     }
     // Only the Manifests a Checkout of `paths` will hold count. None is fetched again.
-    let packages_for = |paths: &[String]| {
-        let read: Vec<String> = manifests.iter().map(|(path, _)| path.clone()).collect();
-        let held = manifest_paths(&read, paths).0;
-        let held: Vec<_> = manifests
-            .iter()
-            .filter(|(p, _)| held.contains(p))
-            .cloned()
-            .collect();
-        infer(&held).packages
-    };
+    let packages_for = |paths: &[String]| packages::packages_for(&manifests, paths);
     let Some(prompter) = asking.prompter() else {
         if repo.packages.is_empty() {
             repo.packages = packages_for(&repo.paths);

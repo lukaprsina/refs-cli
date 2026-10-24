@@ -60,15 +60,25 @@ pub enum Edit<'a> {
     Remove(&'a str),
     Disable(Target<'a>),
     Enable(Target<'a>),
-    /// Set the `ref` of existing repos; an empty list changes nothing.
-    Change(&'a [RefChange<'a>]),
+    /// Set the `ref`, `paths`, `start` and `packages` of existing repos; an empty list changes
+    /// nothing.
+    Change(&'a [RepoChange<'a>]),
 }
 
-/// The new `ref` of the repo `id`.
-#[derive(Debug, Clone, Copy)]
-pub struct RefChange<'a> {
+/// What changes in the repo `id`: each field that is set.
+#[derive(Debug, Default, Clone)]
+pub struct RepoChange<'a> {
     pub id: &'a str,
-    pub git_ref: &'a str,
+    pub git_ref: Option<&'a str>,
+    pub fields: Fields,
+}
+
+/// The lists of a repo that `update` can set: those that are `Some`.
+#[derive(Debug, Default, Clone)]
+pub struct Fields {
+    pub paths: Option<Vec<String>>,
+    pub start: Option<Vec<String>>,
+    pub packages: Option<Vec<String>>,
 }
 
 /// What an edit gave: the new text, that text parsed, and the Group it had to create for it.
@@ -256,15 +266,42 @@ fn set_key(text: &str, table: &Table, key: &str, value: &str) -> String {
     out
 }
 
-/// Set `ref` on each repo of `changes`, one after the other, each cut by text.
-fn change(text: &str, changes: &[RefChange]) -> Result<String, EditError> {
-    changes.iter().try_fold(text.to_owned(), |text, change| {
+/// Set the fields of each repo of `changes`, one after the other, each cut by text.
+fn change(text: &str, changes: &[RepoChange]) -> Result<String, EditError> {
+    let mut text = text.to_owned();
+    for change in changes {
         let target = Target::Repo(change.id);
         check_exists(&text, target)?;
-        let doc = parse(&text)?;
-        let git_ref = toml_edit::Value::from(change.git_ref).to_string();
-        Ok(set_key(&text, table_of(&doc, target)?, "ref", &git_ref))
-    })
+        let Fields {
+            paths,
+            start,
+            packages,
+        } = &change.fields;
+        let set = [
+            (
+                "ref",
+                change
+                    .git_ref
+                    .map(|r| toml_edit::Value::from(r).to_string()),
+            ),
+            ("paths", paths.as_deref().map(list_value)),
+            ("start", start.as_deref().map(list_value)),
+            ("packages", packages.as_deref().map(list_value)),
+        ];
+        for (key, value) in set
+            .into_iter()
+            .filter_map(|(key, value)| Some((key, value?)))
+        {
+            let doc = parse(&text)?;
+            text = set_key(&text, table_of(&doc, target)?, key, &value);
+        }
+    }
+    Ok(text)
+}
+
+/// `items` as a TOML array.
+fn list_value(items: &[String]) -> String {
+    toml_edit::Value::from(items.iter().collect::<Array>()).to_string()
 }
 
 /// Remove the `enabled` key of the repo or group (spec §6.4: absent means enabled).

@@ -1,7 +1,7 @@
 //! A stateful in-memory `Source` for tests of everything above the seam.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::{MaterialiseOpts, Observed, Outline, Pin, Source, VerifyOpts};
 use crate::config::RepoRef;
@@ -43,6 +43,7 @@ pub struct FakeSource {
     disk: RefCell<HashMap<String, Observed>>,
     failures: RefCell<HashMap<(String, Method), String>>,
     commits: RefCell<HashMap<String, String>>,
+    lost_refs: RefCell<HashSet<(String, String)>>,
     tags: RefCell<HashMap<String, Vec<String>>>,
     trees: RefCell<HashMap<String, Tree>>,
     calls: RefCell<Vec<Call>>,
@@ -80,6 +81,13 @@ impl FakeSource {
         let mut names: Vec<String> = names.into_iter().map(Into::into).collect();
         names.sort();
         self.tags.borrow_mut().insert(url.into(), names);
+    }
+
+    /// From now on `git_ref` is gone from the remote at `url`: `resolve` says so.
+    pub fn lose_ref(&self, url: &str, git_ref: &str) {
+        self.lost_refs
+            .borrow_mut()
+            .insert((url.into(), git_ref.into()));
     }
 
     /// The commit `outline` resolves to for `url` from now on, and its files, as path and text
@@ -120,6 +128,17 @@ impl Source for FakeSource {
     fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError> {
         self.record(Call::Resolve(repo.id.into()));
         self.check(repo.id, Method::Resolve)?;
+        let lost = (
+            repo.repo.url.as_ref().clone(),
+            repo.repo.effective_ref().into(),
+        );
+        if self.lost_refs.borrow().contains(&lost) {
+            return Err(SourceError::RefNotFound {
+                url: repo.repo.url.as_ref().clone(),
+                git_ref: repo.repo.effective_ref().into(),
+                help: "",
+            });
+        }
         let sha = self.commits.borrow().get(repo.id).cloned();
         Ok(Pin::new(
             repo.repo.url.as_ref(),

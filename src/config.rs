@@ -115,6 +115,11 @@ pub struct Repo {
     pub enabled: Option<bool>,
 }
 
+/// The text of each of `items`.
+fn strings(items: &[Spanned<String>]) -> Vec<String> {
+    items.iter().map(|i| i.get_ref().clone()).collect()
+}
+
 /// A full commit id: 40 lowercase hex characters.
 pub(crate) fn is_full_sha(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
@@ -128,7 +133,17 @@ impl Repo {
 
     /// `paths` as plain strings, as the Lock and `Observed` hold them.
     pub fn path_strings(&self) -> Vec<String> {
-        self.paths.iter().map(|p| p.get_ref().clone()).collect()
+        strings(&self.paths)
+    }
+
+    /// `start` as plain strings.
+    pub fn start_strings(&self) -> Vec<String> {
+        strings(&self.start)
+    }
+
+    /// `packages` as plain strings.
+    pub fn package_strings(&self) -> Vec<String> {
+        strings(&self.packages)
     }
 
     /// The ref to resolve: `HEAD` when none is configured.

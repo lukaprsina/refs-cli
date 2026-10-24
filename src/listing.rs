@@ -3,6 +3,7 @@
 //! none of it needs git.
 
 use std::collections::BTreeSet;
+use std::fmt;
 
 /// The most directories or files a picker lists, shallowest first.
 const MAX_LISTED: usize = 5000;
@@ -105,4 +106,47 @@ pub fn drop_children(dirs: Vec<String>) -> Vec<String> {
     dirs.into_iter()
         .filter(|dir| !all.iter().any(|other| other != dir && within(dir, other)))
         .collect()
+}
+
+/// What a new tree (its listed file `paths`) lacks of a Repo's chosen `paths` and `start`: a
+/// `path` that is no directory in it, a `start` that is no file in it. Advisory, and not the
+/// check a sync must pass (`Source::verify`, which also tells a file from a directory).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Gone {
+    pub paths: Vec<String>,
+    pub start: Vec<String>,
+}
+
+impl Gone {
+    pub fn is_empty(&self) -> bool {
+        self.paths.is_empty() && self.start.is_empty()
+    }
+}
+
+/// `paths `a`, `b`; start `c``
+impl fmt::Display for Gone {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let list = |items: &[String]| {
+            let quoted: Vec<_> = items.iter().map(|i| format!("`{i}`")).collect();
+            quoted.join(", ")
+        };
+        let parts = [("paths", &self.paths), ("start", &self.start)]
+            .into_iter()
+            .filter(|(_, items)| !items.is_empty())
+            .map(|(label, items)| format!("{label} {}", list(items)));
+        write!(f, "{}", parts.collect::<Vec<_>>().join("; "))
+    }
+}
+
+/// What `listed` (the files of a new tree) lacks of `paths` and `start`.
+pub fn gone(listed: &[String], paths: &[String], start: &[String]) -> Gone {
+    let missing = |chosen: &[String], found: &dyn Fn(&String) -> bool| {
+        chosen.iter().filter(|c| !found(c)).cloned().collect()
+    };
+    Gone {
+        paths: missing(paths, &|dir| {
+            listed.iter().any(|file| within(file, dir) && file != dir)
+        }),
+        start: missing(start, &|file| listed.contains(file)),
+    }
 }

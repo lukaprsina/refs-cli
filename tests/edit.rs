@@ -1,5 +1,5 @@
 use refs_cli::diagnostic::EditError;
-use refs_cli::edit::{AddRepo, Edit, RefChange, Target};
+use refs_cli::edit::{AddRepo, Edit, RepoChange, Target};
 
 fn text_of(edit: Edit, text: &str) -> Result<String, EditError> {
     edit.apply(text).map(|applied| applied.text)
@@ -388,7 +388,11 @@ fn a_repo_not_written_as_a_table_is_refused_with_a_hint() {
 fn change(text: &str, changes: &[(&str, &str)]) -> Result<String, EditError> {
     let changes: Vec<_> = changes
         .iter()
-        .map(|&(id, git_ref)| RefChange { id, git_ref })
+        .map(|&(id, git_ref)| RepoChange {
+            id,
+            git_ref: Some(git_ref),
+            ..RepoChange::default()
+        })
         .collect();
     text_of(Edit::Change(&changes), text)
 }
