@@ -275,10 +275,97 @@ fn the_equivalent_command_has_the_expanded_url_and_the_registrys_packages() {
         line.is_some_and(|l| l.contains("https://github.com/o/foo")
             && l.contains("--paths packages/foo")
             && l.contains("--packages foo-js")
-            && !l.contains("npm:")),
+            && l.contains("--origin npm:foo-js")),
         "{}",
         run.err
     );
+}
+
+#[test]
+fn origin_on_a_url_add_writes_the_origin() {
+    let dir = project();
+
+    let run = add(
+        dir.path(),
+        &FakeRegistry::new(),
+        &FakeSource::new(),
+        &[
+            "https://github.com/o/foo",
+            "--origin",
+            "npm:foo-js",
+            "--no-sync",
+        ],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(
+        config_text(dir.path()),
+        "[repos.foo]\nurl = \"https://github.com/o/foo\"\norigin = \"npm:foo-js\"\n"
+    );
+}
+
+#[test]
+fn origin_replaces_the_one_a_shorthand_gives() {
+    let dir = project();
+    let registry = FakeRegistry::new().with(Ecosystem::Npm, "foo-js", found(FOO, None));
+
+    let run = add(
+        dir.path(),
+        &registry,
+        &FakeSource::new(),
+        &["npm:foo-js", "--origin", "cargo:foo", "--no-sync"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    let config = config_text(dir.path());
+    assert!(config.contains("origin = \"cargo:foo\""), "{config}");
+    assert!(!config.contains("npm:foo-js"), "{config}");
+}
+
+#[test]
+fn a_bad_origin_is_refused_before_any_edit() {
+    for (origin, why) in [
+        ("npm:foo@1.2.3", "names a package, not a version"),
+        ("gem:foo", "starts with `npm:`, `cargo:` or `pypi:`"),
+    ] {
+        let dir = project();
+
+        let run = add(
+            dir.path(),
+            &FakeRegistry::new(),
+            &FakeSource::new(),
+            &["https://github.com/o/foo", "--origin", origin, "--no-sync"],
+        );
+
+        assert_ne!(run.code, 0);
+        assert!(run.err.contains(why), "{}", run.err);
+        assert_eq!(config_text(dir.path()), "");
+    }
+}
+
+#[test]
+fn the_equivalent_command_with_an_origin_writes_the_same_config() {
+    let registry =
+        FakeRegistry::new().with(Ecosystem::Npm, "foo-js", found(FOO, Some("packages/foo")));
+    let first = project();
+    let run = add_asking(
+        first.path(),
+        &registry,
+        &FakeSource::new(),
+        &["npm:foo-js", "--id", "foo", "--no-sync"],
+        Some(&mut Script::takes_defaults(false)),
+    );
+    let line = run
+        .err
+        .lines()
+        .find_map(|l| l.strip_prefix("equivalent: refs add "));
+    let args: Vec<&str> = line.expect(&run.err).split(' ').collect();
+
+    let second = project();
+    let again = add(second.path(), &registry, &FakeSource::new(), &args);
+
+    assert_eq!(again.code, 0, "{}", again.err);
+    assert_eq!(config_text(second.path()), config_text(first.path()));
 }
 
 const FOO: &str = "https://github.com/o/foo";

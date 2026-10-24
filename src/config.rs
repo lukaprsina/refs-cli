@@ -104,7 +104,7 @@ pub struct Repo {
     #[serde(rename = "ref")]
     pub git_ref: Option<Spanned<String>>,
     pub description: Option<Spanned<String>>,
-    /// The Package the Repo was added from (`npm:solid-js`); only `add` writes it.
+    /// The Package the Repo was added from, or `add --origin` named (`npm:solid-js`); only `add` writes it.
     pub origin: Option<Spanned<String>>,
     #[serde(default)]
     pub paths: Vec<Spanned<String>>,

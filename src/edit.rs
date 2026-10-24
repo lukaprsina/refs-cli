@@ -9,6 +9,7 @@ use toml_edit::{Array, Document, DocumentMut, Item, Table, value};
 use crate::config;
 use crate::diagnostic::EditError;
 use crate::line_ending;
+use crate::registry::Package;
 
 /// What `refs add` was asked for. Only `url` is required, though on the command line an empty
 /// one means absent: `cli` asks for it, or refuses (ADR 0008). The rest follow spec §6.1. It is
@@ -39,9 +40,15 @@ pub struct AddRepo {
     /// Repo-relative files worth reading first
     #[arg(long, num_args = 1.., value_name = "PATH")]
     pub start: Vec<String>,
-    /// The Package a registry shorthand named, kept as the Repo's `origin`; set by `registry::expand`
-    #[arg(skip)]
+    /// The Package whose lockfile entry this repo follows, such as `npm:solid-js` (no version);
+    /// a registry shorthand gives its own. A package whose version scheme differs from the repo's
+    /// tags will not match them.
+    #[arg(long, value_name = "PACKAGE", value_parser = origin_parser)]
     pub origin: Option<String>,
+}
+
+fn origin_parser(origin: &str) -> Result<String, &'static str> {
+    Package::from_origin(origin).map(|_| origin.to_owned())
 }
 
 impl AddRepo {

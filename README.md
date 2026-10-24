@@ -58,7 +58,7 @@ updated AGENTS.md
 
 A registry shorthand (`npm:name`) pins the version your lockfile or `@version` gives and does not ask for the ref (`--ref` overrides the pin); with no lockfile pin it asks, and an empty answer follows the default branch. `npm:name@next` is refused: `next` looks like a tag, and `npm:name --ref next` follows a git ref named `next`, which may not be the dist-tag.
 
-A registry add also stores the package it came from, as `origin = "npm:solid-js"` in the repo's table (a version is never part of it). A repo added by URL or `gh:` has none. To attach one to a repo added earlier, add the line by hand: `origin = "npm:solid-js"`, `"cargo:serde"` or `"pypi:requests"`, with no version.
+A registry add also stores the package it came from, as `origin = "npm:solid-js"` in the repo's table (a version is never part of it). A repo added by URL or `gh:` has none. `--origin <package>` records one on any add (`npm:solid-js`, `cargo:serde` or `pypi:requests`, with no version), and replaces the one a shorthand gives. It only records: nothing is read or pinned. An origin is the Package whose lockfile entry the repo follows, so a package whose version scheme differs from the repo's tags will not match them. To attach one to a repo added earlier, add the line to `refs.toml` by hand.
 
 Flags skip the questions. Without a terminal, or with `--no-input`, nothing is asked, so scripts pass a URL and flags.
 

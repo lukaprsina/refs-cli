@@ -363,7 +363,7 @@ pub fn expand(
     }
     let mut expanded = repo.clone();
     expanded.url = found.url;
-    expanded.origin = Some(package.to_string());
+    expanded.origin.get_or_insert_with(|| package.to_string());
     if expanded.paths.is_empty() {
         expanded.paths.extend(found.directory);
     }

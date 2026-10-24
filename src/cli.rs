@@ -798,7 +798,9 @@ fn print_report(report: &Report, check: bool, console: &mut Console) -> u8 {
     for change in &report.changes {
         match change {
             Changed::Config => console.status(format_args!("updated {}", project::CONFIG_FILE)),
-            Changed::ConfigCreated(path) => console.status(format_args!("created {path}")),
+            Changed::ConfigCreated => {
+                console.status(format_args!("created {}", project::CONFIG_FILE))
+            }
             Changed::Group(group) => console.status(format_args!("created group `{group}`")),
             Changed::Lock => console.status(format_args!("updated {}", crate::lock::FILE)),
             Changed::Checkout { id, how } => {

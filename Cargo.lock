@@ -1451,6 +1451,7 @@ dependencies = [
  "serde_yaml_ng",
  "sha2",
  "tempfile",
+ "terminal_size",
  "thiserror",
  "toml",
  "toml_edit",

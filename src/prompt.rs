@@ -359,7 +359,7 @@ fn non_empty(answer: String) -> Option<String> {
 /// The repository URL, or a shorthand for one (`gh:owner/repo`, `npm:name`), which `add`
 /// expands before `fill_add` asks the rest.
 pub fn ask_url(prompter: &mut dyn Prompter) -> Result<String, Abort> {
-    prompter.text("Repository URL", None, &valid_url)
+    prompter.text("Repository (URL or shorthand)", None, &valid_url)
 }
 
 /// The ref to add, asked once the URL is settled and before the repo is looked at. Empty is
@@ -422,6 +422,7 @@ pub fn equivalent_command(repo: &AddRepo) -> String {
         ("--group", &repo.group),
         ("--ref", &repo.git_ref),
         ("--description", &repo.description),
+        ("--origin", &repo.origin),
     ] {
         if let Some(value) = value {
             parts.push(flag.to_owned());
@@ -501,11 +502,18 @@ impl Prompter for Terminal {
             .collect();
         inquire::MultiSelect::new(message, options.to_vec())
             .with_default(&ticked)
-            .with_page_size(15)
+            .with_page_size(page_size())
             .with_scorer(&path_scorer())
             .prompt()
             .map_err(abort)
     }
+}
+
+/// How many options to show: 15, fewer in a short terminal, as `inquire` does not clamp it. Six
+/// rows are left for the prompt and help lines and the wrapping of long options.
+fn page_size() -> usize {
+    let rows = terminal_size::terminal_size_of(std::io::stderr()).map_or(24, |(_, h)| h.0);
+    usize::from(rows).saturating_sub(6).clamp(3, 15)
 }
 
 /// Scores an option (a path) against what has been typed, for `inquire`: fuzzy, with the bonuses
