@@ -21,3 +21,25 @@ pub fn tag_for<'t>(name: &str, version: &str, tags: &'t [String]) -> Option<&'t 
         .find_map(|candidate| tags.iter().find(|tag| **tag == candidate))
         .map(String::as_str)
 }
+
+/// `tag` as a prefix and the semver version after it: the version starts at the first position
+/// where the rest of the tag parses, so `foo2-1.0.0` is `foo2-` and `1.0.0`.
+pub fn split(tag: &str) -> Option<(&str, semver::Version)> {
+    tag.char_indices().find_map(|(at, _)| {
+        let version = semver::Version::parse(&tag[at..]).ok()?;
+        Some((&tag[..at], version))
+    })
+}
+
+/// The tag in `tags` with the highest version among those with the same prefix as `current`
+/// (equal, not "starts with": `react-` is not `react-dom-`), so a sibling Package of a monorepo
+/// is never chosen. A stable `current` ignores prereleases. None when `current` has no version.
+pub fn newest<'t>(current: &str, tags: &'t [String]) -> Option<&'t str> {
+    let (prefix, version) = split(current)?;
+    let stable = version.pre.is_empty();
+    tags.iter()
+        .filter_map(|tag| Some((tag.as_str(), split(tag)?)))
+        .filter(|(_, (p, v))| *p == prefix && (!stable || v.pre.is_empty()))
+        .max_by(|a, b| a.1.1.cmp(&b.1.1))
+        .map(|(tag, _)| tag)
+}

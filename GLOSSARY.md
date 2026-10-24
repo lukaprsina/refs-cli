@@ -55,7 +55,7 @@ Files inside a Repo's Paths that are worth reading first.
 _Avoid_: Entry points, hints
 
 **Ref**:
-A branch, tag or full commit SHA naming what to follow in a Repo. `refs update` treats them by what the Ref is: a **tag Ref** is a Ref the remote lists as a tag (it follows the Package lockfile when the Repo has an Origin); a **branch Ref** is no Ref, or one that is not a tag (it follows the remote, and moves when the remote's commit differs from the Lock's); a commit has no news.
+A branch, tag or full commit SHA naming what to follow in a Repo. `refs update` treats them by what the Ref is: a **tag Ref** is a Ref the remote lists as a tag (it follows the Package lockfile when the Repo has an Origin, and the newest tag of its own kind, the same prefix and the highest semver version, when no lockfile answers); a **branch Ref** is no Ref, or one that is not a tag (it follows the remote, and moves when the remote's commit differs from the Lock's); a commit has no news.
 _Avoid_: Version, revision
 
 **Package lockfile**:

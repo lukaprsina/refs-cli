@@ -1,6 +1,6 @@
 //! Which tag a package's version maps to, over tag lists recorded from real repositories.
 
-use refs_cli::registry::tag::tag_for;
+use refs_cli::registry::tag::{newest, split, tag_for};
 
 fn list(names: &[&str]) -> Vec<String> {
     names.iter().map(|n| (*n).to_owned()).collect()
@@ -72,4 +72,52 @@ fn only_an_exact_version_matches() {
 #[test]
 fn no_tags_gives_no_tag() {
     assert_eq!(tag_for("anything", "1.0.0", &[]), None);
+}
+
+#[test]
+fn a_tag_splits_where_the_rest_is_a_semver_version() {
+    for (tag, prefix, version) in [
+        ("v19.0.9", "v", "19.0.9"),
+        ("1.2.3", "", "1.2.3"),
+        ("foo2-1.0.0", "foo2-", "1.0.0"),
+        ("@scope/pkg@2.0.0-rc.17", "@scope/pkg@", "2.0.0-rc.17"),
+    ] {
+        let (got_prefix, got_version) = split(tag).expect(tag);
+        assert_eq!(
+            (got_prefix, got_version.to_string()),
+            (prefix, version.to_owned())
+        );
+    }
+    for tag in ["latest", "v1", "1.2", "release-2024"] {
+        assert!(split(tag).is_none(), "{tag}");
+    }
+}
+
+#[test]
+fn the_newest_tag_has_the_same_prefix() {
+    let tags = list(&[
+        "react-19.0.0",
+        "react-19.1.0",
+        "react-dom-19.2.0",
+        "v20.0.0",
+        "react-9.0.0",
+    ]);
+    assert_eq!(newest("react-19.0.0", &tags), Some("react-19.1.0"));
+    assert_eq!(newest("react-dom-19.2.0", &tags), Some("react-dom-19.2.0"));
+    assert_eq!(newest("v20.0.0", &tags), Some("v20.0.0"));
+}
+
+#[test]
+fn a_stable_tag_ignores_prereleases_and_a_prerelease_tag_does_not() {
+    let tags = list(&["v1.0.0", "v2.0.0-rc.17", "v2.0.0-rc.18", "v2.0.0"]);
+    assert_eq!(newest("v1.0.0", &tags), Some("v2.0.0"));
+    assert_eq!(newest("v2.0.0-rc.17", &tags), Some("v2.0.0"));
+    let tags = list(&["v1.0.0", "v2.0.0-rc.1", "v2.0.0-rc.2"]);
+    assert_eq!(newest("v1.0.0", &tags), Some("v1.0.0"));
+    assert_eq!(newest("v2.0.0-rc.1", &tags), Some("v2.0.0-rc.2"));
+}
+
+#[test]
+fn a_tag_with_no_version_has_no_newest() {
+    assert_eq!(newest("latest", &list(&["latest", "v1.0.0"])), None);
 }

@@ -239,43 +239,95 @@ fn a_version_with_no_tag_is_a_note_and_the_repo_stays() {
 }
 
 #[test]
-fn a_package_the_lockfile_lacks_or_no_lockfile_is_a_note() {
-    for (lockfile, why) in [
-        (
-            Some(NPM_LOCK_WITHOUT_FOO),
-            "`foo` is up to date (`foo-js` is not in package-lock.json)",
-        ),
-        (
-            None,
-            "`foo` is up to date (no Package lockfile found for `foo-js`)",
-        ),
-    ] {
+fn a_package_the_lockfile_lacks_or_no_lockfile_moves_to_the_newest_tag_of_its_kind() {
+    for lockfile in [Some(NPM_LOCK_WITHOUT_FOO), None] {
         let p = Project::new(&foo_at("foo-js-1.0.0"));
         if let Some(lockfile) = lockfile {
             p.write("package-lock.json", lockfile);
         }
-        with_tags(&p, &["foo-js-1.0.0"]);
-        let before = p.read("refs.toml");
+        with_tags(
+            &p,
+            &[
+                "foo-js-1.0.0",
+                "foo-js-1.4.0",
+                "foo-js-2.0.0-rc.1",
+                "foo-js-dom-9.0.0",
+            ],
+        );
 
         let run = p.update(&["foo"]);
 
         assert_eq!(run.code, 0, "{}", run.err);
-        assert!(run.err.contains(why), "{}", run.err);
-        assert_eq!(p.read("refs.toml"), before);
+        assert!(
+            run.err.contains("foo  foo-js-1.0.0 → foo-js-1.4.0"),
+            "{}",
+            run.err
+        );
+        assert!(
+            p.read("refs.toml")
+                .contains("ref = \"foo-js-1.4.0\" # pinned")
+        );
     }
 }
 
 #[test]
-fn a_pinned_repo_with_no_origin_is_pointed_at_ref() {
-    let config = foo_at("foo-js-1.0.0").replace("origin = \"npm:foo-js\"\n", "");
-    let p = Project::new(&config);
-    p.write("package-lock.json", NPM_LOCK_ONE);
-    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3"]);
+fn a_repo_already_at_the_newest_tag_of_its_kind_stays() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-dom-9.0.0"]);
+    let before = p.read("refs.toml");
 
     let run = p.update(&["foo"]);
 
     assert_eq!(run.code, 0, "{}", run.err);
-    assert!(run.err.contains("`--ref`"), "{}", run.err);
+    assert!(run.err.contains("`foo` is up to date"), "{}", run.err);
+    assert_eq!(p.read("refs.toml"), before);
+}
+
+#[test]
+fn the_lockfile_decides_even_when_a_newer_tag_exists() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3", "foo-js-2.0.0"]);
+
+    let run = p.update(&["foo"]);
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        run.err.contains("foo  foo-js-1.0.0 → foo-js-1.2.3"),
+        "{}",
+        run.err
+    );
+}
+
+#[test]
+fn a_pinned_repo_with_no_origin_moves_to_the_newest_tag_of_its_kind() {
+    let config = foo_at("v1.0.0").replace("origin = \"npm:foo-js\"\n", "");
+    let p = Project::new(&config);
+    with_tags(&p, &["v1.0.0", "v1.1.0", "v2.0.0-rc.1"]);
+
+    let run = p.update(&["foo"]);
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(run.err.contains("foo  v1.0.0 → v1.1.0"), "{}", run.err);
+    assert!(p.read("refs.toml").contains("ref = \"v1.1.0\" # pinned"));
+}
+
+#[test]
+fn a_tag_with_no_version_stays_with_a_note_pointing_at_ref() {
+    let config = foo_at("stable").replace("origin = \"npm:foo-js\"\n", "");
+    let p = Project::new(&config);
+    with_tags(&p, &["stable", "v1.0.0"]);
+
+    let run = p.update(&["foo"]);
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        run.err.contains(
+            "`foo` is not moved: `stable` has no version to compare; use `--ref` to move it"
+        ),
+        "{}",
+        run.err
+    );
     assert_eq!(p.read("refs.toml"), config);
 }
 
@@ -1004,7 +1056,7 @@ fn list_with_ids_lists_only_those_and_offline_is_an_error() {
     assert_eq!(run.code, 0, "{}", run.err);
     assert_eq!(
         run.out,
-        "bar  pinned and has no origin; use `--ref` to move it\n"
+        "bar  not moved: `v1` has no version to compare; use `--ref` to move it\n"
     );
 
     let offline = p.run(&["--offline", "update", "--list"], None);

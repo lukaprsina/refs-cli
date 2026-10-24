@@ -1,9 +1,10 @@
 //! `refs update <id…>` (ADR 0012): move the named Repos to where their Ref should be now, in one
 //! edit and one sync. What "now" means depends on the Ref. A tag Ref of a Repo with an Origin
-//! follows the version the project's Package lockfile says it uses, through its Version tag; a
-//! branch Ref (no Ref, or one that is not a tag) follows the remote, and moves when the remote's
-//! commit differs from the Lock's; a commit, or a tag with no Origin, has no news and a note
-//! pointing at `--ref`. `--ref` sets the Ref by hand. The Registry is never asked.
+//! follows the version the project's Package lockfile says it uses, through its Version tag; when
+//! no lockfile answers (no Origin, no lockfile, or the Package is not in it) it moves to the
+//! newest tag of its own kind (`tag::newest`). A branch Ref (no Ref, or one that is not a tag)
+//! follows the remote, and moves when the remote's commit differs from the Lock's; a commit has
+//! no news and a note pointing at `--ref`. `--ref` sets the Ref by hand. The Registry is never asked.
 //! `--list` stops after that assessment and prints what each Repo would do and break.
 //!
 //! Everything that can be found out before the edit is: a Repo that cannot be assessed, whose
@@ -25,7 +26,7 @@ use crate::plan::Upgrade;
 use crate::prompt::{Abort, Broken, Prompter, fill_update};
 use crate::registry::Package;
 use crate::registry::pin::{Say, Stop, choose_version};
-use crate::registry::tag::tag_for;
+use crate::registry::tag::{newest, tag_for};
 use crate::registry::used::{self, Lookup, Pick};
 use crate::source::{Observed, Outline, Source};
 use crate::sync::{self, Report, SyncFlags};
@@ -465,9 +466,7 @@ impl Assessing<'_, '_> {
             return self.by_remote(repo);
         }
         let Some(origin) = &repo.repo.origin else {
-            return Ok(Assessed::Stay(
-                "pinned and has no origin; use `--ref` to move it".into(),
-            ));
+            return Ok(by_kind(repo, git_ref, &tags));
         };
         let package = Package::from_origin(origin.as_ref())
             .expect("an origin is validated when the config loads");
@@ -483,12 +482,9 @@ impl Assessing<'_, '_> {
         tags: &[String],
     ) -> Result<Assessed, String> {
         let name = &package.name;
-        let up_to_date = |why: String| Ok(Assessed::Stay(format!("up to date ({why})")));
         let found = match used::find(package, self.root) {
             Lookup::Found(found) => found,
-            Lookup::Missing => {
-                return up_to_date(format!("no Package lockfile found for `{name}`"));
-            }
+            Lookup::Missing => return Ok(by_kind(repo, current, tags)),
             Lookup::Unreadable { file, why } => {
                 return Err(fail(format!("cannot read {}: {why}", file.display())));
             }
@@ -500,7 +496,7 @@ impl Assessing<'_, '_> {
             .display()
             .to_string();
         let version = match found.pick() {
-            Pick::Nothing => return up_to_date(format!("`{name}` is not in {file}")),
+            Pick::Nothing => return Ok(by_kind(repo, current, tags)),
             Pick::One(version) => version.to_owned(),
             Pick::Several(versions) => {
                 return Ok(Assessed::Choose(Choice {
@@ -626,6 +622,18 @@ impl Hold {
 /// Whether `found` is a Repo that would move, as opposed to one that stays or cannot be checked.
 fn moves(found: &Result<Assessed, String>) -> bool {
     !matches!(found, Ok(Assessed::Stay(_)) | Err(_))
+}
+
+/// Where `repo` moves from the tag `current` when no Package lockfile answers: the newest tag of
+/// its own kind (`tag::newest`). A tag with no version stays, with a note pointing at `--ref`.
+fn by_kind(repo: RepoRef, current: &str, tags: &[String]) -> Assessed {
+    match newest(current, tags) {
+        None => Assessed::Stay(format!(
+            "not moved: `{current}` has no version to compare; use `--ref` to move it"
+        )),
+        Some(tag) if tag == current => Assessed::Stay("up to date".into()),
+        Some(tag) => moved_to(repo.id, current, tag),
+    }
 }
 
 /// Where the lockfile's `version` of the Package moves `repo` from `current`, by its Version tag.
