@@ -1012,3 +1012,22 @@ fn list_with_ids_lists_only_those_and_offline_is_an_error() {
     assert!(offline.err.contains("needs the network"), "{}", offline.err);
     assert_eq!(offline.out, "");
 }
+
+#[test]
+fn list_marks_a_mover_whose_checkout_cannot_be_inspected() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3"]);
+    p.source.fail("foo", Method::Inspect, "unreadable");
+
+    let run = p.update(&["--list"]);
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        run.out
+            .starts_with("foo  foo-js-1.0.0 → foo-js-1.2.3\n  would be skipped: "),
+        "{}",
+        run.out
+    );
+    assert!(run.out.contains("unreadable"), "{}", run.out);
+}

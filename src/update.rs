@@ -320,8 +320,8 @@ impl Assessing<'_, '_> {
         let labels: Vec<String> = found
             .iter()
             .map(|(repo, found)| {
-                let moves = !matches!(found, Ok(Assessed::Stay(_)) | Err(_));
-                let held = match moves && !self.force && !self.dirty_files(repo.id).is_empty() {
+                let dirty = matches!(self.hold_of(repo.id), Some(Hold::Dirty(_)));
+                let held = match moves(found) && !self.force && dirty {
                     true => "  (uncommitted changes)",
                     false => "",
                 };
@@ -351,14 +351,6 @@ impl Assessing<'_, '_> {
         }
     }
 
-    /// The changed files of the Checkout of `id`, if it has any.
-    fn dirty_files(&self, id: &str) -> Vec<String> {
-        match self.source.inspect(id) {
-            Ok(Observed::At { dirty_files, .. }) => dirty_files,
-            _ => vec![],
-        }
-    }
-
     /// `--list`: for each Repo its label, then a line for what the move would break and for why
     /// it would be skipped. Nothing is asked.
     fn listing(&self, found: &[(RepoRef, Result<Assessed, String>)]) -> String {
@@ -378,17 +370,8 @@ impl Assessing<'_, '_> {
                 }
                 _ => {}
             }
-            if !matches!(found, Ok(Assessed::Stay(_)) | Err(_)) {
-                match self.hold_of(repo.id) {
-                    Some(Hold::Dirty(files)) => notes.push(format!(
-                        "would be skipped: uncommitted changes ({})",
-                        files.join(", ")
-                    )),
-                    Some(Hold::Uninspectable(e)) => {
-                        notes.push(format!("would be skipped: cannot be inspected: {e}"));
-                    }
-                    None => {}
-                }
+            if let Some(hold) = self.hold_of(repo.id).filter(|_| moves(found)) {
+                notes.push(format!("would be skipped: {}", hold.why()));
             }
             for note in notes {
                 text += &format!("  {note}\n");
@@ -614,15 +597,12 @@ impl Assessing<'_, '_> {
 
     /// A Repo that moves is left alone if its Checkout has changes `--force` was not given for.
     fn must_be_clean(&self, id: &str) -> Result<(), Stop> {
-        match (self.force, self.hold_of(id)) {
-            (false, Some(Hold::Dirty(files))) => Err(skip(format!(
-                "its checkout has uncommitted changes ({}); `--force` discards them",
-                files.join(", ")
+        match self.hold_of(id).filter(|_| !self.force) {
+            Some(hold) => Err(skip(format!(
+                "its checkout has {}; `--force` moves it anyway",
+                hold.why()
             ))),
-            (false, Some(Hold::Uninspectable(e))) => {
-                Err(skip(format!("its checkout cannot be inspected: {e}")))
-            }
-            _ => Ok(()),
+            None => Ok(()),
         }
     }
 }
@@ -631,6 +611,21 @@ impl Assessing<'_, '_> {
 enum Hold {
     Dirty(Vec<String>),
     Uninspectable(String),
+}
+
+impl Hold {
+    /// What the Checkout has, as it reads after "its checkout has".
+    fn why(&self) -> String {
+        match self {
+            Hold::Dirty(files) => format!("uncommitted changes ({})", files.join(", ")),
+            Hold::Uninspectable(e) => format!("a state that cannot be inspected: {e}"),
+        }
+    }
+}
+
+/// Whether `found` is a Repo that would move, as opposed to one that stays or cannot be checked.
+fn moves(found: &Result<Assessed, String>) -> bool {
+    !matches!(found, Ok(Assessed::Stay(_)) | Err(_))
 }
 
 /// Where the lockfile's `version` of the Package moves `repo` from `current`, by its Version tag.
