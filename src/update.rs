@@ -135,17 +135,20 @@ pub fn run(
         if !chosen.contains(&repo.id) {
             continue;
         }
-        match found.and_then(|found| assessing.settle(repo, found)) {
-            Ok(Assessed::Move(found)) => moves.push(found),
-            Ok(Assessed::Stay(note)) => assessing.say.status(note),
-            Ok(_) => unreachable!("settle decides what is left to decide"),
+        match found
+            .map_err(Stop::Refused)
+            .and_then(|found| assessing.settle(repo, found))
+        {
+            Ok(moved) => moves.extend(moved),
             Err(stop) => {
-                if let Stop::Asked(abort) = stop {
-                    return Err(Failure::Asked(abort));
-                }
+                let why = match stop {
+                    Stop::Asked(abort) => return Err(Failure::Asked(abort)),
+                    Stop::Source(e) => e.to_string(),
+                    Stop::Refused(why) => why,
+                };
                 assessing
                     .say
-                    .shown(format!("`{}` was not updated: {}", repo.id, why(stop)));
+                    .shown(format!("`{}` was not updated: {why}", repo.id));
                 skipped += 1;
             }
         }
@@ -156,6 +159,18 @@ pub fn run(
             skipped,
         });
     }
+    Ok(apply(source, root, moves, skipped, request.force, say))
+}
+
+/// Edit once for all `moves`, update the Lock, sync, and say `id  old → new` for each.
+fn apply(
+    source: &dyn Source,
+    root: &Path,
+    moves: Vec<Move>,
+    skipped: usize,
+    force: bool,
+    say: &mut dyn Say,
+) -> Done {
     let changes: Vec<RepoChange> = moves
         .iter()
         .map(|found| RepoChange {
@@ -170,7 +185,7 @@ pub fn run(
         .map(|found| found.id.clone())
         .collect();
     let flags = SyncFlags {
-        force: request.force,
+        force,
         upgrade: if upgrade.is_empty() {
             Upgrade::None
         } else {
@@ -188,10 +203,10 @@ pub fn run(
             say.status(found.line);
         }
     }
-    Ok(Done {
+    Done {
         report: Some(report),
         skipped,
-    })
+    }
 }
 
 /// A Repo that moves.
@@ -211,7 +226,7 @@ struct Move {
 /// What is known about a Repo before anyone is asked anything.
 enum Assessed {
     Move(Move),
-    /// Nothing to do, and the note says why.
+    /// Nothing to do: the reason, which reads after "`id` is" in a note and after the id in a label.
     Stay(String),
     /// The lockfile has several versions of the Package: which one moves it is for the person.
     Choose(Choice),
@@ -228,13 +243,9 @@ struct Choice {
     tags: Vec<String>,
 }
 
-/// Why a Repo could not be assessed or moved.
-fn why(stop: Stop) -> String {
-    match stop {
-        Stop::Source(e) => e.to_string(),
-        Stop::Refused(why) => why,
-        Stop::Asked(_) => unreachable!("a question that ended is not a skip"),
-    }
+/// The reason a Repo cannot be assessed.
+fn fail(why: impl ToString) -> String {
+    why.to_string()
 }
 
 /// The reason a Repo is left as it is, as a `Stop` that is `Refused`.
@@ -255,7 +266,7 @@ struct Assessing<'a, 'p> {
 impl Assessing<'_, '_> {
     /// What is known about `repo` from the remote and the lockfile alone: no question, no
     /// outline, no look at the Checkout.
-    fn find(&mut self, repo: RepoRef, request: &Request) -> Result<Assessed, Stop> {
+    fn find(&mut self, repo: RepoRef, request: &Request) -> Result<Assessed, String> {
         match request.git_ref {
             Some(git_ref) => Ok(self.set(repo, git_ref)),
             None => self.follow(repo),
@@ -264,11 +275,10 @@ impl Assessing<'_, '_> {
 
     /// Decide what `found` comes to for a Repo the person named or picked: hold it back if its
     /// Checkout has changes, ask what it needs, then see what the new Ref breaks.
-    fn settle(&mut self, repo: RepoRef, found: Assessed) -> Result<Assessed, Stop> {
-        if let Assessed::Stay(_) = found {
-            return Ok(found);
+    fn settle(&mut self, repo: RepoRef, found: Assessed) -> Result<Option<Move>, Stop> {
+        if !matches!(found, Assessed::Stay(_)) {
+            self.must_be_clean(repo.id)?;
         }
-        self.must_be_clean(repo.id)?;
         let found = match found {
             Assessed::Choose(choice) => self.choose(repo, choice)?,
             Assessed::Deleted => self.ask_ref(repo)?,
@@ -276,14 +286,21 @@ impl Assessing<'_, '_> {
         };
         match found {
             Assessed::Move(found) => self.mend(repo, found),
-            stay => Ok(stay),
+            Assessed::Stay(reason) => Ok(self.stays(repo.id, &reason)),
+            Assessed::Choose(_) | Assessed::Deleted => unreachable!("asked above"),
         }
+    }
+
+    /// Say `id` stays, and why.
+    fn stays(&mut self, id: &str, reason: &str) -> Option<Move> {
+        self.say.status(format!("`{id}` is {reason}"));
+        None
     }
 
     /// The multi-select over `found`, nothing ticked: the ids of the Repos picked.
     fn pick<'r>(
         &mut self,
-        found: &[(RepoRef<'r>, Result<Assessed, Stop>)],
+        found: &[(RepoRef<'r>, Result<Assessed, String>)],
     ) -> Result<Vec<&'r str>, Abort> {
         let labels: Vec<String> = found
             .iter()
@@ -302,7 +319,7 @@ impl Assessing<'_, '_> {
     }
 
     /// `id  current → new`, or why there is none.
-    fn label(&self, id: &str, found: &Result<Assessed, Stop>) -> String {
+    fn label(&self, id: &str, found: &Result<Assessed, String>) -> String {
         let dirty = !self.force
             && matches!(self.source.inspect(id),
                 Ok(Observed::At { dirty_files, .. }) if !dirty_files.is_empty());
@@ -313,19 +330,14 @@ impl Assessing<'_, '_> {
                 format!("{id}  {} → choose version…{held}", choice.current)
             }
             Ok(Assessed::Deleted) => format!("{id}  (its Ref is no longer in the remote){held}"),
-            Ok(Assessed::Stay(note)) => {
-                let note = note.strip_prefix(&format!("`{id}` is ")).unwrap_or(note);
-                format!("{id}  {note}")
-            }
-            Err(Stop::Source(e)) => format!("{id}  (cannot check: {e})"),
-            Err(Stop::Refused(why)) => format!("{id}  (cannot check: {why})"),
-            Err(Stop::Asked(_)) => unreachable!("finding asks nothing"),
+            Ok(Assessed::Stay(reason)) => format!("{id}  {reason}"),
+            Err(why) => format!("{id}  (cannot check: {why})"),
         }
     }
 
     /// Outline where `found` goes. If that tree lacks a `path` or `start` file of the Repo, say
     /// so and ask `Update?`: yes sets the broken fields again, no leaves the Repo as it is.
-    fn mend(&mut self, repo: RepoRef, mut found: Move) -> Result<Assessed, Stop> {
+    fn mend(&mut self, repo: RepoRef, mut found: Move) -> Result<Option<Move>, Stop> {
         let (id, url) = (repo.id, repo.repo.url.as_ref());
         let to = found
             .git_ref
@@ -335,7 +347,7 @@ impl Assessing<'_, '_> {
         let (paths, start) = (repo.repo.path_strings(), repo.repo.start_strings());
         let gone = listing::gone(&outline.paths, &paths, &start);
         if gone.is_empty() {
-            return Ok(Assessed::Move(found));
+            return Ok(Some(found));
         }
         let Some(prompter) = self.prompter.as_deref_mut() else {
             return Err(skip(format!(
@@ -364,12 +376,9 @@ impl Assessing<'_, '_> {
         match fill_update(&broken, prompter, self.say).map_err(Stop::Asked)? {
             Some(fields) => {
                 found.fields = fields;
-                Ok(Assessed::Move(found))
+                Ok(Some(found))
             }
-            None => Ok(Assessed::Stay(format!(
-                "`{id}` is left at `{}`",
-                repo.repo.effective_ref()
-            ))),
+            None => Ok(self.stays(id, &format!("left at `{}`", repo.repo.effective_ref()))),
         }
     }
 
@@ -378,31 +387,30 @@ impl Assessing<'_, '_> {
         let id = repo.id;
         let current = repo.repo.effective_ref();
         if git_ref == current {
-            return Assessed::Stay(format!("`{id}` is already at `{current}`"));
+            return Assessed::Stay(format!("already at `{current}`"));
         }
         moved_to(id, current, git_ref)
     }
 
     /// Where the news about `repo` comes from depends on its Ref (see the module docs).
-    fn follow(&mut self, repo: RepoRef) -> Result<Assessed, Stop> {
-        let id = repo.id;
+    fn follow(&mut self, repo: RepoRef) -> Result<Assessed, String> {
         let git_ref = repo.repo.configured_ref();
         if git_ref.is_some_and(is_full_sha) {
-            return Ok(Assessed::Stay(format!(
-                "`{id}` is pinned to a commit; use `--ref` to move it"
-            )));
+            return Ok(Assessed::Stay(
+                "pinned to a commit; use `--ref` to move it".into(),
+            ));
         }
         let Some(git_ref) = git_ref else {
             return self.by_remote(repo);
         };
-        let tags = self.source.tags(repo.repo.url.as_ref()).map_err(skip)?;
+        let tags = self.source.tags(repo.repo.url.as_ref()).map_err(fail)?;
         if !tags.iter().any(|tag| tag == git_ref) {
             return self.by_remote(repo);
         }
         let Some(origin) = &repo.repo.origin else {
-            return Ok(Assessed::Stay(format!(
-                "`{id}` is pinned and has no origin; use `--ref` to move it"
-            )));
+            return Ok(Assessed::Stay(
+                "pinned and has no origin; use `--ref` to move it".into(),
+            ));
         };
         let package = Package::from_origin(origin.as_ref())
             .expect("an origin is validated when the config loads");
@@ -416,16 +424,16 @@ impl Assessing<'_, '_> {
         package: &Package,
         current: &str,
         tags: &[String],
-    ) -> Result<Assessed, Stop> {
-        let (id, name) = (repo.id, &package.name);
-        let up_to_date = |why: String| Ok(Assessed::Stay(format!("`{id}` is up to date ({why})")));
+    ) -> Result<Assessed, String> {
+        let name = &package.name;
+        let up_to_date = |why: String| Ok(Assessed::Stay(format!("up to date ({why})")));
         let found = match used::find(package, self.root) {
             Lookup::Found(found) => found,
             Lookup::Missing => {
                 return up_to_date(format!("no Package lockfile found for `{name}`"));
             }
             Lookup::Unreadable { file, why } => {
-                return Err(skip(format!("cannot read {}: {why}", file.display())));
+                return Err(fail(format!("cannot read {}: {why}", file.display())));
             }
         };
         let file = found
@@ -471,19 +479,19 @@ impl Assessing<'_, '_> {
     }
 
     /// A branch Ref moves when the remote's commit is not the Lock's.
-    fn by_remote(&mut self, repo: RepoRef) -> Result<Assessed, Stop> {
+    fn by_remote(&mut self, repo: RepoRef) -> Result<Assessed, String> {
         let id = repo.id;
         let Some(locked) = self.lock.as_ref().and_then(|lock| lock.get(id)) else {
-            return Ok(Assessed::Stay(format!(
-                "`{id}` is not locked yet; `refs sync` locks it"
-            )));
+            return Ok(Assessed::Stay(
+                "not locked yet; `refs sync` locks it".into(),
+            ));
         };
         let now = match self.source.resolve(repo) {
             Err(SourceError::RefNotFound { .. }) => return Ok(Assessed::Deleted),
-            now => now.map_err(skip)?,
+            now => now.map_err(fail)?,
         };
         if now.sha() == locked.pin.sha() {
-            return Ok(Assessed::Stay(format!("`{id}` is up to date")));
+            return Ok(Assessed::Stay("up to date".into()));
         }
         Ok(Assessed::Move(Move {
             id: id.into(),
@@ -550,10 +558,10 @@ fn by_version(
 ) -> Assessed {
     let id = repo.id;
     match tag_for(name, version, tags) {
-        Some(tag) if tag == current => Assessed::Stay(format!("`{id}` is up to date")),
+        Some(tag) if tag == current => Assessed::Stay("up to date".into()),
         Some(tag) => moved_to(id, current, tag),
         None => Assessed::Stay(format!(
-            "`{id}` is not moved: {name}@{version} is not tagged in {}; use `--ref` to choose a tag",
+            "not moved: {name}@{version} is not tagged in {}; use `--ref` to choose a tag",
             repo.repo.url.as_ref()
         )),
     }

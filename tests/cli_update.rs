@@ -827,10 +827,7 @@ fn bare_update_offers_every_repo_with_nothing_ticked_and_moves_the_picked_one() 
     assert_eq!(offered.len(), 3, "{offered:?}");
     assert_eq!(offered[0], "foo  foo-js-1.0.0 → foo-js-1.2.3");
     assert_eq!(offered[1], "bar  up to date");
-    assert!(
-        offered[2].starts_with("baz  (cannot check: ") && offered[2].contains("remote down"),
-        "{offered:?}"
-    );
+    assert_eq!(offered[2], "baz  (cannot check: remote down)");
     assert!(prompter.preselected[0].is_empty());
     assert!(run.err.contains("checking 3 repos…"), "{}", run.err);
     let toml = p.read("refs.toml");
@@ -843,10 +840,7 @@ fn picking_a_repo_that_could_not_be_checked_skips_it() {
     let p = Project::new(THREE);
     p.source.fail(BAZ, Method::Tags, "remote down");
     let before = p.read("refs.toml");
-    let mut prompter = Script::new([Answer::Pick(&[])]);
-    p.run(&["update"], Some(&mut prompter));
-    let baz: &'static str = Box::leak(prompter.offered[0][2].clone().into_boxed_str());
-    let mut prompter = Script::new([Answer::Pick(Box::leak(Box::new([baz])))]);
+    let mut prompter = Script::new([Answer::Pick(&["baz  (cannot check: remote down)"])]);
 
     let run = p.run(&["update"], Some(&mut prompter));
 
