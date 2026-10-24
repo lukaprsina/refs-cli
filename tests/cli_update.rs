@@ -43,6 +43,7 @@ fn foo_at(git_ref: &str) -> String {
 
 struct Run {
     code: u8,
+    out: String,
     err: String,
 }
 
@@ -97,6 +98,7 @@ impl Project {
         );
         Run {
             code,
+            out: String::from_utf8(out).unwrap(),
             err: String::from_utf8(err).unwrap(),
         }
     }
@@ -914,4 +916,99 @@ fn naming_ids_skips_the_picker() {
 
     assert_eq!(run.code, 0, "{}", run.err);
     assert!(prompter.offered.is_empty());
+}
+
+// ---- --list ----
+
+#[test]
+fn list_prints_what_would_move_on_stdout_and_changes_nothing() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3"]);
+    let before = (p.read("refs.toml"), p.read("refs.lock"));
+
+    let bare = p.update(&["--list"]);
+    let mut prompter = Script::new([]);
+    let in_terminal = p.run(&["update", "--list"], Some(&mut prompter));
+
+    for run in [&bare, &in_terminal] {
+        assert_eq!(run.code, 0, "{}", run.err);
+        assert_eq!(run.out, "foo  foo-js-1.0.0 → foo-js-1.2.3\n");
+        assert!(run.err.contains("checking 1 repos…"), "{}", run.err);
+        assert!(!run.err.contains("→"), "{}", run.err);
+    }
+    assert!(prompter.questions().is_empty());
+    assert_eq!((p.read("refs.toml"), p.read("refs.lock")), before);
+}
+
+#[test]
+fn list_says_what_a_mover_would_break() {
+    let p = Project::new(&foo_with_docs());
+    old_is_gone(&p);
+    let before = (p.read("refs.toml"), p.read("refs.lock"));
+
+    let run = p.update(&["--list"]);
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(
+        run.out,
+        "foo  foo-js-1.0.0 → foo-js-1.2.3\n  no longer has paths `old`; start `old/a.md`\n"
+    );
+    assert_eq!((p.read("refs.toml"), p.read("refs.lock")), before);
+}
+
+#[test]
+fn list_marks_a_dirty_mover_with_its_files_and_still_shows_its_breaks() {
+    let p = Project::new(&foo_with_docs());
+    old_is_gone(&p);
+    make_dirty(&p, "foo");
+    let before = (p.read("refs.toml"), p.read("refs.lock"));
+
+    let run = p.update(&["--list"]);
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(
+        run.out,
+        "foo  foo-js-1.0.0 → foo-js-1.2.3\n  no longer has paths `old`; start `old/a.md`\n  \
+         would be skipped: uncommitted changes (notes.txt)\n"
+    );
+    assert_eq!((p.read("refs.toml"), p.read("refs.lock")), before);
+}
+
+#[test]
+fn list_shows_an_ambiguous_version_and_never_asks() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.write("package-lock.json", NPM_LOCK_TWO);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3", "foo-js-1.10.0"]);
+    let mut prompter = Script::new([]);
+
+    let run = p.run(&["update", "--list"], Some(&mut prompter));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(
+        run.out,
+        "foo  foo-js-1.0.0 → choose version…\n  package-lock.json has 1.2.3, 1.10.0\n"
+    );
+    assert!(prompter.questions().is_empty());
+}
+
+#[test]
+fn list_with_ids_lists_only_those_and_offline_is_an_error() {
+    let p = Project::new(&format!(
+        "{}\n[repos.bar]\nurl = \"{BAR}\"\nref = \"v1\"\n",
+        foo_at("foo-js-1.0.0")
+    ));
+    p.source.set_tags(BAR, ["v1"]);
+
+    let run = p.update(&["--list", "bar"]);
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(
+        run.out,
+        "bar  pinned and has no origin; use `--ref` to move it\n"
+    );
+
+    let offline = p.run(&["--offline", "update", "--list"], None);
+    assert_eq!(offline.code, 1, "{}", offline.err);
+    assert!(offline.err.contains("needs the network"), "{}", offline.err);
+    assert_eq!(offline.out, "");
 }

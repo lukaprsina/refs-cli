@@ -4,6 +4,7 @@
 //! branch Ref (no Ref, or one that is not a tag) follows the remote, and moves when the remote's
 //! commit differs from the Lock's; a commit, or a tag with no Origin, has no news and a note
 //! pointing at `--ref`. `--ref` sets the Ref by hand. The Registry is never asked.
+//! `--list` stops after that assessment and prints what each Repo would do and break.
 //!
 //! Everything that can be found out before the edit is: a Repo that cannot be assessed, whose
 //! new Ref does not exist or whose Checkout has uncommitted changes (unless forced) is skipped
@@ -17,7 +18,7 @@ use crate::config::{Config, RepoRef, is_full_sha};
 use crate::diagnostic::LockError;
 use crate::diagnostic::SourceError;
 use crate::edit::{Edit, Fields, RepoChange};
-use crate::listing;
+use crate::listing::{self, Gone};
 use crate::lock::Lock;
 use crate::packages::{self, manifest_paths};
 use crate::plan::Upgrade;
@@ -26,7 +27,7 @@ use crate::registry::Package;
 use crate::registry::pin::{Say, Stop, choose_version};
 use crate::registry::tag::tag_for;
 use crate::registry::used::{self, Lookup, Pick};
-use crate::source::{Observed, Source};
+use crate::source::{Observed, Outline, Source};
 use crate::sync::{self, Report, SyncFlags};
 
 /// What `refs update` was asked for.
@@ -36,6 +37,8 @@ pub struct Request<'a> {
     pub git_ref: Option<&'a str>,
     /// Move a Repo whose Checkout has uncommitted changes, discarding them.
     pub force: bool,
+    /// `--list`: say what would move and what it would break; ask nothing, change nothing.
+    pub list: bool,
     pub offline: bool,
 }
 
@@ -57,6 +60,8 @@ pub struct Done {
     pub report: Option<Report>,
     /// Repos that could not be assessed or moved, each reported already.
     pub skipped: usize,
+    /// `--list`: the lines to print, one block per Repo.
+    pub listing: String,
 }
 
 /// Update the Repos `request` names. What it found out and decided is said through `say`: notes
@@ -93,6 +98,7 @@ pub fn run(
     let ids: Vec<&str> = match request.ids {
         [] => match prompter {
             Some(_) => active.repos().map(|repo| repo.id).collect(),
+            None if request.list => active.repos().map(|repo| repo.id).collect(),
             None => {
                 return Err(Failure::Usage(
                     "`refs update` without repo names needs a terminal; name the repos or use `--list`"
@@ -113,7 +119,7 @@ pub fn run(
     };
     let mut seen = Vec::<&str>::new();
     let mut found = Vec::new();
-    if request.ids.is_empty() && !ids.is_empty() {
+    if (request.ids.is_empty() || request.list) && !ids.is_empty() {
         assessing
             .say
             .status(format!("checking {} repos…", ids.len()));
@@ -125,6 +131,13 @@ pub fn run(
         seen.push(id);
         let repo = active.get(id).expect("the ids were checked");
         found.push((repo, assessing.find(repo, request)));
+    }
+    if request.list {
+        return Ok(Done {
+            report: None,
+            skipped: 0,
+            listing: assessing.listing(&found),
+        });
     }
     let chosen = match request.ids.is_empty() {
         true => assessing.pick(&found).map_err(Failure::Asked)?,
@@ -157,6 +170,7 @@ pub fn run(
         return Ok(Done {
             report: None,
             skipped,
+            listing: String::new(),
         });
     }
     Ok(apply(source, root, moves, skipped, request.force, say))
@@ -206,6 +220,7 @@ fn apply(
     Done {
         report: Some(report),
         skipped,
+        listing: String::new(),
     }
 }
 
@@ -304,7 +319,14 @@ impl Assessing<'_, '_> {
     ) -> Result<Vec<&'r str>, Abort> {
         let labels: Vec<String> = found
             .iter()
-            .map(|(repo, found)| self.label(repo.id, found))
+            .map(|(repo, found)| {
+                let moves = !matches!(found, Ok(Assessed::Stay(_)) | Err(_));
+                let held = match moves && !self.force && !self.dirty_files(repo.id).is_empty() {
+                    true => "  (uncommitted changes)",
+                    false => "",
+                };
+                format!("{}{held}", self.label(repo.id, found))
+            })
             .collect();
         let Some(prompter) = self.prompter.as_deref_mut() else {
             return Ok(vec![]);
@@ -320,19 +342,59 @@ impl Assessing<'_, '_> {
 
     /// `id  current → new`, or why there is none.
     fn label(&self, id: &str, found: &Result<Assessed, String>) -> String {
-        let dirty = !self.force
-            && matches!(self.source.inspect(id),
-                Ok(Observed::At { dirty_files, .. }) if !dirty_files.is_empty());
-        let held = if dirty { "  (uncommitted changes)" } else { "" };
         match found {
-            Ok(Assessed::Move(found)) => format!("{}{held}", found.line),
-            Ok(Assessed::Choose(choice)) => {
-                format!("{id}  {} → choose version…{held}", choice.current)
-            }
-            Ok(Assessed::Deleted) => format!("{id}  (its Ref is no longer in the remote){held}"),
+            Ok(Assessed::Move(found)) => found.line.clone(),
+            Ok(Assessed::Choose(choice)) => format!("{id}  {} → choose version…", choice.current),
+            Ok(Assessed::Deleted) => format!("{id}  (its Ref is no longer in the remote)"),
             Ok(Assessed::Stay(reason)) => format!("{id}  {reason}"),
             Err(why) => format!("{id}  (cannot check: {why})"),
         }
+    }
+
+    /// The changed files of the Checkout of `id`, if it has any.
+    fn dirty_files(&self, id: &str) -> Vec<String> {
+        match self.source.inspect(id) {
+            Ok(Observed::At { dirty_files, .. }) => dirty_files,
+            _ => vec![],
+        }
+    }
+
+    /// `--list`: for each Repo its label, then a line for what the move would break and for why
+    /// it would be skipped. Nothing is asked.
+    fn listing(&self, found: &[(RepoRef, Result<Assessed, String>)]) -> String {
+        let mut text = String::new();
+        for (repo, found) in found {
+            text += &format!("{}\n", self.label(repo.id, found));
+            let mut notes = vec![];
+            match found {
+                Ok(Assessed::Move(found)) => match self.look(*repo, found) {
+                    Ok((_, gone)) if gone.is_empty() => {}
+                    Ok((_, gone)) => notes.push(format!("no longer has {gone}")),
+                    Err(e) => notes.push(format!("cannot check: {e}")),
+                },
+                Ok(Assessed::Choose(choice)) => {
+                    let versions = choice.versions.join(", ");
+                    notes.push(format!("{} has {versions}", choice.file));
+                }
+                _ => {}
+            }
+            if !matches!(found, Ok(Assessed::Stay(_)) | Err(_)) {
+                match self.hold_of(repo.id) {
+                    Some(Hold::Dirty(files)) => notes.push(format!(
+                        "would be skipped: uncommitted changes ({})",
+                        files.join(", ")
+                    )),
+                    Some(Hold::Uninspectable(e)) => {
+                        notes.push(format!("would be skipped: cannot be inspected: {e}"));
+                    }
+                    None => {}
+                }
+            }
+            for note in notes {
+                text += &format!("  {note}\n");
+            }
+        }
+        text
     }
 
     /// Outline where `found` goes. If that tree lacks a `path` or `start` file of the Repo, say
@@ -343,9 +405,8 @@ impl Assessing<'_, '_> {
             .git_ref
             .as_deref()
             .unwrap_or(repo.repo.effective_ref());
-        let outline = self.source.outline(url, &found.look_at).map_err(skip)?;
-        let (paths, start) = (repo.repo.path_strings(), repo.repo.start_strings());
-        let gone = listing::gone(&outline.paths, &paths, &start);
+        let (outline, gone) = self.look(repo, &found).map_err(skip)?;
+        let paths = repo.repo.path_strings();
         if gone.is_empty() {
             return Ok(Some(found));
         }
@@ -380,6 +441,19 @@ impl Assessing<'_, '_> {
             }
             None => Ok(self.stays(id, &format!("left at `{}`", repo.repo.effective_ref()))),
         }
+    }
+
+    /// Outline where `found` goes, and what that tree lacks of the Repo's `paths` and `start`.
+    fn look(&self, repo: RepoRef, found: &Move) -> Result<(Outline, Gone), SourceError> {
+        let outline = self
+            .source
+            .outline(repo.repo.url.as_ref(), &found.look_at)?;
+        let gone = listing::gone(
+            &outline.paths,
+            &repo.repo.path_strings(),
+            &repo.repo.start_strings(),
+        );
+        Ok((outline, gone))
     }
 
     /// `--ref`: the Ref asked for, if the remote has it.
@@ -527,25 +601,36 @@ impl Assessing<'_, '_> {
         Ok(moved_to(id, old, new.trim()))
     }
 
-    /// The reason not to move the Checkout of `id`, if there is one.
-    fn hold_of(&self, id: &str) -> Option<String> {
+    /// Why the Checkout of `id` must not be moved over, if it must not.
+    fn hold_of(&self, id: &str) -> Option<Hold> {
         match self.source.inspect(id) {
-            Ok(Observed::At { dirty_files, .. }) if !dirty_files.is_empty() => Some(format!(
-                "its checkout has uncommitted changes ({}); `--force` discards them",
-                dirty_files.join(", ")
-            )),
-            Err(e) => Some(format!("its checkout cannot be inspected: {e}")),
+            Ok(Observed::At { dirty_files, .. }) if !dirty_files.is_empty() => {
+                Some(Hold::Dirty(dirty_files))
+            }
+            Err(e) => Some(Hold::Uninspectable(e.to_string())),
             _ => None,
         }
     }
 
     /// A Repo that moves is left alone if its Checkout has changes `--force` was not given for.
     fn must_be_clean(&self, id: &str) -> Result<(), Stop> {
-        match self.force {
-            true => Ok(()),
-            false => self.hold_of(id).map_or(Ok(()), |why| Err(skip(why))),
+        match (self.force, self.hold_of(id)) {
+            (false, Some(Hold::Dirty(files))) => Err(skip(format!(
+                "its checkout has uncommitted changes ({}); `--force` discards them",
+                files.join(", ")
+            ))),
+            (false, Some(Hold::Uninspectable(e))) => {
+                Err(skip(format!("its checkout cannot be inspected: {e}")))
+            }
+            _ => Ok(()),
         }
     }
+}
+
+/// Why a Checkout is not moved over.
+enum Hold {
+    Dirty(Vec<String>),
+    Uninspectable(String),
 }
 
 /// Where the lockfile's `version` of the Package moves `repo` from `current`, by its Version tag.

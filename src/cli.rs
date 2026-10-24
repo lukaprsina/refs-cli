@@ -172,6 +172,9 @@ struct UpdateArgs {
     /// Move a repo whose checkout has uncommitted changes, discarding them
     #[arg(long)]
     force: bool,
+    /// Print what would move and what it would break, and change nothing
+    #[arg(long, conflicts_with = "force")]
+    list: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -387,6 +390,7 @@ pub fn run_on<'a>(
                             ids: &args.ids,
                             git_ref: args.git_ref.as_deref(),
                             force: args.force,
+                            list: args.list,
                             offline: cli.offline,
                         };
                         run_update(source, &root, &config, &request, prompter, console)
@@ -686,6 +690,7 @@ fn run_update(
 ) -> u8 {
     match update::run(source, root, config, request, prompter, console) {
         Ok(done) => {
+            console.data(&done.listing);
             let code = done
                 .report
                 .map_or(0, |report| print_report(&report, false, console));
