@@ -118,7 +118,7 @@ Commit `refs.toml`, `refs.lock` and `AGENTS.md`. `.references/` is excluded thro
 | `refs list` | Show the repos; `--status` adds the lock and checkout state |
 | `refs lock` | Resolve refs to commits in `refs.lock`; `--upgrade` moves floating refs |
 | `refs sync` | Make checkouts and the block match `refs.lock`; `--check` exits 3 when out of date, for CI |
-| `refs update <id…>` | Move repos: a pinned repo added from `npm:`, `cargo:` or `pypi:` to the version your lockfile uses now, a branch to the remote's newest commit. `--ref <r>` sets the ref of one repo; `--force` moves a repo whose checkout has changes |
+| `refs update [id…]` | Move repos (no ids, in a terminal: pick them from a list of `current → new`, nothing ticked): a pinned repo added from `npm:`, `cargo:` or `pypi:` to the version your lockfile uses now, a branch to the remote's newest commit. `--ref <r>` sets the ref of one repo; `--force` moves a repo whose checkout has changes |
 | `refs self update` | Replace this program with the latest release |
 
 Flags: `refs <command> --help`. `--offline` (any command) never contacts the network. Exit codes: 0 ok, 1 error, 2 usage, 3 out of date (`--check`).

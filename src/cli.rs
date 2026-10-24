@@ -163,8 +163,8 @@ struct InitArgs {
 
 #[derive(Debug, Args)]
 struct UpdateArgs {
-    /// The repos to move
-    #[arg(required = true, value_name = "ID")]
+    /// The repos to move; none opens a picker
+    #[arg(value_name = "ID")]
     ids: Vec<String>,
     /// Set the ref of the one repo named, without reading a lockfile
     #[arg(long = "ref", value_name = "REF")]

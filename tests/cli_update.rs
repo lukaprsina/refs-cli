@@ -604,10 +604,15 @@ fn update_is_refused_offline() {
 }
 
 #[test]
-fn update_without_ids_is_a_usage_error() {
+fn bare_update_without_a_terminal_is_a_usage_error_pointing_at_list() {
     let p = Project::new(&foo_at("foo-js-1.0.0"));
+    let calls = p.source.calls().len();
 
-    assert_eq!(p.update(&[]).code, 2);
+    let run = p.update(&[]);
+
+    assert_eq!(run.code, 2, "{}", run.err);
+    assert!(run.err.contains("--list"), "{}", run.err);
+    assert_eq!(p.source.calls().len(), calls);
 }
 
 #[test]
@@ -803,4 +808,116 @@ fn a_deleted_ref_is_asked_again_in_a_terminal_and_an_error_without_one() {
         [("Ref".to_owned(), Some("gone".to_owned()))]
     );
     assert!(p.read("refs.toml").contains("ref = \"main\""));
+}
+
+// ---- bare `update`: the picker ----
+
+#[test]
+fn bare_update_offers_every_repo_with_nothing_ticked_and_moves_the_picked_one() {
+    let p = Project::new(THREE);
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3"]);
+    p.source.fail(BAZ, Method::Tags, "remote down");
+    let mut prompter = Script::new([Answer::Pick(&["foo  foo-js-1.0.0 → foo-js-1.2.3"])]);
+
+    let run = p.run(&["update"], Some(&mut prompter));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    let offered = &prompter.offered[0];
+    assert_eq!(offered.len(), 3, "{offered:?}");
+    assert_eq!(offered[0], "foo  foo-js-1.0.0 → foo-js-1.2.3");
+    assert_eq!(offered[1], "bar  up to date");
+    assert!(
+        offered[2].starts_with("baz  (cannot check: ") && offered[2].contains("remote down"),
+        "{offered:?}"
+    );
+    assert!(prompter.preselected[0].is_empty());
+    assert!(run.err.contains("checking 3 repos…"), "{}", run.err);
+    let toml = p.read("refs.toml");
+    assert!(toml.contains("ref = \"foo-js-1.2.3\""), "{toml}");
+    assert!(toml.contains("ref = \"v1\""), "{toml}");
+}
+
+#[test]
+fn picking_a_repo_that_could_not_be_checked_skips_it() {
+    let p = Project::new(THREE);
+    p.source.fail(BAZ, Method::Tags, "remote down");
+    let before = p.read("refs.toml");
+    let mut prompter = Script::new([Answer::Pick(&[])]);
+    p.run(&["update"], Some(&mut prompter));
+    let baz: &'static str = Box::leak(prompter.offered[0][2].clone().into_boxed_str());
+    let mut prompter = Script::new([Answer::Pick(Box::leak(Box::new([baz])))]);
+
+    let run = p.run(&["update"], Some(&mut prompter));
+
+    assert_eq!(run.code, 1, "{}", run.err);
+    assert!(run.err.contains("1 repo was not updated"), "{}", run.err);
+    assert_eq!(p.read("refs.toml"), before);
+}
+
+#[test]
+fn an_ambiguous_lockfile_version_is_labelled_and_asked_only_when_picked() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.write("package-lock.json", NPM_LOCK_TWO);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3", "foo-js-1.10.0"]);
+
+    let mut left = Script::new([Answer::Pick(&[])]);
+    let run = p.run(&["update"], Some(&mut left));
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(left.offered[0], ["foo  foo-js-1.0.0 → choose version…"]);
+    assert_eq!(left.questions().len(), 1, "{:?}", left.questions());
+
+    let mut picked = Script::new([
+        Answer::Pick(&["foo  foo-js-1.0.0 → choose version…"]),
+        Answer::Text("1.2.3"),
+    ]);
+    let run = p.run(&["update"], Some(&mut picked));
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(p.read("refs.toml").contains("ref = \"foo-js-1.2.3\""));
+}
+
+#[test]
+fn a_dirty_repo_is_labelled_and_picking_it_skips_it_with_the_files_named() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3"]);
+    make_dirty(&p, "foo");
+    let before = p.read("refs.toml");
+    const LABEL: &str = "foo  foo-js-1.0.0 → foo-js-1.2.3  (uncommitted changes)";
+    let mut prompter = Script::new([Answer::Pick(&[LABEL])]);
+
+    let run = p.run(&["update"], Some(&mut prompter));
+
+    assert_eq!(prompter.offered[0], [LABEL]);
+    assert_eq!(run.code, 1, "{}", run.err);
+    assert!(run.err.contains("notes.txt"), "{}", run.err);
+    assert_eq!(p.read("refs.toml"), before);
+}
+
+#[test]
+fn picking_nothing_or_cancelling_edits_nothing() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3"]);
+    let before = (p.read("refs.toml"), p.read("refs.lock"));
+
+    let mut none = Script::new([Answer::Pick(&[])]);
+    assert_eq!(p.run(&["update"], Some(&mut none)).code, 0);
+    let mut cancelled = Script::new([Answer::Cancel]);
+    assert_ne!(p.run(&["update"], Some(&mut cancelled)).code, 0);
+
+    assert_eq!((p.read("refs.toml"), p.read("refs.lock")), before);
+}
+
+#[test]
+fn naming_ids_skips_the_picker() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3"]);
+    let mut prompter = Script::new([]);
+
+    let run = p.run(&["update", "foo"], Some(&mut prompter));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(prompter.offered.is_empty());
 }
