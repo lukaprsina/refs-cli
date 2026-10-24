@@ -96,6 +96,10 @@ _Avoid_: Store, registry
 What `add` looks at before it asks anything: the Pin a Ref resolves to and every path in that commit's tree, read through the Cache without any file contents. A bad URL or Ref fails here, before anything is edited.
 _Avoid_: Listing, index
 
+**Break**:
+What a new Ref takes from a Repo, found in the Outline of the new Ref before anything is written: a `path` that is no directory in it, or a `start` file that is not in it. A `packages` name the Manifests lack is not one; it is a warning. A Repo that breaks asks `Update?` before it moves.
+_Avoid_: Conflict, invalid
+
 ### Telling the agent
 
 **Agent file**:

@@ -893,6 +893,15 @@ mod outline {
     }
 
     #[test]
+    fn a_commit_id_is_outlined_like_the_ref_that_resolved_to_it() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let by_ref = env.source().outline(&remote.url(), "main").unwrap();
+        let by_sha = env.source().outline(&remote.url(), &remote.sha).unwrap();
+        assert_eq!(by_sha.pin.sha(), remote.sha);
+        assert_eq!(by_sha.paths, by_ref.paths);
+    }
+
+    #[test]
     fn read_fetches_only_the_named_blobs() {
         let (remote, env) = (Remote::new(), Env::new());
         let source = env.source();

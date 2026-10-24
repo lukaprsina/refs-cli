@@ -97,7 +97,7 @@ pub fn run(
         lock,
         prompter,
         say: &mut *say,
-        held: None,
+        force: request.force,
     };
     let (mut moves, mut skipped) = (Vec::<Move>::new(), 0);
     let mut seen = Vec::<&str>::new();
@@ -133,16 +133,13 @@ pub fn run(
         .iter()
         .map(|found| RepoChange {
             id: &found.id,
-            git_ref: match &found.how {
-                How::Ref(to) => Some(to),
-                How::Commit => None,
-            },
+            git_ref: found.git_ref.as_deref(),
             fields: found.fields.clone(),
         })
         .collect();
     let upgrade: Vec<String> = moves
         .iter()
-        .filter(|found| matches!(found.how, How::Commit))
+        .filter(|found| found.git_ref.is_none())
         .map(|found| found.id.clone())
         .collect();
     let flags = SyncFlags {
@@ -173,18 +170,15 @@ pub fn run(
 /// A Repo that moves.
 struct Move {
     id: String,
-    how: How,
+    /// The `ref` that `refs.toml` gets, and the Lock follows from the drift; none when only the
+    /// Lock moves, to the remote's commit now.
+    git_ref: Option<String>,
+    /// What the new tree is looked at by: the new Ref, else the commit the Lock moves to.
+    look_at: String,
     /// `id  old → new`
     line: String,
     /// The lists the new Ref made the person set again.
     fields: Fields,
-}
-
-enum How {
-    /// `refs.toml` gets this `ref`, and the Lock follows from the drift.
-    Ref(String),
-    /// Only the Lock moves, to the remote's commit now.
-    Commit,
 }
 
 enum Assessed {
@@ -204,17 +198,12 @@ struct Assessing<'a, 'p> {
     lock: Option<Lock>,
     prompter: Option<&'a mut (dyn Prompter + 'p)>,
     say: &'a mut dyn Say,
-    /// Why the Repo being assessed may not be moved: its Checkout has uncommitted changes, or
-    /// cannot be inspected. A Repo that stays is not held by it.
-    held: Option<String>,
+    /// Move a Repo whose Checkout has uncommitted changes.
+    force: bool,
 }
 
 impl Assessing<'_, '_> {
     fn assess(&mut self, repo: RepoRef, request: &Request) -> Result<Assessed, Stop> {
-        self.held = match request.force {
-            true => None,
-            false => self.hold_of(repo.id),
-        };
         let found = match request.git_ref {
             Some(git_ref) => self.set(repo, git_ref)?,
             None => self.follow(repo)?,
@@ -222,7 +211,7 @@ impl Assessing<'_, '_> {
         let Assessed::Move(found) = found else {
             return Ok(found);
         };
-        self.must_be_clean()?;
+        self.must_be_clean(repo.id)?;
         self.mend(repo, found)
     }
 
@@ -230,11 +219,11 @@ impl Assessing<'_, '_> {
     /// so and ask `Update?`: yes sets the broken fields again, no leaves the Repo as it is.
     fn mend(&mut self, repo: RepoRef, mut found: Move) -> Result<Assessed, Stop> {
         let (id, url) = (repo.id, repo.repo.url.as_ref());
-        let to = match &found.how {
-            How::Ref(to) => to,
-            How::Commit => repo.repo.effective_ref(),
-        };
-        let outline = self.source.outline(url, to).map_err(skip)?;
+        let to = found
+            .git_ref
+            .as_deref()
+            .unwrap_or(repo.repo.effective_ref());
+        let outline = self.source.outline(url, &found.look_at).map_err(skip)?;
         let (paths, start) = (repo.repo.path_strings(), repo.repo.start_strings());
         let gone = listing::gone(&outline.paths, &paths, &start);
         if gone.is_empty() {
@@ -295,20 +284,21 @@ impl Assessing<'_, '_> {
                 "`{id}` is pinned to a commit; use `--ref` to move it"
             )));
         }
+        let Some(git_ref) = git_ref else {
+            return self.by_remote(repo);
+        };
         let tags = self.source.tags(repo.repo.url.as_ref()).map_err(skip)?;
-        match git_ref {
-            Some(git_ref) if tags.iter().any(|tag| tag == git_ref) => {
-                let Some(origin) = &repo.repo.origin else {
-                    return Ok(Assessed::Stay(format!(
-                        "`{id}` is pinned and has no origin; use `--ref` to move it"
-                    )));
-                };
-                let package = Package::from_origin(origin.as_ref())
-                    .expect("an origin is validated when the config loads");
-                self.by_lockfile(repo, &package, git_ref, &tags)
-            }
-            _ => self.by_remote(repo),
+        if !tags.iter().any(|tag| tag == git_ref) {
+            return self.by_remote(repo);
         }
+        let Some(origin) = &repo.repo.origin else {
+            return Ok(Assessed::Stay(format!(
+                "`{id}` is pinned and has no origin; use `--ref` to move it"
+            )));
+        };
+        let package = Package::from_origin(origin.as_ref())
+            .expect("an origin is validated when the config loads");
+        self.by_lockfile(repo, &package, git_ref, &tags)
     }
 
     /// The Version tag of the version the project's Package lockfile has for `package`.
@@ -340,7 +330,7 @@ impl Assessing<'_, '_> {
             Pick::Nothing => return up_to_date(format!("`{name}` is not in {file}")),
             Pick::One(version) => version.to_owned(),
             Pick::Several(versions) => {
-                self.must_be_clean()?;
+                self.must_be_clean(id)?;
                 choose_version(
                     self.prompter.as_deref_mut(),
                     name,
@@ -378,7 +368,8 @@ impl Assessing<'_, '_> {
         }
         Ok(Assessed::Move(Move {
             id: id.into(),
-            how: How::Commit,
+            git_ref: None,
+            look_at: now.sha().into(),
             line: format!(
                 "{id}  {} → {} ({})",
                 locked.pin.short_id(),
@@ -391,7 +382,7 @@ impl Assessing<'_, '_> {
 
     /// The Ref of `repo` is gone from the remote: ask for another, starting from the old one.
     fn ask_ref(&mut self, repo: RepoRef) -> Result<Assessed, Stop> {
-        self.must_be_clean()?;
+        self.must_be_clean(repo.id)?;
         let (id, old, url) = (repo.id, repo.repo.effective_ref(), repo.repo.url.as_ref());
         let Some(prompter) = self.prompter.as_deref_mut() else {
             return Err(skip(format!(
@@ -423,15 +414,19 @@ impl Assessing<'_, '_> {
     }
 
     /// A Repo that moves is left alone if its Checkout has changes `--force` was not given for.
-    fn must_be_clean(&self) -> Result<(), Stop> {
-        self.held.as_ref().map_or(Ok(()), |why| Err(skip(why)))
+    fn must_be_clean(&self, id: &str) -> Result<(), Stop> {
+        match self.force {
+            true => Ok(()),
+            false => self.hold_of(id).map_or(Ok(()), |why| Err(skip(why))),
+        }
     }
 }
 
 fn moved_to(id: &str, from: &str, to: &str) -> Assessed {
     Assessed::Move(Move {
         id: id.into(),
-        how: How::Ref(to.into()),
+        git_ref: Some(to.into()),
+        look_at: to.into(),
         line: format!("{id}  {from} → {to}"),
         fields: Fields::default(),
     })
