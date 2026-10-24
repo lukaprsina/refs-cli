@@ -313,6 +313,19 @@ fn a_pinned_repo_with_no_origin_moves_to_the_newest_tag_of_its_kind() {
 }
 
 #[test]
+fn list_shows_the_move_to_the_newest_tag_of_its_kind() {
+    let config = foo_at("v1.0.0").replace("origin = \"npm:foo-js\"\n", "");
+    let p = Project::new(&config);
+    with_tags(&p, &["v1.0.0", "v1.1.0"]);
+
+    let run = p.update(&["--list"]);
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(run.out, "foo  v1.0.0 → v1.1.0\n");
+    assert_eq!(p.read("refs.toml"), config);
+}
+
+#[test]
 fn a_tag_with_no_version_stays_with_a_note_pointing_at_ref() {
     let config = foo_at("stable").replace("origin = \"npm:foo-js\"\n", "");
     let p = Project::new(&config);

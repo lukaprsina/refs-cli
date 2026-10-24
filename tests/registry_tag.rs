@@ -118,6 +118,17 @@ fn a_stable_tag_ignores_prereleases_and_a_prerelease_tag_does_not() {
 }
 
 #[test]
+fn build_metadata_does_not_make_a_tag_newer() {
+    let tags = list(&["v1.0.0", "v1.0.0+build", "v1.0.1+a", "v1.0.1+b"]);
+    assert_eq!(newest("v1.0.0", &tags), Some("v1.0.1+b"));
+    assert_eq!(
+        newest("v1.0.0", &list(&["v1.0.0+build", "v1.0.0"])),
+        Some("v1.0.0")
+    );
+    assert_eq!(split("v1.2.3+build").unwrap().1.to_string(), "1.2.3+build");
+}
+
+#[test]
 fn a_tag_with_no_version_has_no_newest() {
     assert_eq!(newest("latest", &list(&["latest", "v1.0.0"])), None);
 }
