@@ -191,6 +191,24 @@ fn a_pin_moves_to_the_version_the_lockfile_uses() {
 }
 
 #[test]
+fn an_unreadable_lockfile_skips_the_repo_naming_the_file_below_the_project() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.write("package-lock.json", "not json");
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3"]);
+    let before = p.read("refs.toml");
+
+    let run = p.update(&["foo"]);
+
+    assert_eq!(run.code, 1, "{}", run.err);
+    assert!(
+        run.err.contains("cannot read package-lock.json: "),
+        "{}",
+        run.err
+    );
+    assert_eq!(p.read("refs.toml"), before);
+}
+
+#[test]
 fn a_downgrade_is_a_move_too() {
     let p = Project::new(&foo_at("foo-js-2.0.0"));
     p.write("package-lock.json", NPM_LOCK_ONE);

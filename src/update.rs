@@ -28,7 +28,7 @@ use crate::prompt::{Abort, Prompter};
 use crate::registry::Package;
 use crate::registry::pin::{Say, Stop, choose_version};
 use crate::registry::tag::{newest, split, tag_for};
-use crate::registry::used::{self, Lookup, Pick};
+use crate::registry::used::{self, Answer};
 use crate::source::{Observed, Outline, Source};
 use crate::sync::{self, Report, SyncFlags};
 use ask::{Broken, fill_update};
@@ -497,27 +497,17 @@ impl Assessing<'_, '_> {
         tags: &[String],
     ) -> Result<Assessed, String> {
         let name = &package.name;
-        let found = match used::find(package, self.root) {
-            Lookup::Found(found) => found,
-            Lookup::Missing => return Ok(by_kind(repo, current, tags).into()),
-            Lookup::Unreadable { file, why } => {
-                return Err(format!("cannot read {}: {why}", file.display()));
+        let version = match used::answer(package, self.root) {
+            Answer::Missing | Answer::Absent { .. } => {
+                return Ok(by_kind(repo, current, tags).into());
             }
-        };
-        let file = found
-            .file
-            .strip_prefix(self.root)
-            .unwrap_or(&found.file)
-            .display()
-            .to_string();
-        let version = match found.pick() {
-            Pick::Nothing => return Ok(by_kind(repo, current, tags).into()),
-            Pick::One(version) => version.to_owned(),
-            Pick::Several(versions) => {
+            Answer::Unreadable { file, why } => return Err(format!("cannot read {file}: {why}")),
+            Answer::One { version, .. } => version,
+            Answer::Several { file, versions, .. } => {
                 return Ok(Assessed::Choose(Choice {
                     name: name.clone(),
                     file,
-                    versions: versions.iter().map(|&v| v.to_owned()).collect(),
+                    versions,
                     current: current.into(),
                     tags: tags.to_vec(),
                 }));

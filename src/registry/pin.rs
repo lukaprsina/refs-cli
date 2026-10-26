@@ -8,7 +8,7 @@ use std::path::Path;
 
 use super::Package;
 use super::tag::tag_for;
-use super::used::{self, Lookup, Pick};
+use super::used::{self, Answer};
 use crate::diagnostic::SourceError;
 use crate::prompt::{Abort, Prompter};
 use crate::source::Source;
@@ -48,7 +48,7 @@ pub enum Pinned {
 }
 
 /// What `package`, in the repo at `url`, is pinned to (see `Pinned`). With a `version` that is the one used; without, the project at `root` is
-/// asked through its Package lockfile (`used::find`, then `Found::pick`). The tag for the
+/// asked through its Package lockfile (`used::answer`). The tag for the
 /// version is one of the `source`'s tags (`tag_for`); `--no-sync` has no `source`. A version
 /// with no tag is never pinned silently: with a `prompter` the person is asked whether to follow
 /// the default branch instead, otherwise it is a warning.
@@ -116,47 +116,42 @@ struct Pinning<'a, 'p> {
 }
 
 impl Pinning<'_, '_> {
-    /// `file` as it is named in a message: relative to the project if it is below it.
-    fn name(&self, file: &Path) -> String {
-        let file = file.strip_prefix(self.root).unwrap_or(file);
-        file.display().to_string()
-    }
-
     fn read_lockfile(&mut self) -> Result<Pinned, Stop> {
         let name = &self.package.name;
-        let found = match used::find(self.package, self.root) {
-            Lookup::Found(found) => found,
-            Lookup::Missing => {
+        match used::answer(self.package, self.root) {
+            Answer::Missing => {
                 self.say.status(format!(
                     "no Package lockfile found for `{name}`; {NOT_PINNED}"
                 ));
-                return Ok(Pinned::Unpinned);
+                Ok(Pinned::Unpinned)
             }
-            Lookup::Unreadable { file, why } => {
-                let file = self.name(&file);
+            Answer::Unreadable { file, why } => {
                 self.say
                     .warning(format!("cannot read {file}: {why}; {NOT_PINNED}"));
-                return Ok(Pinned::Unpinned);
+                Ok(Pinned::Unpinned)
             }
-        };
-        let file = self.name(&found.file);
-        for ignored in &found.ignored {
-            let ignored = self.name(ignored);
-            self.say.status(format!(
-                "{ignored} is also here and was not read; {file} was"
-            ));
-        }
-        match found.pick() {
-            Pick::Nothing => {
+            Answer::Absent { file, ignored } => {
+                self.ignored(&ignored, &file);
                 self.say
                     .status(format!("`{name}` is not in {file}; {NOT_PINNED}"));
                 Ok(Pinned::Unpinned)
             }
-            Pick::One(version) => {
+            Answer::One {
+                file,
+                version,
+                ignored,
+            } => {
+                self.ignored(&ignored, &file);
                 self.say.status(format!("`{name}` is {version} in {file}"));
-                self.settle(version)
+                self.settle(&version)
             }
-            Pick::Several(versions) => {
+            Answer::Several {
+                file,
+                versions,
+                ignored,
+            } => {
+                self.ignored(&ignored, &file);
+                let versions: Vec<&str> = versions.iter().map(String::as_str).collect();
                 let version = choose_version(
                     self.prompter.as_deref_mut(),
                     name,
@@ -166,6 +161,15 @@ impl Pinning<'_, '_> {
                 )?;
                 self.settle(&version)
             }
+        }
+    }
+
+    /// Say which Package lockfiles were left unread in favour of `file`.
+    fn ignored(&mut self, ignored: &[String], file: &str) {
+        for ignored in ignored {
+            self.say.status(format!(
+                "{ignored} is also here and was not read; {file} was"
+            ));
         }
     }
 

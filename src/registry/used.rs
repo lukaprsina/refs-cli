@@ -124,6 +124,63 @@ pub enum Lookup {
     },
 }
 
+/// What the project's Package lockfile says about a package, with the files named as a message
+/// names them: relative to the project if they are below it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {
+    /// No Package lockfile of the ecosystem.
+    Missing,
+    /// The nearest Package lockfile could not be read.
+    Unreadable { file: String, why: String },
+    /// The Package lockfile does not have the package.
+    Absent { file: String, ignored: Vec<String> },
+    /// One version to use (see `Found::pick`).
+    One {
+        file: String,
+        version: String,
+        /// The Package lockfiles that were not read.
+        ignored: Vec<String>,
+    },
+    /// Several, lowest first, and nothing to choose between them.
+    Several {
+        file: String,
+        versions: Vec<String>,
+        ignored: Vec<String>,
+    },
+}
+
+/// What the Package lockfile of the project at `root` says about `package`: `find`, then
+/// `Found::pick`.
+pub fn answer(package: &Package, root: &Path) -> Answer {
+    let name = |file: &Path| {
+        let file = file.strip_prefix(root).unwrap_or(file);
+        file.display().to_string()
+    };
+    let found = match find(package, root) {
+        Lookup::Found(found) => found,
+        Lookup::Missing => return Answer::Missing,
+        Lookup::Unreadable { file, why } => {
+            let file = name(&file);
+            return Answer::Unreadable { file, why };
+        }
+    };
+    let file = name(&found.file);
+    let ignored = found.ignored.iter().map(|file| name(file)).collect();
+    match found.pick() {
+        Pick::Nothing => Answer::Absent { file, ignored },
+        Pick::One(version) => Answer::One {
+            file,
+            version: version.to_owned(),
+            ignored,
+        },
+        Pick::Several(versions) => Answer::Several {
+            file,
+            versions: versions.into_iter().map(str::to_owned).collect(),
+            ignored,
+        },
+    }
+}
+
 /// Look for `package` in the Package lockfile of the project at `project_dir`. The nearest
 /// directory (see `candidate_dirs`) with a Package lockfile of the ecosystem is the one that is read,
 /// whether or not it has the package; in it, the first of the ecosystem's Package lockfiles that

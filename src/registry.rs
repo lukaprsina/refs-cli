@@ -301,7 +301,7 @@ pub struct Expanded {
 /// With `offline` a shorthand is refused, as it needs the network.
 /// A version and a `ref` both pin, so a shorthand with a version is refused when `repo` has a `ref`.
 /// The `ref` is not set here: a shorthand says which package it `requested`, and with a version
-/// (given, or found in a Package lockfile, see `used::find`) `Source::tags` and
+/// (given, or found in a Package lockfile, see `used::answer`) `Source::tags` and
 /// `tag::tag_for` turn that into a tag.
 pub fn expand(
     repo: &AddRepo,
