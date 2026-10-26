@@ -221,3 +221,29 @@ fn offline_with_a_current_lock_plans_normally() {
     let plan = plan_lock(&set, Some(&lock(vec![a_entry()])), &offline()).unwrap();
     assert!(matches!(plan.steps.as_slice(), [Step::Reuse(_)]));
 }
+
+#[test]
+fn a_drift_says_which_repo_and_what() {
+    let said: Vec<String> = [
+        Drift::LockMissing,
+        Drift::Added("a".into()),
+        Drift::Removed("b".into()),
+        Drift::Changed {
+            id: "c".into(),
+            field: Field::Ref,
+        },
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .collect();
+
+    assert_eq!(
+        said,
+        [
+            "refs.lock is missing",
+            "`a` is not locked",
+            "`b` is locked but no longer active",
+            "`c` changed its ref",
+        ]
+    );
+}
