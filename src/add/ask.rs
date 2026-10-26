@@ -41,11 +41,10 @@ pub(super) fn fill_add(
     say: &mut dyn Say,
 ) -> Result<(), Abort> {
     let suggested = id_from_url(&repo.url).to_lowercase();
-    let taken = |id: &str| valid_id(id, config);
     let mut id = repo.id.clone().unwrap_or_else(|| suggested.clone());
     let mut id_open = repo.id.is_none();
-    if id_open && taken(&id).is_err() {
-        id = prompter.text("Id", Some(&id), &taken)?;
+    if id_open && valid_id(&id, config).is_err() {
+        id = ask_id(prompter, &id, config)?;
         id_open = false;
     }
     let mut description_open = repo.description.is_none();
@@ -53,7 +52,7 @@ pub(super) fn fill_add(
         repo.description = known.described.map(str::to_owned);
     }
     if description_open && repo.description.is_none() {
-        repo.description = non_empty(prompter.text(DESCRIPTION, None, &|_| Ok(()))?);
+        repo.description = ask_description(prompter, None)?;
         description_open = false;
     }
     let (paths_open, start_open, packages_open) = (
@@ -81,15 +80,14 @@ pub(super) fn fill_add(
     if open && prompter.confirm("Customize?")? {
         let listed = known.looked_at.map(|o| &o.paths[..]);
         if id_open {
-            id = prompter.text("Id", Some(&id), &taken)?;
+            id = ask_id(prompter, &id, config)?;
         }
         if group_open {
             repo.group = ask_group(config, prompter)?;
         }
         if description_open {
             let current = repo.description.clone();
-            let answer = prompter.text(DESCRIPTION, current.as_deref(), &|_| Ok(()))?;
-            repo.description = non_empty(answer);
+            repo.description = ask_description(prompter, current.as_deref())?;
         }
         if paths_open {
             repo.paths = ask_paths(prompter, listed, (&repo.paths, &repo.paths), say)?;
@@ -113,7 +111,19 @@ pub(super) fn fill_add(
     Ok(())
 }
 
-const DESCRIPTION: &str = "Description (one line on what the repo is)";
+/// The id to add the repo under, starting from `current`, until it is valid and not taken.
+fn ask_id(prompter: &mut dyn Prompter, current: &str, config: &Config) -> Result<String, Abort> {
+    prompter.text("Id", Some(current), &|id| valid_id(id, config))
+}
+
+/// The description, starting from `current`. Empty is none.
+fn ask_description(
+    prompter: &mut dyn Prompter,
+    current: Option<&str>,
+) -> Result<Option<String>, Abort> {
+    let message = "Description (one line on what the repo is)";
+    Ok(non_empty(prompter.text(message, current, &|_| Ok(()))?))
+}
 
 /// The lines that say what `repo` (with this `id`) will be added as.
 fn summary(repo: &AddRepo, id: &str, pin: Option<&Pin>) -> Vec<String> {
