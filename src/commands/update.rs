@@ -6,7 +6,7 @@ use super::{load, with_source};
 use crate::config::Config;
 use crate::diagnostic::SourceError;
 use crate::source::Source;
-use crate::ui::{Console, EXIT_ERROR, Prompter, failed, print_report};
+use crate::ui::{Console, Prompter, failed, print_report, skipped};
 use crate::update;
 
 pub(crate) fn run<'a>(
@@ -37,16 +37,7 @@ pub(crate) fn run<'a>(
                 let code = done
                     .report
                     .map_or(0, |report| print_report(&report, false, console));
-                match done.skipped {
-                    0 => code,
-                    skipped => {
-                        console.problem(match skipped {
-                            1 => "1 repo was not updated".to_owned(),
-                            n => format!("{n} repos were not updated"),
-                        });
-                        code.max(EXIT_ERROR)
-                    }
-                }
+                skipped(done.skipped, code, console)
             }
             Err(failure) => failed(failure, console),
         },

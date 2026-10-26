@@ -228,7 +228,7 @@ pub fn run<'a>(
 ) -> u8 {
     use std::io::IsTerminal;
     let styled = no_color_env_unset();
-    let terminal = Terminal {
+    let terminal = Styled {
         out: styled && std::io::stdout().is_terminal(),
         err: styled && std::io::stderr().is_terminal(),
     };
@@ -254,7 +254,7 @@ pub fn run<'a>(
 /// in `run`, so nothing below it reads the environment. Clap's messages and the dimming of
 /// `list` follow it.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Terminal {
+pub struct Styled {
     pub out: bool,
     pub err: bool,
 }
@@ -274,7 +274,7 @@ pub fn run_with<'a>(
         make_source,
         out,
         err,
-        Terminal::default(),
+        Styled::default(),
         Outside {
             prompter: None,
             updater: &self_update::Unmanaged,
@@ -300,7 +300,7 @@ pub fn run_on<'a>(
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
     out: &mut dyn Write,
     err: &mut dyn Write,
-    terminal: Terminal,
+    terminal: Styled,
     outside: Outside,
 ) -> u8 {
     let cli = match Cli::try_parse_from(args) {
