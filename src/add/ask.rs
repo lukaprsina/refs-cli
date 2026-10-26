@@ -4,11 +4,11 @@
 use crate::config::{self, Config};
 use crate::edit::{AddRepo, id_from_url};
 use crate::manifests::Manifests;
-use crate::prompt::pickers::{ask_optional, ask_packages, ask_paths, ask_start, non_empty};
-use crate::prompt::{Abort, Prompter};
 use crate::registry;
-use crate::registry::pin::Say;
 use crate::source::{Outline, Pin};
+use crate::ui::Say;
+use crate::ui::pickers::{ask_optional, ask_packages, ask_paths, ask_start, non_empty};
+use crate::ui::{Abort, Prompter};
 
 /// What `add` knows about the repo before it asks about the rest.
 #[derive(Default)]
@@ -181,7 +181,7 @@ fn valid_url(url: &str) -> Result<(), String> {
     match registry::forge::name(url) {
         Some(Err(why)) => return Err(format!("`{url}` does not name a repository: {why}")),
         Some(Ok(_)) => return Ok(()),
-        None if registry::is_shorthand(url) => return Ok(()),
+        None if super::expand::is_shorthand(url) => return Ok(()),
         None => {}
     }
     match config::url_problem(url) {

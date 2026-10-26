@@ -1,10 +1,10 @@
 //! Why `add` or `update` ended before it edited anything (ADR 0008, 0012). `cli` is the one place
 //! that turns it into words and an exit code.
 
+use crate::add::pin::Stop;
 use crate::diagnostic::{LockError, SourceError};
-use crate::prompt::Abort;
 use crate::registry::RegistryError;
-use crate::registry::pin::Stop;
+use crate::ui::Abort;
 
 #[derive(Debug)]
 pub enum Failure {

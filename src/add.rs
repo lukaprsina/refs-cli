@@ -1,6 +1,6 @@
 //! `refs add` (ADR 0008, 0009, 0011), all but the printing of its report (it says what it read and
 //! decided, and warns, through a `Say`). First the repo it is asked to add is made ready: a
-//! registry or forge shorthand expanded, its version pinned to a tag (`registry::pin`), the ref
+//! registry or forge shorthand expanded, its version pinned to a tag (`pin`), the ref
 //! asked for, and the repo looked at (`Source::outline`), so that a bad URL or ref fails before
 //! the other questions. Its Manifests are read then, for the `packages` and the description.
 //! Then the repo is added and synced once. With no sync (`--no-sync`) nothing is looked at, so
@@ -9,16 +9,19 @@
 use std::path::Path;
 
 mod ask;
+mod expand;
+pub mod pin;
 
 use crate::config::Config;
 use crate::edit::{AddRepo, Edit};
 use crate::failure::Failure;
 use crate::manifests::Manifests;
-use crate::prompt::Prompter;
-use crate::registry::pin::{Pinned, Say, pin};
-use crate::registry::{self, Expanded, Registry, Requested};
+use crate::registry::Registry;
 use crate::source::{Outline, Source};
 use crate::sync::{self, Report, SyncFlags};
+use crate::ui::{Prompter, Say};
+use expand::{Expanded, Requested, expand};
+use pin::{Pinned, pin};
 
 /// Who `add` can ask and what it can ask about.
 pub struct Asking<'a> {
@@ -87,7 +90,7 @@ fn prepare(
         requested,
         description,
         ..
-    } = expand(&repo, asking, offline, say)?;
+    } = expand(&repo, asking.registry, offline, say)?;
     // A registry add has chosen its Ref (a tag, or the default branch) unless nothing was pinned.
     let registry_add = requested.is_some();
     settle_ref(&mut repo, requested.as_ref(), root, source, asking, say)?;
@@ -113,25 +116,6 @@ fn prepare(
     };
     ask::fill_add(&mut repo, config, prompter, &known, say).map_err(Failure::Asked)?;
     Ok(repo)
-}
-
-/// `repo` with a registry shorthand replaced by what the registry says (see `registry::expand`),
-/// and a warning for what a forge shorthand had after the repository.
-fn expand(
-    repo: &AddRepo,
-    asking: &Asking,
-    offline: bool,
-    say: &mut dyn Say,
-) -> Result<Expanded, Failure> {
-    let expanded = registry::expand(repo, asking.registry, offline).map_err(Failure::Registry)?;
-    if let Some(ignored) = &expanded.ignored {
-        let shorthand = &repo.url;
-        say.warning(format!(
-            "ignored `{ignored}` after the repository in `{shorthand}`; \
-             use `--ref` and `--paths` to choose a ref and directories"
-        ));
-    }
-    Ok(expanded)
 }
 
 /// The `ref` of `repo`. A registry add pins its package's version to a tag (`pin`), unless a

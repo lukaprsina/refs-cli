@@ -5,9 +5,9 @@ use std::fs;
 use std::path::Path;
 
 use refs_cli::cli::{Outside, Terminal, run_on};
-use refs_cli::prompt::Prompter;
 use refs_cli::self_update::Unmanaged;
 use refs_cli::source::fake::FakeSource;
+use refs_cli::ui::Prompter;
 use tempfile::TempDir;
 
 mod common;
