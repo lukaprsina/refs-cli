@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 
-use refs_cli::prompt::{Abort, Prompter};
+use refs_cli::ui::{Abort, Prompter};
 
 /// One scripted answer.
 pub enum Answer {

@@ -1,7 +1,7 @@
-//! The order the pickers list matches in (see `prompt::path_scorer`), for what a person typed
+//! The order the pickers list matches in (see `ui::path_scorer`), for what a person typed
 //! while narrowing a real repo's directories.
 
-use refs_cli::prompt::path_scorer;
+use refs_cli::ui::path_scorer;
 
 /// `options` that match `typed`, best first, as `inquire` orders them.
 fn ranked<'a>(typed: &str, options: &'a [String]) -> Vec<&'a str> {

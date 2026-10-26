@@ -2,9 +2,9 @@
 //! that turns it into words and an exit code.
 
 use crate::diagnostic::{LockError, SourceError};
-use crate::prompt::Abort;
 use crate::registry::RegistryError;
 use crate::registry::pin::Stop;
+use crate::ui::Abort;
 
 #[derive(Debug)]
 pub enum Failure {

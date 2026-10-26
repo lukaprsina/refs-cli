@@ -14,11 +14,12 @@ use crate::config::Config;
 use crate::edit::{AddRepo, Edit};
 use crate::failure::Failure;
 use crate::manifests::Manifests;
-use crate::prompt::Prompter;
-use crate::registry::pin::{Pinned, Say, pin};
+use crate::registry::pin::{Pinned, pin};
 use crate::registry::{self, Expanded, Registry, Requested};
 use crate::source::{Outline, Source};
 use crate::sync::{self, Report, SyncFlags};
+use crate::ui::Prompter;
+use crate::ui::Say;
 
 /// Who `add` can ask and what it can ask about.
 pub struct Asking<'a> {

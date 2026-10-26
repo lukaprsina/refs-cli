@@ -4,8 +4,8 @@
 
 use crate::diagnostic::SourceError;
 use crate::packages::{self, infer, manifest_paths};
-use crate::registry::pin::Say;
 use crate::source::{Outline, Source};
+use crate::ui::Say;
 
 /// The Manifests (path and text) that were read. Empty when none was, which is also what a repo
 /// with none gives.

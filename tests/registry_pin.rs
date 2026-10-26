@@ -4,10 +4,11 @@
 
 use std::fs;
 
-use refs_cli::prompt::Abort;
-use refs_cli::registry::pin::{Pinned, Say, Stop, pin};
+use refs_cli::registry::pin::{Pinned, Stop, pin};
 use refs_cli::registry::{Ecosystem, Package};
 use refs_cli::source::fake::{FakeSource, Method};
+use refs_cli::ui::Abort;
+use refs_cli::ui::Say;
 use tempfile::TempDir;
 
 mod common;

@@ -20,12 +20,12 @@ use crate::edit::{AddRepo, Edit, Target};
 use crate::failure::Failure;
 use crate::list::list;
 use crate::project;
-use crate::prompt::{self, Prompter};
-use crate::registry::pin::Say;
 use crate::registry::{self, Registry};
 use crate::self_update::{self, Updater};
 use crate::source::Source;
 use crate::sync::{self, Changed, Checkout, Hint, Outcome, Report, SyncFlags};
+use crate::ui::Say;
+use crate::ui::{self, Prompter};
 use crate::update;
 
 const EXIT_ERROR: u8 = 1;
@@ -272,7 +272,7 @@ pub fn run<'a>(
         err: styled && std::io::stderr().is_terminal(),
     };
     // Prompts need someone to answer and somewhere to be drawn: stdin and stderr.
-    let mut prompter = prompt::Terminal;
+    let mut prompter = ui::Terminal;
     let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     run_on(
         args,
@@ -512,10 +512,10 @@ impl Say for Console<'_> {
 }
 
 /// Say why a question ended without an answer, and give the exit code.
-fn aborted(abort: prompt::Abort, console: &mut Console) -> u8 {
+fn aborted(abort: ui::Abort, console: &mut Console) -> u8 {
     match abort {
-        prompt::Abort::Cancelled => console.problem("cancelled"),
-        prompt::Abort::Failed(why) => console.problem(format_args!("cannot prompt: {why}")),
+        ui::Abort::Cancelled => console.problem("cancelled"),
+        ui::Abort::Failed(why) => console.problem(format_args!("cannot prompt: {why}")),
     }
     EXIT_ERROR
 }

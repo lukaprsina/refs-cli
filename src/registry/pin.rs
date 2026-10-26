@@ -10,18 +10,8 @@ use super::Package;
 use super::tag::tag_for;
 use super::used::{self, Answer};
 use crate::diagnostic::SourceError;
-use crate::prompt::{Abort, Prompter};
 use crate::source::Source;
-
-/// Where `pin` says what it read and decided.
-pub trait Say {
-    /// What was read or decided.
-    fn status(&mut self, line: String);
-    /// Something the person should see even when the run is quiet.
-    fn warning(&mut self, line: String);
-    /// What a question is about: shown even when the run is quiet.
-    fn shown(&mut self, line: String);
-}
+use crate::ui::{Abort, Prompter, Say};
 
 /// Why `pin` could not say what to pin to.
 #[derive(Debug)]

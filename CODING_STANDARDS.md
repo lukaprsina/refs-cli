@@ -26,7 +26,7 @@ Scripted stand-ins, each given to `cli::run_on`:
 - Registry lookups: `registry::fake::FakeRegistry` (`tests/cli_registry.rs`). The adapters are tested through their pure `found(body)` functions against recorded response bodies (`tests/registry.rs`); `registry::Http` through its pure `request_url` and `interpret` (`tests/registry_http.rs`).
 - Prompts: the scripted `Prompter` shared by the tests (`tests/common/script.rs`, used by `tests/cli_prompt.rs`).
 - Packages inferred on `add` (and the vanished ones on `update`): `packages::manifest_paths` and `packages::infer` as data over paths and text (`tests/packages.rs`), read through `manifests::Manifests`; the add pipeline through `cli::run_on` with a scripted `Prompter` and a `FakeSource` that serves the Manifests (`tests/cli_add_packages.rs`).
-- The `paths` and `start` pickers: `listing` (the cone rule, the docs-like rule, caps, dropping children) as data over paths (`tests/listing.rs`); the pickers through `cli::run_on` with `Answer::Pick` in the scripted `Prompter` (`tests/cli_add_pick.rs`); the order the picker lists matches in, `prompt::path_scorer`, by what a person types (`tests/path_scorer.rs`).
+- The `paths` and `start` pickers: `listing` (the cone rule, the docs-like rule, caps, dropping children) as data over paths (`tests/listing.rs`); the pickers through `cli::run_on` with `Answer::Pick` in the scripted `Prompter` (`tests/cli_add_pick.rs`); the order the picker lists matches in, `ui::path_scorer`, by what a person types (`tests/path_scorer.rs`).
 - The summary and `Customize?` gate of `add`: through `cli::run_on` with a scripted `Prompter` and a `FakeSource` (`tests/cli_add_summary.rs`).
 - Package lockfiles: `registry::used::used_versions` is tested as data per format (`tests/registry_used.rs`), `registry::used::find` and `worktree::candidate_dirs` over temp directories (`tests/registry_used_find.rs`, `tests/worktree.rs`).
 - Tooling gaps: `tooling::gaps` over temp directories (`tests/tooling.rs`); the note on `sync`, `add` and `--check` through `cli::run_with` (`tests/cli_output.rs`).
@@ -38,4 +38,4 @@ Three adapters have no test. After changing one, check it by hand:
 
 - `self_update::Axo`: `refs self update` against a real installer install.
 - `registry::Http`: `refs add --no-sync` with `npm:`, `cargo:` and `pypi:` names against the real registries.
-- `prompt::Terminal` (`inquire`): `refs add` in a real terminal; check Enter, Tab and Esc (Esc cancels: checked), and the `pick` multi-select (type to filter, Space to select), in a short terminal (about 10 rows) too: the page must not overflow (`prompt::page_size`).
+- `ui::Terminal` (`inquire`): `refs add` in a real terminal; check Enter, Tab and Esc (Esc cancels: checked), and the `pick` multi-select (type to filter, Space to select), in a short terminal (about 10 rows) too: the page must not overflow (`ui::page_size`).

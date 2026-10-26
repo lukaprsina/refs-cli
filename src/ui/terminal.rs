@@ -1,51 +1,7 @@
-//! The `Prompter` seam (ADR 0008): the questions go through it, so tests script the answers and
-//! only `cli::run` puts a terminal behind it. `Terminal` is the `inquire` adapter, and `path_scorer`
-//! orders what its pickers list. The questions themselves live with `add` and `update`; the
-//! pickers they share are in `pickers`.
+//! The real terminal: the `inquire` adapter of `Prompter`, and `path_scorer`, which orders what its
+//! pickers list.
 
-pub(crate) mod pickers;
-
-/// Why a question went unanswered. Nothing has been edited yet.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Abort {
-    /// The person gave up (Esc or Ctrl-C).
-    Cancelled,
-    /// The terminal failed.
-    Failed(String),
-}
-
-/// Asks one question and gives the answer. A prompter re-asks until `validate` accepts.
-pub trait Prompter {
-    /// A line of text, which the person edits from `initial` when there is one. The answer is
-    /// what is in the box: `Ok("")` means it is empty, and a person can clear a prefilled value.
-    fn text(
-        &mut self,
-        message: &str,
-        initial: Option<&str>,
-        validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort>;
-
-    /// A line of text that may be one of `suggestions` (narrowed as the person types) or
-    /// something new. The answer may be empty if `validate` allows it.
-    fn suggest(
-        &mut self,
-        message: &str,
-        suggestions: &[String],
-        validate: &dyn Fn(&str) -> Result<(), String>,
-    ) -> Result<String, Abort>;
-
-    /// Yes or no, defaulting to no.
-    fn confirm(&mut self, message: &str) -> Result<bool, Abort>;
-
-    /// Any number of `options`, narrowed as the person types, with those in `selected` ticked
-    /// to begin with. Selecting none is allowed: the message says what that means.
-    fn pick(
-        &mut self,
-        message: &str,
-        options: &[String],
-        selected: &[String],
-    ) -> Result<Vec<String>, Abort>;
-}
+use super::{Abort, Prompter};
 
 /// The real terminal, through `inquire`.
 pub struct Terminal;

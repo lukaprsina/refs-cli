@@ -4,9 +4,9 @@ use crate::config::Repo;
 use crate::edit::Fields;
 use crate::listing::{self, Gone};
 use crate::manifests::Manifests;
-use crate::prompt::pickers::{ask_packages, ask_paths, ask_start};
-use crate::prompt::{Abort, Prompter};
-use crate::registry::pin::Say;
+use crate::ui::Say;
+use crate::ui::pickers::{ask_packages, ask_paths, ask_start};
+use crate::ui::{Abort, Prompter};
 
 /// What `update` knows of a Repo that its new Ref breaks.
 pub(super) struct Broken<'a> {

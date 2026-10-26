@@ -2,8 +2,7 @@
 //! and the free-text helpers under them.
 
 use crate::listing;
-use crate::prompt::{Abort, Prompter};
-use crate::registry::pin::Say;
+use crate::ui::{Abort, Prompter, Say};
 
 /// What a picker offers beyond what the tree lists, and which of it starts ticked. A ticked
 /// entry is always offered.

@@ -25,13 +25,14 @@ use crate::failure::Failure;
 use crate::listing::{self, Gone};
 use crate::lock::Lock;
 use crate::manifests::Manifests;
-use crate::prompt::{Abort, Prompter};
 use crate::registry::Package;
-use crate::registry::pin::{Say, Stop, choose_version};
+use crate::registry::pin::{Stop, choose_version};
 use crate::registry::tag::{newest, split, tag_for};
 use crate::registry::used::{self, Answer};
 use crate::source::{Observed, Outline, Source};
 use crate::sync::{self, Report, SyncFlags};
+use crate::ui::Say;
+use crate::ui::{Abort, Prompter};
 use ask::{Broken, fill_update};
 
 /// What `refs update` was asked for.
