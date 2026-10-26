@@ -38,4 +38,4 @@ Three adapters have no test. After changing one, check it by hand:
 
 - `self_update::Axo`: `refs self update` against a real installer install.
 - `registry::Http`: `refs add --no-sync` with `npm:`, `cargo:` and `pypi:` names against the real registries.
-- `ui::Terminal` (`inquire`): `refs add` in a real terminal; check Enter, Tab and Esc (Esc cancels: checked), and the `pick` multi-select (type to filter, Space to select), in a short terminal (about 10 rows) too: the page must not overflow (`ui::page_size`).
+- `ui::Terminal` (`inquire`): `refs add` in a real terminal; check Enter, Tab and Esc (Esc cancels: checked), and the `pick` multi-select (type to filter, Space to select), in a short terminal (about 10 rows) too: the page must not overflow (`page_size` in `ui/terminal.rs`).
