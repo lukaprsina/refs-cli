@@ -181,7 +181,7 @@ fn valid_url(url: &str) -> Result<(), String> {
     match registry::forge::name(url) {
         Some(Err(why)) => return Err(format!("`{url}` does not name a repository: {why}")),
         Some(Ok(_)) => return Ok(()),
-        None if registry::is_shorthand(url) => return Ok(()),
+        None if super::expand::is_shorthand(url) => return Ok(()),
         None => {}
     }
     match config::url_problem(url) {

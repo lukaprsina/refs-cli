@@ -18,6 +18,8 @@ use std::path::Path;
 mod ask;
 
 use crate::active::active;
+// `update` shares the version question with `add`, so it imports from `add::pin` (and nothing else of `add`).
+use crate::add::pin::{Stop, choose_version};
 use crate::config::{Config, RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
 use crate::edit::{Edit, Fields, RepoChange};
@@ -26,7 +28,6 @@ use crate::listing::{self, Gone};
 use crate::lock::Lock;
 use crate::manifests::Manifests;
 use crate::registry::Package;
-use crate::registry::pin::{Stop, choose_version};
 use crate::registry::tag::{newest, split, tag_for};
 use crate::registry::used::{self, Answer};
 use crate::source::{Observed, Outline, Source};

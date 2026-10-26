@@ -6,10 +6,10 @@
 
 use std::path::Path;
 
-use super::Package;
-use super::tag::tag_for;
-use super::used::{self, Answer};
 use crate::diagnostic::SourceError;
+use crate::registry::Package;
+use crate::registry::tag::tag_for;
+use crate::registry::used::{self, Answer};
 use crate::source::Source;
 use crate::ui::{Abort, Prompter, Say};
 
