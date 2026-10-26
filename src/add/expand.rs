@@ -4,7 +4,6 @@
 //! (`add::pin`). The prefix is input sugar; the Repo that is stored has the git URL.
 
 use crate::edit::AddRepo;
-use crate::failure::Failure;
 use crate::registry::{Package, Registry, RegistryError, forge, parse_shorthand};
 use crate::ui::Say;
 
@@ -12,25 +11,6 @@ use crate::ui::Say;
 /// prefix. The prompt accepts it as a URL (`add::ask::ask_url`).
 pub(super) fn is_shorthand(url: &str) -> bool {
     forge::name(url).is_some() || parse_shorthand(url).is_some_and(|(_, name, _)| !name.is_empty())
-}
-
-/// `repo` with a registry shorthand replaced by what the registry says (see `expand_shorthand`),
-/// and a warning for what a forge shorthand had after the repository.
-pub(super) fn expand(
-    repo: &AddRepo,
-    registry: &dyn Registry,
-    offline: bool,
-    say: &mut dyn Say,
-) -> Result<Expanded, Failure> {
-    let expanded = expand_shorthand(repo, registry, offline).map_err(Failure::Registry)?;
-    if let Some(ignored) = &expanded.ignored {
-        let shorthand = &repo.url;
-        say.warning(format!(
-            "ignored `{ignored}` after the repository in `{shorthand}`; \
-             use `--ref` and `--paths` to choose a ref and directories"
-        ));
-    }
-    Ok(expanded)
 }
 
 /// `version` without a leading `v`, if it is an exact version: it starts with a digit and holds
@@ -78,8 +58,6 @@ pub(super) struct Expanded {
     pub(super) requested: Option<Requested>,
     /// The registry's description of the package, to start the description question from.
     pub(super) description: Option<String>,
-    /// The path a forge shorthand had after the repository, which was dropped.
-    pub(super) ignored: Option<String>,
 }
 
 /// `repo` with a registry shorthand in its `url` replaced by what the registry says: the git
@@ -87,27 +65,36 @@ pub(super) struct Expanded {
 /// line gave them (ADR 0009).
 /// Any other `repo` comes back as it is.
 /// With `offline` a shorthand is refused, as it needs the network.
+/// A forge shorthand that had a path after the repository gets a warning through `say`: the path
+/// is dropped.
 /// A version and a `ref` both pin, so a shorthand with a version is refused when `repo` has a `ref`.
 /// The `ref` is not set here: a shorthand says which package it `requested`, and with a version
 /// (given, or found in a Package lockfile, see `used::answer`) `Source::tags` and
 /// `tag::tag_for` turn that into a tag.
-fn expand_shorthand(
+pub(super) fn expand(
     repo: &AddRepo,
     registry: &dyn Registry,
     offline: bool,
+    say: &mut dyn Say,
 ) -> Result<Expanded, RegistryError> {
     if let Some(named) = forge::name(&repo.url) {
         let named = named.map_err(|why| RegistryError::BadForge {
             shorthand: repo.url.clone(),
             why: why.to_owned(),
         })?;
+        if let Some(ignored) = &named.ignored {
+            let shorthand = &repo.url;
+            say.warning(format!(
+                "ignored `{ignored}` after the repository in `{shorthand}`; \
+                 use `--ref` and `--paths` to choose a ref and directories"
+            ));
+        }
         let mut expanded = repo.clone();
         expanded.url = named.url;
         return Ok(Expanded {
             repo: expanded,
             requested: None,
             description: None,
-            ignored: named.ignored,
         });
     }
     let Some((ecosystem, name, version)) = parse_shorthand(&repo.url) else {
@@ -115,7 +102,6 @@ fn expand_shorthand(
             repo: repo.clone(),
             requested: None,
             description: None,
-            ignored: None,
         });
     };
     let version = version
@@ -165,6 +151,5 @@ fn expand_shorthand(
             version: version.map(str::to_owned),
         }),
         description: found.description,
-        ignored: None,
     })
 }

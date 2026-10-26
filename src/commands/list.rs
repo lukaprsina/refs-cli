@@ -16,15 +16,16 @@ pub(crate) fn run<'a>(
     color: bool,
     console: &mut Console,
 ) -> u8 {
-    let (root, config) = match load(start, console) {
+    let project = match load(start, console) {
         Ok(project) => project,
         Err(code) => return code,
     };
     if status {
-        return with_source(make_source, &root, &config, console, |source, console| {
-            match crate::status::build(source, &root, &config) {
+        return with_source(make_source, &project, console, |source, console| {
+            match crate::status::build(source, &project.root, &project.config) {
                 Ok(status) => {
-                    let table = crate::list::list_status(&config, |laid| status.row(laid), color);
+                    let table =
+                        crate::list::list_status(&project.config, |laid| status.row(laid), color);
                     console.data(&table);
                     0
                 }
@@ -32,6 +33,6 @@ pub(crate) fn run<'a>(
             }
         });
     }
-    console.data(&crate::list::list(&config, color));
+    console.data(&crate::list::list(&project.config, color));
     0
 }

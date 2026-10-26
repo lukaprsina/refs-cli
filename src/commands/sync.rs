@@ -15,12 +15,12 @@ pub(crate) fn run<'a>(
     flags: &SyncFlags,
     console: &mut Console,
 ) -> u8 {
-    let (root, config) = match load(start, console) {
+    let project = match load(start, console) {
         Ok(project) => project,
         Err(code) => return code,
     };
-    with_source(make_source, &root, &config, console, |source, console| {
-        let report = sync::sync(source, &root, &config, flags);
+    with_source(make_source, &project, console, |source, console| {
+        let report = sync::sync(source, &project.root, &project.config, flags);
         print_report(&report, flags.check, console)
     })
 }

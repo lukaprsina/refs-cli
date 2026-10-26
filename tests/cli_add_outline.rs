@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::Path;
 
-use refs_cli::cli::{Outside, Terminal, run_on};
+use refs_cli::cli::{Outside, Styled, run_on};
 use refs_cli::registry::fake::FakeRegistry;
 use refs_cli::registry::{Ecosystem, Found};
 use refs_cli::self_update::Unmanaged;
@@ -55,7 +55,7 @@ fn add(dir: &Path, source: &FakeSource, args: &[&str], prompter: Option<&mut dyn
         |_, _| Ok(Box::new(source)),
         &mut out,
         &mut err,
-        Terminal::default(),
+        Styled::default(),
         Outside {
             prompter,
             updater: &Unmanaged,

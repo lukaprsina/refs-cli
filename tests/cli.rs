@@ -132,7 +132,7 @@ fn offline_reaches_the_source_from_sync_and_from_an_edit_that_syncs() {
 
 #[test]
 fn a_usage_error_is_styled_only_for_a_terminal() {
-    use refs_cli::cli::{Outside, Terminal, run_on, run_with};
+    use refs_cli::cli::{Outside, Styled, run_on, run_with};
     use refs_cli::self_update::Unmanaged;
     use refs_cli::source::Source;
     let p = Project::new(AB);
@@ -145,7 +145,7 @@ fn a_usage_error_is_styled_only_for_a_terminal() {
         2
     );
     let (mut out, mut styled) = (Vec::new(), Vec::new());
-    let terminal = Terminal {
+    let terminal = Styled {
         out: false,
         err: true,
     };
@@ -176,7 +176,7 @@ fn a_usage_error_is_styled_only_for_a_terminal() {
 }
 
 /// `refs list` on a project with one disabled repo, with the streams styled as given.
-fn list_output(args: &[&str], terminal: refs_cli::cli::Terminal) -> String {
+fn list_output(args: &[&str], terminal: refs_cli::cli::Styled) -> String {
     use refs_cli::cli::{Outside, run_on};
     use refs_cli::self_update::Unmanaged;
     use refs_cli::source::Source;
@@ -212,17 +212,17 @@ enabled = false
 
 #[test]
 fn list_dims_disabled_lines_only_on_a_styled_stdout_without_no_color() {
-    use refs_cli::cli::Terminal;
-    let styled = Terminal {
+    use refs_cli::cli::Styled;
+    let styled = Styled {
         out: true,
         err: true,
     };
 
     assert!(list_output(&[], styled).contains("[2m- b"));
-    assert!(!list_output(&[], Terminal::default()).contains(''));
+    assert!(!list_output(&[], Styled::default()).contains(''));
     assert!(!list_output(&["--no-color"], styled).contains(''));
     // Only stdout matters: `list` writes nothing to stderr.
-    let err_only = Terminal {
+    let err_only = Styled {
         out: false,
         err: true,
     };

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use refs_cli::cli::{Outside, Terminal, run_on};
+use refs_cli::cli::{Outside, Styled, run_on};
 use refs_cli::self_update::Unmanaged;
 use refs_cli::source::fake::FakeSource;
 use refs_cli::ui::Prompter;
@@ -29,7 +29,7 @@ fn refs(dir: &Path, args: &[&str], prompter: Option<&mut dyn Prompter>) -> Run {
         |_, _| Ok(Box::new(&source)),
         &mut out,
         &mut err,
-        Terminal::default(),
+        Styled::default(),
         Outside {
             prompter,
             updater: &Unmanaged,

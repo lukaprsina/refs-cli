@@ -11,7 +11,7 @@ mod report;
 mod terminal;
 
 pub(crate) use console::{Console, EXIT_ERROR, EXIT_OUT_OF_DATE, fail, fail_all};
-pub(crate) use report::{failed, print_report};
+pub(crate) use report::{failed, print_report, skipped};
 pub use terminal::{Terminal, path_scorer};
 
 /// Where a run says what it read and decided (`pin`, the manifests, the pickers).

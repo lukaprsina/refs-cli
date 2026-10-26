@@ -6,7 +6,7 @@ use super::{load, with_source};
 use crate::config::Config;
 use crate::diagnostic::SourceError;
 use crate::source::Source;
-use crate::ui::{Console, EXIT_ERROR, Prompter, failed, print_report};
+use crate::ui::{Console, Prompter, failed, print_report, skipped};
 use crate::update;
 
 pub(crate) fn run<'a>(
@@ -16,31 +16,28 @@ pub(crate) fn run<'a>(
     prompter: Option<&mut dyn Prompter>,
     console: &mut Console,
 ) -> u8 {
-    let (root, config) = match load(start, console) {
+    let project = match load(start, console) {
         Ok(project) => project,
         Err(code) => return code,
     };
     with_source(
         make_source,
-        &root,
-        &config,
+        &project,
         console,
-        |source, console| match update::run(source, &root, &config, request, prompter, console) {
+        |source, console| match update::run(
+            source,
+            &project.root,
+            &project.config,
+            request,
+            prompter,
+            console,
+        ) {
             Ok(done) => {
                 console.data(&done.listing);
                 let code = done
                     .report
                     .map_or(0, |report| print_report(&report, false, console));
-                match done.skipped {
-                    0 => code,
-                    skipped => {
-                        console.problem(match skipped {
-                            1 => "1 repo was not updated".to_owned(),
-                            n => format!("{n} repos were not updated"),
-                        });
-                        code.max(EXIT_ERROR)
-                    }
-                }
+                skipped(done.skipped, code, console)
             }
             Err(failure) => failed(failure, console),
         },

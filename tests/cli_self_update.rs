@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use refs_cli::cli::{Outside, Terminal, run_on};
+use refs_cli::cli::{Outside, Styled, run_on};
 use refs_cli::diagnostic::SourceError;
 use refs_cli::self_update::fake::{Call, FakeUpdater};
 use refs_cli::source::Source;
@@ -27,7 +27,7 @@ fn refs(dir: &Path, args: &[&str], updater: &FakeUpdater) -> Run {
         },
         &mut out,
         &mut err,
-        Terminal::default(),
+        Styled::default(),
         Outside {
             prompter: None,
             updater,

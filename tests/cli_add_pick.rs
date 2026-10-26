@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::Path;
 
-use refs_cli::cli::{Outside, Terminal, run_on};
+use refs_cli::cli::{Outside, Styled, run_on};
 use refs_cli::self_update::Unmanaged;
 use refs_cli::source::fake::FakeSource;
 use refs_cli::ui::Prompter;
@@ -54,7 +54,7 @@ fn add_foo(
         |_, _| Ok(Box::new(source)),
         &mut out,
         &mut err,
-        Terminal::default(),
+        Styled::default(),
         Outside {
             prompter,
             updater: &Unmanaged,

@@ -66,6 +66,19 @@ fn exit_code(outcome: Outcome) -> u8 {
     }
 }
 
+/// Say how many Repos `refs update` left alone, and give the exit code: `code` (the sync's), or
+/// an error when any were skipped.
+pub(crate) fn skipped(count: usize, code: u8, console: &mut Console) -> u8 {
+    if count == 0 {
+        return code;
+    }
+    console.problem(match count {
+        1 => "1 repo was not updated".to_owned(),
+        n => format!("{n} repos were not updated"),
+    });
+    code.max(EXIT_ERROR)
+}
+
 /// One status line per change, the problems, and "nothing changed" for a run that did no
 /// change and had no problem (`--check` changes nothing by design: it says "up to date").
 /// Gives the exit code.
