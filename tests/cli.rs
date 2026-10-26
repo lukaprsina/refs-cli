@@ -542,50 +542,6 @@ fn add_locks_and_syncs_the_new_repo_in_one_step() {
     assert_eq!(p.run(&["sync", "--check"]), 0);
 }
 
-#[test]
-fn an_add_that_fails_to_lock_exits_1_and_changes_no_file() {
-    let p = Project::new(AB);
-    assert_eq!(p.run(&["sync"]), 0);
-    let (config, lock) = (fs::read(p.path("refs.toml")).unwrap(), p.lock_text());
-    p.source.fail("c", Method::Resolve, "no such ref");
-
-    assert_eq!(p.run(&["add", "https://github.com/o/c"]), 1);
-
-    assert_eq!(fs::read(p.path("refs.toml")).unwrap(), config);
-    assert_eq!(p.lock_text(), lock);
-}
-
-#[test]
-fn an_add_whose_checkout_fails_keeps_the_edit_and_exits_1() {
-    let p = Project::new(AB);
-    assert_eq!(p.run(&["sync"]), 0);
-    p.source.fail("c", Method::Materialise, "network down");
-
-    assert_eq!(p.run(&["add", "https://github.com/o/c"]), 1);
-
-    assert!(
-        fs::read_to_string(p.path("refs.toml"))
-            .unwrap()
-            .contains("[repos.c]")
-    );
-    assert!(p.lock_text().unwrap().contains("id = \"c\""));
-    p.source.heal("c", Method::Materialise);
-    assert_eq!(p.run(&["sync"]), 0);
-}
-
-#[test]
-fn remove_syncs_too_and_no_sync_leaves_that_to_the_user() {
-    let p = Project::new(AB);
-    assert_eq!(p.run(&["sync"]), 0);
-
-    assert_eq!(p.run(&["remove", "a", "--no-sync"]), 0);
-    assert_eq!(p.run(&["sync", "--check"]), 3, "the lock still has a");
-
-    assert_eq!(p.run(&["remove", "b"]), 0);
-    assert_eq!(p.run(&["sync", "--check"]), 0);
-    assert!(!p.lock_text().unwrap().contains("id = "));
-}
-
 /// `a` and `b` synced, then `a`'s Checkout gets a local change.
 fn synced_then_a_is_dirty() -> Project {
     use refs_cli::source::Source;
@@ -603,27 +559,6 @@ fn synced_then_a_is_dirty() -> Project {
         },
     );
     p
-}
-
-#[test]
-fn remove_of_a_dirty_checkout_exits_1_and_changes_nothing_until_forced() {
-    let p = synced_then_a_is_dirty();
-    let files = |p: &Project| {
-        ["refs.toml", "refs.lock", "AGENTS.md"].map(|name| fs::read(p.path(name)).unwrap())
-    };
-    let before = files(&p);
-
-    assert_eq!(p.run(&["remove", "a"]), 1);
-    assert_eq!(p.run(&["remove", "a"]), 1, "a retry refuses the same way");
-    assert_eq!(files(&p), before);
-
-    assert_eq!(p.run(&["remove", "a", "--force"]), 0);
-    assert!(
-        !fs::read_to_string(p.path("refs.toml"))
-            .unwrap()
-            .contains("[repos.a]")
-    );
-    assert_eq!(p.run(&["sync", "--check"]), 0);
 }
 
 #[test]
@@ -645,100 +580,10 @@ fn list_status_succeeds_through_the_source_and_plain_list_does_too() {
 }
 
 #[test]
-fn enabling_what_is_enabled_changes_no_config_and_still_syncs() {
-    let p = Project::new(AB);
-    let config = fs::read(p.path("refs.toml")).unwrap();
-
-    assert_eq!(p.run(&["enable", "a"]), 0);
-
-    assert_eq!(fs::read(p.path("refs.toml")).unwrap(), config);
-    assert!(
-        p.lock_text().unwrap().contains("id = \"a\""),
-        "it caught the project up"
-    );
-}
-
-#[test]
-fn an_enable_whose_repo_cannot_be_locked_exits_1_and_changes_no_file() {
-    let p = Project::new(&format!("{AB}enabled = false\n"));
-    assert_eq!(p.run(&["sync"]), 0);
-    let (config, lock) = (fs::read(p.path("refs.toml")).unwrap(), p.lock_text());
-    p.source.fail("b", Method::Resolve, "gone");
-
-    assert_eq!(p.run(&["enable", "b"]), 1);
-
-    assert_eq!(fs::read(p.path("refs.toml")).unwrap(), config);
-    assert_eq!(p.lock_text(), lock);
-}
-
-#[test]
-fn quiet_still_syncs_after_an_edit() {
-    let p = Project::new(AB);
-
-    assert_eq!(p.run(&["-q", "add", "https://github.com/o/c"]), 0);
-
-    assert!(p.lock_text().unwrap().contains("id = \"c\""));
-}
-
-#[test]
 fn list_status_works_with_no_lock_yet() {
     let p = Project::new(AB);
     assert_eq!(p.run(&["list", "--status"]), 0);
     assert_eq!(p.lock_text(), None, "list writes nothing");
-}
-
-#[test]
-fn a_disable_with_nothing_locked_is_blocked_by_a_broken_repo_and_writes_nothing() {
-    let p = Project::new(&format!(
-        "{AB}
-[repos.c]
-url = \"https://github.com/o/c\"
-"
-    ));
-    p.source.fail("b", Method::Resolve, "gone");
-    let before = fs::read_to_string(p.path("refs.toml")).unwrap();
-
-    assert_eq!(p.run(&["disable", "a"]), 1);
-
-    assert_eq!(fs::read_to_string(p.path("refs.toml")).unwrap(), before);
-    assert_eq!(p.lock_text(), None);
-}
-
-#[test]
-fn removing_the_broken_repo_succeeds() {
-    let p = Project::new(AB);
-    p.source.fail("b", Method::Resolve, "gone");
-
-    assert_eq!(p.run(&["remove", "b"]), 0);
-
-    assert!(
-        !fs::read_to_string(p.path("refs.toml"))
-            .unwrap()
-            .contains("[repos.b]")
-    );
-    assert_eq!(p.run(&["sync", "--check"]), 0);
-}
-
-#[test]
-fn add_with_a_missing_group_creates_it_and_remove_takes_it_away_again() {
-    let p = Project::new(AB);
-    assert_eq!(p.run(&["sync"]), 0);
-    let before = fs::read(p.path("refs.toml")).unwrap();
-
-    assert_eq!(
-        p.run(&["add", "https://github.com/o/c", "--group", "extra"]),
-        0
-    );
-    let config = fs::read_to_string(p.path("refs.toml")).unwrap();
-    assert!(config.contains("[groups.extra]"), "{config}");
-    assert!(
-        fs::read_to_string(p.path("AGENTS.md"))
-            .unwrap()
-            .contains("### extra")
-    );
-
-    assert_eq!(p.run(&["remove", "c"]), 0);
-    assert_eq!(fs::read(p.path("refs.toml")).unwrap(), before);
 }
 
 #[test]

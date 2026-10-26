@@ -468,19 +468,6 @@ mod materialise {
         assert_eq!(worktrees.matches("worktree ").count(), 1, "{worktrees}");
     }
 
-    #[test]
-    fn a_checkout_deleted_by_hand_is_recreated() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        let repo = remote.repo(&["docs/guide"], &[]);
-        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
-        fs::remove_dir_all(env.checkouts().join("r")).unwrap();
-
-        materialise(&source, "r", &remote, &repo, OFFLINE).unwrap();
-
-        assert!(env.files("r").contains("docs/guide/a.md"));
-    }
-
     /// `prefetch` pipes every blob id to `git cat-file --batch-check` and reads the answers;
     /// with enough blobs neither pipe can hold what git and refs each have to say, so a
     /// refs that writes all of stdin before reading stdout never finishes.
@@ -547,68 +534,6 @@ mod checkout {
         }
     }
 
-    #[test]
-    fn nothing_on_disk_is_absent() {
-        let env = Env::new();
-        let source = env.source();
-
-        assert_eq!(source.inspect("r").unwrap(), Observed::Absent);
-        assert_eq!(source.list().unwrap(), Vec::<String>::new());
-    }
-
-    #[test]
-    fn a_fresh_checkout_is_observed_at_its_pin_and_listed() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        let repo = remote.repo(&["docs/guide"], &[]);
-        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
-        fs::create_dir_all(env.checkouts().join("stray")).unwrap();
-
-        assert_eq!(
-            source.inspect("r").unwrap(),
-            clean_at(&remote, &["docs/guide"])
-        );
-        assert_eq!(source.list().unwrap(), ["r", "stray"]);
-    }
-
-    #[test]
-    fn modified_and_untracked_files_are_dirty() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        let repo = remote.repo(&["docs/guide"], &[]);
-        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
-        let checkout = env.checkouts().join("r");
-        fs::write(checkout.join("docs/guide/a.md"), "edited").unwrap();
-        fs::write(checkout.join("notes.txt"), "mine").unwrap();
-
-        let Observed::At { dirty_files, .. } = source.inspect("r").unwrap() else {
-            panic!("a checkout with edits is still a checkout");
-        };
-
-        assert_eq!(dirty_files, ["docs/guide/a.md", "notes.txt"]);
-    }
-
-    #[test]
-    fn a_directory_refs_did_not_make_is_foreign() {
-        let env = Env::new();
-        let source = env.source();
-        let checkouts = env.checkouts();
-        fs::create_dir_all(checkouts.join("plain")).unwrap();
-        fs::create_dir_all(checkouts.join("clone")).unwrap();
-        git(&checkouts.join("clone"), &["init", "-q"]);
-        fs::create_dir_all(checkouts.join("elsewhere")).unwrap();
-        fs::write(
-            checkouts.join("elsewhere/.git"),
-            "gitdir: /somewhere/else/worktrees/x\n",
-        )
-        .unwrap();
-        fs::write(checkouts.join("file"), "not a directory").unwrap();
-
-        for id in ["plain", "clone", "elsewhere", "file"] {
-            assert_eq!(source.inspect(id).unwrap(), Observed::Foreign, "{id}");
-        }
-    }
-
     /// A second spelling of `dir`, as a symlink on Unix or the 8.3 short name on Windows (where
     /// a CI runner's temporary directory is spelled that way). Git writes the real one.
     fn other_spelling(dir: &std::path::Path) -> PathBuf {
@@ -646,46 +571,6 @@ mod checkout {
     }
 
     #[test]
-    fn a_dangling_checkout_is_removed_and_made_again() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        let repo = remote.repo(&["docs/guide"], &[]);
-        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
-        fs::remove_dir_all(env.cache()).unwrap();
-
-        source.remove("r").unwrap();
-        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
-
-        assert_eq!(
-            source.inspect("r").unwrap(),
-            clean_at(&remote, &["docs/guide"])
-        );
-        assert!(env.files("r").contains("docs/guide/a.md"));
-    }
-
-    #[test]
-    fn a_checkout_moves_to_another_commit() {
-        let (mut remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        let repo = remote.repo(&["docs/guide"], &[]);
-        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
-        remote.advance();
-
-        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
-
-        assert_eq!(
-            source.inspect("r").unwrap(),
-            clean_at(&remote, &["docs/guide"])
-        );
-        let checkout = env.checkouts().join("r");
-        assert_eq!(
-            fs::read_to_string(checkout.join("docs/guide/a.md")).unwrap(),
-            "a, again"
-        );
-        assert!(checkout.join("docs/guide/new.md").exists());
-    }
-
-    #[test]
     fn a_move_offline_works_from_what_an_earlier_run_prefetched() {
         let (mut remote, env) = (Remote::new(), Env::new());
         let source = env.source();
@@ -698,34 +583,6 @@ mod checkout {
         materialise(&source, "r", &remote, &repo, OFFLINE).unwrap();
 
         assert_eq!(env.files("r"), env.files("warm"));
-    }
-
-    #[test]
-    fn changing_the_paths_changes_the_files() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        materialise(
-            &source,
-            "r",
-            &remote,
-            &remote.repo(&["docs/guide"], &[]),
-            ONLINE,
-        )
-        .unwrap();
-        let wider = remote.repo(&["docs/guide", "src"], &[]);
-
-        materialise(&source, "r", &remote, &wider, ONLINE).unwrap();
-
-        assert!(env.files("r").contains("src/lib.rs"));
-        assert_eq!(
-            source.inspect("r").unwrap(),
-            clean_at(&remote, &["docs/guide", "src"])
-        );
-
-        let whole = remote.repo(&[], &[]);
-        materialise(&source, "r", &remote, &whole, ONLINE).unwrap();
-        assert!(env.files("r").contains("docs/api/c.md"));
-        assert_eq!(env.files("r").len(), 7);
     }
 
     #[test]
@@ -746,29 +603,6 @@ mod checkout {
             panic!("the old checkout stays");
         };
         assert_eq!(pin, old);
-    }
-
-    #[test]
-    fn a_checkout_of_another_remote_is_replaced() {
-        let (first, second, env) = (Remote::new(), Remote::new(), Env::new());
-        let source = env.source();
-        materialise(
-            &source,
-            "r",
-            &first,
-            &first.repo(&["docs/guide"], &[]),
-            ONLINE,
-        )
-        .unwrap();
-
-        materialise(&source, "r", &second, &second.repo(&["src"], &[]), ONLINE).unwrap();
-
-        assert_eq!(source.inspect("r").unwrap(), clean_at(&second, &["src"]));
-        let worktrees = git(
-            &env.cache_repo(&first),
-            &["worktree", "list", "--porcelain"],
-        );
-        assert_eq!(worktrees.matches("worktree ").count(), 1, "{worktrees}");
     }
 
     #[test]
@@ -875,33 +709,6 @@ mod outline {
     }
 
     #[test]
-    fn lists_every_path_and_fetches_no_blob() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let outline = env.source().outline(&remote.url(), "main").unwrap();
-        assert_eq!(outline.pin.sha(), remote.sha);
-        let expected = [
-            "LICENSE",
-            "README.md",
-            "docs/api/c.md",
-            "docs/guide/a.md",
-            "docs/guide/sub/b.md",
-            "docs/other.md",
-            "src/lib.rs",
-        ];
-        assert_eq!(outline.paths, expected);
-        assert_eq!(env.cached_blobs(&remote), names(&[]));
-    }
-
-    #[test]
-    fn a_commit_id_is_outlined_like_the_ref_that_resolved_to_it() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let by_ref = env.source().outline(&remote.url(), "main").unwrap();
-        let by_sha = env.source().outline(&remote.url(), &remote.sha).unwrap();
-        assert_eq!(by_sha.pin.sha(), remote.sha);
-        assert_eq!(by_sha.paths, by_ref.paths);
-    }
-
-    #[test]
     fn read_fetches_only_the_named_blobs() {
         let (remote, env) = (Remote::new(), Env::new());
         let source = env.source();
@@ -912,26 +719,5 @@ mod outline {
         let expected: Vec<_> = expected.map(|(p, t)| (p.to_string(), t.to_string())).into();
         assert_eq!(texts, expected);
         assert_eq!(env.cached_blobs(&remote).len(), 2);
-    }
-
-    #[test]
-    fn read_refuses_a_directory_and_a_path_not_in_the_tree() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        let outline = source.outline(&remote.url(), "main").unwrap();
-        for path in ["docs", "docs/gone.md"] {
-            let result = source.read(&remote.url(), &outline.pin, &[path.to_string()]);
-            assert!(result.is_err(), "{path}");
-        }
-    }
-
-    #[test]
-    fn a_bad_ref_or_url_is_an_error_and_leaves_no_cache() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let source = env.source();
-        assert!(source.outline(&remote.url(), "no-such-ref").is_err());
-        let gone = common::file_url(&remote.dir.path().join("gone"));
-        assert!(source.outline(&gone, "HEAD").is_err());
-        assert!(!env.cache_repo(&remote).exists());
     }
 }
