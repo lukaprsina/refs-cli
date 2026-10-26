@@ -1161,3 +1161,112 @@ fn a_repo_with_an_origin_locks_syncs_and_lists_without_the_registry() {
     let lock = fs::read_to_string(dir.path().join("refs.lock")).unwrap();
     assert!(lock.contains("foo") && !lock.contains("origin"), "{lock}");
 }
+
+#[test]
+fn a_version_with_no_tag_cancels_on_no_and_changes_nothing() {
+    let dir = project();
+    let source = FakeSource::new();
+    let mut prompter = Script::takes_defaults(false);
+
+    let run = add_asking(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &["npm:foo-js@1.2.3", "--id", "foo"],
+        Some(&mut prompter),
+    );
+
+    assert_eq!(run.code, 1);
+    assert!(run.err.contains("cancelled"), "{}", run.err);
+    assert_eq!(config_text(dir.path()), "");
+}
+
+#[test]
+fn no_sync_lists_no_tags_and_says_the_version_is_not_pinned() {
+    let dir = project();
+    let source = FakeSource::new();
+    source.set_tags(FOO, ["v1.2.3"]);
+
+    let run = add(
+        dir.path(),
+        &foo_registry(),
+        &source,
+        &["npm:foo-js@1.2.3", "--id", "foo", "--no-sync"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        run.err.contains("warning") && run.err.contains("--no-sync"),
+        "{}",
+        run.err
+    );
+    assert!(!config_text(dir.path()).contains("ref ="));
+    assert_eq!(tags_asked(&source), 0);
+}
+
+#[test]
+fn a_lockfile_that_cannot_be_read_warns_and_follows_the_default_branch() {
+    let dir = project();
+    write(dir.path(), "package-lock.json", "not json");
+
+    let run = add(
+        dir.path(),
+        &foo_registry(),
+        &FakeSource::new(),
+        &["npm:foo-js", "--id", "foo"],
+    );
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        run.err.contains("warning") && run.err.contains("package-lock.json"),
+        "{}",
+        run.err
+    );
+    assert!(!config_text(dir.path()).contains("ref ="));
+}
+
+/// Each shorthand reads its own ecosystem's lockfile; the readers are tested in
+/// `registry_used.rs`, this is the choice of reader at the call site.
+#[test]
+fn each_shorthand_reads_the_lockfile_of_its_ecosystem() {
+    let cases = [
+        (
+            Ecosystem::Cargo,
+            "foo",
+            "cargo:foo",
+            "Cargo.lock",
+            "version = 4\n\n[[package]]\nname = \"foo\"\nversion = \"0.4.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n",
+            "v0.4.1",
+        ),
+        (
+            Ecosystem::Pypi,
+            "Foo_Py",
+            "pypi:Foo_Py",
+            "uv.lock",
+            "version = 1\n\n[[package]]\nname = \"foo-py\"\nversion = \"0.4.1\"\nsource = { registry = \"https://pypi.org/simple\" }\n",
+            "v0.4.1",
+        ),
+        (
+            Ecosystem::Npm,
+            "foo-js",
+            "npm:foo-js",
+            "bun.lock",
+            "{\"lockfileVersion\":1,\"workspaces\":{\"\":{\"dependencies\":{\"foo-js\":\"^1\",},},},\"packages\":{\"foo-js\":[\"foo-js@1.2.3\",\"\",{},\"sha512-x\"],},}",
+            "foo-js-1.2.3",
+        ),
+    ];
+    for (ecosystem, name, shorthand, file, text, tag) in cases {
+        let dir = project();
+        write(dir.path(), file, text);
+        let registry = FakeRegistry::new().with(ecosystem, name, found(FOO, None));
+        let source = FakeSource::new();
+        source.set_tags(FOO, ["v0.4.0", "v0.4.1", "foo-js-1.1.0", "foo-js-1.2.3"]);
+
+        let run = add(dir.path(), &registry, &source, &[shorthand, "--id", "foo"]);
+
+        assert_eq!(run.code, 0, "{shorthand}: {}", run.err);
+        let expected = format!("ref = \"{tag}\"");
+        assert!(config_text(dir.path()).contains(&expected), "{shorthand}");
+        assert!(run.err.contains(file), "{shorthand}: {}", run.err);
+    }
+}
