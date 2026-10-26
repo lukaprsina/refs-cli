@@ -31,8 +31,7 @@ use crate::registry::tag::{newest, split, tag_for};
 use crate::registry::used::{self, Answer};
 use crate::source::{Observed, Outline, Source};
 use crate::sync::{self, Report, SyncFlags};
-use crate::ui::Say;
-use crate::ui::{Abort, Prompter};
+use crate::ui::{Abort, Prompter, Say};
 use ask::{Broken, fill_update};
 
 /// What `refs update` was asked for.

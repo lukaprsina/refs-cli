@@ -7,8 +7,7 @@ use std::fs;
 use refs_cli::registry::pin::{Pinned, Stop, pin};
 use refs_cli::registry::{Ecosystem, Package};
 use refs_cli::source::fake::{FakeSource, Method};
-use refs_cli::ui::Abort;
-use refs_cli::ui::Say;
+use refs_cli::ui::{Abort, Say};
 use tempfile::TempDir;
 
 mod common;
