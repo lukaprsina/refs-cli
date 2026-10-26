@@ -16,8 +16,8 @@ use crate::failure::Failure;
 use crate::manifests::Manifests;
 use crate::prompt::Prompter;
 use crate::registry::pin::{Pinned, Say, pin};
-use crate::registry::{self, Registry};
-use crate::source::Source;
+use crate::registry::{self, Expanded, Registry, Requested};
+use crate::source::{Outline, Source};
 use crate::sync::{self, Report, SyncFlags};
 
 /// Who `add` can ask and what it can ask about.
@@ -82,7 +82,48 @@ fn prepare(
         repo.url = ask::ask_url(prompter).map_err(Failure::Asked)?;
     }
     let paths_given = !repo.paths.is_empty();
-    let expanded = registry::expand(&repo, asking.registry, offline).map_err(Failure::Registry)?;
+    let Expanded {
+        mut repo,
+        requested,
+        description,
+        ..
+    } = expand(&repo, asking, offline, say)?;
+    // A registry add has chosen its Ref (a tag, or the default branch) unless nothing was pinned.
+    let registry_add = requested.is_some();
+    settle_ref(&mut repo, requested.as_ref(), root, source, asking, say)?;
+    let looked = look(&repo, source, description, offline, asking, say)?;
+    // Only the Manifests a Checkout of `paths` will hold count. None is fetched again.
+    let Some(prompter) = asking.prompter() else {
+        if repo.packages.is_empty() {
+            repo.packages = looked.manifests.packages_for(&repo.paths);
+        }
+        return match repo.url.is_empty() {
+            true => Err(Failure::Usage(
+                "a URL is required when not run in a terminal".into(),
+            )),
+            false => Ok(repo),
+        };
+    };
+    let known = ask::Known {
+        described: looked.described.as_deref(),
+        looked_at: looked.outline.as_ref(),
+        // The directory the registry gave is where the picker starts, unlike one from `--paths`.
+        paths_from_registry: registry_add && !paths_given && looked.outline.is_some(),
+        manifests: looked.outline.is_some().then_some(&looked.manifests),
+    };
+    ask::fill_add(&mut repo, config, prompter, &known, say).map_err(Failure::Asked)?;
+    Ok(repo)
+}
+
+/// `repo` with a registry shorthand replaced by what the registry says (see `registry::expand`),
+/// and a warning for what a forge shorthand had after the repository.
+fn expand(
+    repo: &AddRepo,
+    asking: &Asking,
+    offline: bool,
+    say: &mut dyn Say,
+) -> Result<Expanded, Failure> {
+    let expanded = registry::expand(repo, asking.registry, offline).map_err(Failure::Registry)?;
     if let Some(ignored) = &expanded.ignored {
         let shorthand = &repo.url;
         say.warning(format!(
@@ -90,13 +131,23 @@ fn prepare(
              use `--ref` and `--paths` to choose a ref and directories"
         ));
     }
-    // A registry add has chosen its Ref (a tag, or the default branch) unless nothing was pinned.
-    let registry_add = expanded.requested.is_some();
-    let mut ask_ref = !registry_add;
-    let registry_description = expanded.description;
-    let mut repo = expanded.repo;
-    // A `ref` given with a version was refused by `expand`; without one it is kept as it is.
-    if let (None, Some(requested)) = (&repo.git_ref, &expanded.requested) {
+    Ok(expanded)
+}
+
+/// The `ref` of `repo`. A registry add pins its package's version to a tag (`pin`), unless a
+/// `ref` was given with it: `expand` refused that when a version was too, and otherwise the
+/// `ref` is kept as it is. When nothing was pinned, or there was no registry package, the
+/// person is asked for one, if there is one to ask.
+fn settle_ref(
+    repo: &mut AddRepo,
+    requested: Option<&Requested>,
+    root: &Path,
+    source: Option<&dyn Source>,
+    asking: &mut Asking,
+    say: &mut dyn Say,
+) -> Result<(), Failure> {
+    let mut ask_ref = requested.is_none();
+    if let (None, Some(requested)) = (&repo.git_ref, requested) {
         let version = requested.version.as_deref();
         let package = &requested.package;
         let url = &repo.url;
@@ -116,48 +167,52 @@ fn prepare(
     {
         repo.git_ref = ask::ask_ref(prompter).map_err(Failure::Asked)?;
     }
-    // Looking at the repo comes before the rest of the questions, so that a bad URL or ref
-    // fails before they are asked and with nothing edited.
-    let looks = source.filter(|_| {
+    Ok(())
+}
+
+/// What looking at the repo found.
+struct Looked {
+    /// The description to start from: the registry's, else the root Manifest's.
+    described: Option<String>,
+    manifests: Manifests,
+    /// None when the repo was not looked at.
+    outline: Option<Outline>,
+}
+
+/// Look at the repo of `repo`, when there is a reason to: someone to ask, or `packages` to find.
+/// This comes before the rest of the questions, so that a bad URL or ref fails before they are
+/// asked and with nothing edited.
+fn look(
+    repo: &AddRepo,
+    source: Option<&dyn Source>,
+    registry_description: Option<String>,
+    offline: bool,
+    asking: &Asking,
+    say: &mut dyn Say,
+) -> Result<Looked, Failure> {
+    let mut looked = Looked {
+        described: registry_description,
+        manifests: Manifests::default(),
+        outline: None,
+    };
+    let source = source.filter(|_| {
         !repo.url.is_empty() && !offline && (asking.prompter.is_some() || repo.packages.is_empty())
     });
-    let mut described = registry_description;
-    let mut manifests = Manifests::default();
-    let mut outline = None;
-    if let Some(source) = looks {
-        let git_ref = repo.git_ref.as_deref().unwrap_or("HEAD");
-        let looked = source
-            .outline(&repo.url, git_ref)
+    let Some(source) = source else {
+        return Ok(looked);
+    };
+    let git_ref = repo.git_ref.as_deref().unwrap_or("HEAD");
+    let outline = source
+        .outline(&repo.url, git_ref)
+        .map_err(Failure::Source)?;
+    // A registry add that names its package and describes it has no use for the Manifests.
+    let nameless = repo.packages.is_empty();
+    let undescribed = looked.described.is_none() && repo.description.is_none();
+    if nameless || undescribed {
+        looked.manifests = Manifests::read(source, &repo.url, &outline, &repo.paths, say)
             .map_err(Failure::Source)?;
-        // A registry add that names its package and describes it has no use for the Manifests.
-        let nameless = repo.packages.is_empty();
-        let undescribed = described.is_none() && repo.description.is_none();
-        if nameless || undescribed {
-            manifests = Manifests::read(source, &repo.url, &looked, &repo.paths, say)
-                .map_err(Failure::Source)?;
-            described = described.or(manifests.description());
-        }
-        outline = Some(looked);
+        looked.described = looked.described.or(looked.manifests.description());
     }
-    // Only the Manifests a Checkout of `paths` will hold count. None is fetched again.
-    let Some(prompter) = asking.prompter() else {
-        if repo.packages.is_empty() {
-            repo.packages = manifests.packages_for(&repo.paths);
-        }
-        return match repo.url.is_empty() {
-            true => Err(Failure::Usage(
-                "a URL is required when not run in a terminal".into(),
-            )),
-            false => Ok(repo),
-        };
-    };
-    let known = ask::Known {
-        described: described.as_deref(),
-        looked_at: outline.as_ref(),
-        // The directory the registry gave is where the picker starts, unlike one from `--paths`.
-        paths_from_registry: registry_add && !paths_given && outline.is_some(),
-        manifests: outline.is_some().then_some(&manifests),
-    };
-    ask::fill_add(&mut repo, config, prompter, &known, say).map_err(Failure::Asked)?;
-    Ok(repo)
+    looked.outline = Some(outline);
+    Ok(looked)
 }
