@@ -16,16 +16,22 @@ pub(crate) fn run<'a>(
     prompter: Option<&mut dyn Prompter>,
     console: &mut Console,
 ) -> u8 {
-    let (root, config) = match load(start, console) {
+    let project = match load(start, console) {
         Ok(project) => project,
         Err(code) => return code,
     };
     with_source(
         make_source,
-        &root,
-        &config,
+        &project,
         console,
-        |source, console| match update::run(source, &root, &config, request, prompter, console) {
+        |source, console| match update::run(
+            source,
+            &project.root,
+            &project.config,
+            request,
+            prompter,
+            console,
+        ) {
             Ok(done) => {
                 console.data(&done.listing);
                 let code = done

@@ -1,13 +1,13 @@
 //! `refs add` (`add::run`), then its report.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::{load, with_source};
 use crate::add::Asking;
 use crate::config::Config;
 use crate::diagnostic::{ProjectError, SourceError};
 use crate::edit::AddRepo;
-use crate::project;
+use crate::project::{self, Project};
 use crate::source::Source;
 use crate::sync::SyncFlags;
 use crate::ui::{Console, fail, failed, print_report};
@@ -21,14 +21,14 @@ pub(crate) fn run<'a>(
     mut asking: Asking,
     console: &mut Console,
 ) -> u8 {
-    let (root, config) = match load_or_create(start, console) {
+    let project = match load_or_create(start, console) {
         Ok(project) => project,
         Err(code) => return code,
     };
     let mut add = |source: Option<&dyn Source>, console: &mut Console| match crate::add::run(
         source,
-        &root,
-        &config,
+        &project.root,
+        &project.config,
         repo,
         flags,
         &mut asking,
@@ -40,7 +40,7 @@ pub(crate) fn run<'a>(
     if no_sync {
         add(None, console)
     } else {
-        with_source(make_source, &root, &config, console, |source, console| {
+        with_source(make_source, &project, console, |source, console| {
             add(Some(source), console)
         })
     }
@@ -48,7 +48,7 @@ pub(crate) fn run<'a>(
 
 /// `load`, except that with no `refs.toml` anywhere up the project is the place `refs init`
 /// would set one up and an empty config: the edit creates the file (ADR 0005).
-fn load_or_create(start: &Path, console: &mut Console) -> Result<(PathBuf, Config), u8> {
+fn load_or_create(start: &Path, console: &mut Console) -> Result<Project, u8> {
     let no_config = matches!(
         project::find_root(start),
         Err(ProjectError::NoConfig { .. })
@@ -57,5 +57,8 @@ fn load_or_create(start: &Path, console: &mut Console) -> Result<(PathBuf, Confi
         return load(start, console);
     }
     let root = project::init_root(start, false).map_err(|e| fail(e, console))?;
-    Ok((root, Config::default()))
+    Ok(Project {
+        root,
+        config: Config::default(),
+    })
 }

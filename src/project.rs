@@ -59,15 +59,21 @@ pub fn write_config(root: &Path, text: &str) -> Result<(), FileError> {
         .map_err(|source| FileError::write(CONFIG_FILE, source))
 }
 
+/// A project as a command works on it: where it is and the config it holds.
+pub struct Project {
+    pub root: PathBuf,
+    pub config: Config,
+}
+
 /// Find the project from `start`, read and validate its config, and check its output
 /// paths, all before anything is written. Every problem found is returned.
-pub fn load(start: &Path) -> Result<(PathBuf, Config), Vec<miette::Report>> {
+pub fn load(start: &Path) -> Result<Project, Vec<miette::Report>> {
     let root = find_root(start).map_err(|e| vec![e.into()])?;
     let text = read_config(&root).map_err(|e| vec![e.into()])?;
     let config = config::parse(&text).map_err(|e| vec![e.into()])?;
     let errors = check_outputs(&root, &config);
     if errors.is_empty() {
-        Ok((root, config))
+        Ok(Project { root, config })
     } else {
         Err(errors.into_iter().map(Into::into).collect())
     }

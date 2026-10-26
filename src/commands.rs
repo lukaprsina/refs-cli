@@ -11,16 +11,17 @@ pub(crate) mod self_update;
 pub(crate) mod sync;
 pub(crate) mod update;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::config::Config;
 use crate::diagnostic::SourceError;
+use crate::project::Project;
 use crate::source::Source;
 use crate::ui::{Console, fail, fail_all};
 
 /// The project at or above `start`; on failure the problems are printed and the exit code
 /// returned.
-fn load(start: &Path, console: &mut Console) -> Result<(PathBuf, Config), u8> {
+fn load(start: &Path, console: &mut Console) -> Result<Project, u8> {
     crate::project::load(start).map_err(|reports| fail_all(reports, console))
 }
 
@@ -28,12 +29,11 @@ fn load(start: &Path, console: &mut Console) -> Result<(PathBuf, Config), u8> {
 /// others do not need a cache directory.
 fn with_source<'a>(
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
-    root: &Path,
-    config: &Config,
+    project: &Project,
     console: &mut Console,
     f: impl FnOnce(&dyn Source, &mut Console) -> u8,
 ) -> u8 {
-    match make_source(root, config) {
+    match make_source(&project.root, &project.config) {
         Ok(source) => f(&*source, console),
         Err(e) => fail(e, console),
     }

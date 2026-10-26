@@ -19,15 +19,15 @@ pub(crate) fn run<'a>(
     flags: &SyncFlags,
     console: &mut Console,
 ) -> u8 {
-    let (root, config) = match load(start, console) {
+    let project = match load(start, console) {
         Ok(project) => project,
         Err(code) => return code,
     };
     if no_sync {
-        return print_report(&sync::edit_only(&root, edit), false, console);
+        return print_report(&sync::edit_only(&project.root, edit), false, console);
     }
-    with_source(make_source, &root, &config, console, |source, console| {
-        let report = sync::edit(source, &root, edit, flags);
+    with_source(make_source, &project, console, |source, console| {
+        let report = sync::edit(source, &project.root, edit, flags);
         print_report(&report, false, console)
     })
 }
