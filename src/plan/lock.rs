@@ -40,17 +40,9 @@ pub fn locked(repo: RepoRef, pin: crate::source::Pin) -> LockedRepo {
 
 #[derive(Debug, Default)]
 pub struct LockFlags {
-    pub upgrade: Upgrade,
+    /// Floating Repos to re-resolve even though their Pin is current.
+    pub upgrade: Vec<String>,
     pub offline: bool,
-}
-
-#[derive(Debug, Default, Clone)]
-pub enum Upgrade {
-    #[default]
-    None,
-    All,
-    /// Only these Repos. An empty list upgrades nothing; the CLI maps a bare `--upgrade` to `All`.
-    Ids(Vec<String>),
 }
 
 /// How the Lock differs from the active set; empty when it is current. `sync --check` uses
@@ -103,25 +95,12 @@ pub fn shrunk_lock(active: &ActiveSet, lock: Option<&Lock>) -> Option<Lock> {
 }
 
 /// Stage 1 (ADR 0006): one step per active Repo, in active-set order. `offline` refuses
-/// anything that would resolve: a missing or stale Lock, or any `upgrade`.
+/// anything that would resolve: a missing or stale Lock.
 pub fn plan_lock<'a>(
     active: &ActiveSet<'a>,
     lock: Option<&Lock>,
     flags: &LockFlags,
 ) -> Result<LockPlan<'a>, LockRefusal> {
-    if let Upgrade::Ids(ids) = &flags.upgrade {
-        let unknown: Vec<String> = ids
-            .iter()
-            .filter(|id| active.get(id).is_none())
-            .cloned()
-            .collect();
-        if !unknown.is_empty() {
-            return Err(LockRefusal::UnknownUpgradeId { ids: unknown });
-        }
-    }
-    if flags.offline && !matches!(flags.upgrade, Upgrade::None) {
-        return Err(LockRefusal::OfflineUpgrade);
-    }
     let drift = lock_drift(active, lock);
     if flags.offline && !drift.is_empty() {
         return Err(LockRefusal::OfflineStale { drift });
@@ -143,12 +122,7 @@ pub fn plan_lock<'a>(
 
 impl LockFlags {
     fn upgrades(&self, repo: RepoRef) -> bool {
-        repo.repo.is_floating()
-            && match &self.upgrade {
-                Upgrade::None => false,
-                Upgrade::All => true,
-                Upgrade::Ids(ids) => ids.iter().any(|id| id == repo.id),
-            }
+        repo.repo.is_floating() && self.upgrade.iter().any(|id| id == repo.id)
     }
 }
 

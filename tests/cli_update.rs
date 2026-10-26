@@ -381,8 +381,6 @@ const BRANCH: &str = "[repos.foo]\nurl = \"https://github.com/o/foo\"\nref = \"m
 #[test]
 fn a_branch_moves_in_the_lock_and_refs_toml_is_untouched() {
     let p = Project::new(BRANCH);
-    p.source.set_commit("foo", SHA_1);
-    assert_eq!(p.run(&["lock", "--upgrade"], None).code, 0);
     p.source.set_commit("foo", SHA_2);
 
     let run = p.update(&["foo"]);
@@ -391,7 +389,7 @@ fn a_branch_moves_in_the_lock_and_refs_toml_is_untouched() {
     assert_eq!(p.read("refs.toml"), BRANCH);
     assert!(p.read("refs.lock").contains(SHA_2));
     assert!(
-        run.err.contains("foo  1111111 → 2222222 (main)"),
+        run.err.contains("foo  aaaaaaa → 2222222 (main)"),
         "{}",
         run.err
     );
@@ -450,8 +448,6 @@ fn a_dirty_mover_is_skipped_with_its_files_and_force_moves_it() {
 #[test]
 fn a_dirty_floating_mover_is_skipped_and_the_lock_stays() {
     let p = Project::new(BRANCH);
-    p.source.set_commit("foo", SHA_1);
-    assert_eq!(p.run(&["lock", "--upgrade"], None).code, 0);
     make_dirty(&p, "foo");
     p.source.set_commit("foo", SHA_2);
     let before = p.read("refs.lock");
@@ -535,8 +531,6 @@ fn a_ref_the_remote_no_longer_has_is_skipped() {
 #[test]
 fn a_lock_only_move_that_stage_two_refuses_writes_nothing_and_says_to_sync_once_fixed() {
     let p = Project::new(THREE);
-    p.source.set_commit("bar", SHA_1);
-    assert_eq!(p.run(&["lock", "--upgrade"], None).code, 0);
     p.source.set_commit("bar", SHA_2);
     p.source.seed("foo", Observed::Foreign);
     let before = p.read("refs.lock");

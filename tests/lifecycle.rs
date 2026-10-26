@@ -112,31 +112,28 @@ impl Project {
 }
 
 #[test]
-fn lock_sync_change_ref_upgrade_and_remove() {
+fn sync_change_ref_update_and_remove() {
     let remote = Remote::new();
     git(remote.dir.path(), &["branch", "other"]);
     let cache = TempDir::new().unwrap();
     let project = Project::new(cache.path());
 
     project.configure(&[("r", &remote, "main", &["docs"])]);
-    project.ok(&["lock"]);
     project.ok(&["sync"]);
     assert_eq!(project.read("r", "docs/a.md").as_deref(), Some("a"));
     assert_eq!(project.read("r", "src/b.rs"), None, "only the sparse paths");
     project.ok(&["sync", "--check"]);
 
-    // A new commit on the floating ref changes nothing until the lock is upgraded.
+    // A new commit on the floating ref changes nothing until `update` moves it.
     remote.commit("docs/new.md", "new");
     project.ok(&["sync"]);
     assert_eq!(project.read("r", "docs/new.md"), None);
-    project.ok(&["lock", "--upgrade"]);
-    assert_eq!(project.run(&["sync", "--check"]).code, Some(3));
-    project.ok(&["sync"]);
+    project.ok(&["update", "r"]);
+    project.ok(&["sync", "--check"]);
     assert_eq!(project.read("r", "docs/new.md").as_deref(), Some("new"));
 
     // A different ref moves the checkout back to that commit.
     project.configure(&[("r", &remote, "other", &["docs"])]);
-    project.ok(&["lock"]);
     project.ok(&["sync"]);
     assert_eq!(project.read("r", "docs/new.md"), None);
     assert_eq!(project.read("r", "docs/a.md").as_deref(), Some("a"));

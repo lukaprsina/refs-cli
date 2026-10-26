@@ -2,10 +2,10 @@ use std::fs;
 
 use refs_cli::config::{Config, parse};
 use refs_cli::lock::Lock;
-use refs_cli::plan::{Drift, LockFlags};
+use refs_cli::plan::Drift;
 use refs_cli::source::fake::{Call, FakeSource, Method};
 use refs_cli::source::{Observed, Source};
-use refs_cli::sync::{Hint, Outcome, Report, SyncFlags, lock, sync};
+use refs_cli::sync::{Hint, Outcome, Report, SyncFlags, sync};
 use tempfile::TempDir;
 
 const A: &str = r#"
@@ -289,21 +289,12 @@ fn a_dirty_checkout_is_refused_until_forced() {
     dirty(&p);
     p.source.set_commit("a", &"c".repeat(40));
     // the Lock moves on, so the dirty checkout has to be replaced
-    assert_eq!(
-        lock(
-            &p.source,
-            p.dir.path(),
-            &p.config,
-            &LockFlags {
-                upgrade: refs_cli::plan::Upgrade::All,
-                ..LockFlags::default()
-            }
-        )
-        .outcome,
-        Outcome::InSync
-    );
+    let moving = SyncFlags {
+        upgrade: vec!["a".into()],
+        ..SyncFlags::default()
+    };
 
-    let report = p.sync(&SyncFlags::default());
+    let report = p.sync(&moving);
     assert_eq!(report.outcome, Outcome::Refused);
     assert_eq!(codes(&report), ["refs::sync::dirty_checkout"]);
 
@@ -333,11 +324,8 @@ fn offline_refuses_a_missing_lock_and_never_calls_the_source() {
 #[test]
 fn offline_is_passed_to_materialise() {
     let p = Project::new(A);
-    assert_eq!(
-        lock(&p.source, p.dir.path(), &p.config, &LockFlags::default()).outcome,
-        Outcome::InSync
-    );
-    assert_eq!(p.source.inspect("a").unwrap(), Observed::Absent);
+    assert_eq!(p.sync(&SyncFlags::default()).outcome, Outcome::InSync);
+    p.source.seed("a", Observed::Absent);
     let seen = p.source.calls().len();
     let offline = SyncFlags {
         offline: true,
@@ -359,7 +347,7 @@ fn a_failed_lock_still_reports_how_the_lock_differed() {
     let p = Project::new(A);
     p.source.fail("a", Method::Resolve, "unreachable");
 
-    let report = lock(&p.source, p.dir.path(), &p.config, &LockFlags::default());
+    let report = p.sync(&SyncFlags::default());
 
     assert_eq!(report.outcome, Outcome::Failed);
     assert_eq!(report.drift, [Drift::LockMissing]);

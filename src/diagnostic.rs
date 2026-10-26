@@ -363,7 +363,7 @@ pub enum LockError {
     #[error("invalid refs.lock: {message}")]
     #[diagnostic(
         code(refs::lock::invalid),
-        help("refs.lock is machine-written; run `refs lock` to regenerate it")
+        help("refs.lock is machine-written; run `refs sync` to regenerate it")
     )]
     Invalid { message: String },
 
@@ -397,17 +397,8 @@ pub enum BlockError {
 #[derive(Debug, Error, Diagnostic)]
 pub enum LockRefusal {
     #[error("refs.lock is missing or out of date and --offline forbids resolving: {}", .drift.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
-    #[diagnostic(
-        code(refs::lock::offline_stale),
-        help("run `refs lock` while online, then sync again")
-    )]
+    #[diagnostic(code(refs::lock::offline_stale), help("run `refs sync` while online"))]
     OfflineStale { drift: Vec<crate::plan::Drift> },
-    #[error("--upgrade resolves refs, which --offline forbids")]
-    #[diagnostic(code(refs::lock::offline_upgrade))]
-    OfflineUpgrade,
-    #[error("--upgrade names repos that are not active: {}", .ids.join(", "))]
-    #[diagnostic(code(refs::lock::unknown_id))]
-    UnknownUpgradeId { ids: Vec<String> },
 }
 
 /// Why `plan_checkouts` will not touch something. `sync` refuses rather than delete what

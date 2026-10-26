@@ -22,7 +22,6 @@ use crate::edit::{Edit, Fields, RepoChange};
 use crate::listing::{self, Gone};
 use crate::lock::Lock;
 use crate::packages::{self, manifest_paths};
-use crate::plan::Upgrade;
 use crate::prompt::{Abort, Broken, Prompter, fill_update};
 use crate::registry::Package;
 use crate::registry::pin::{Say, Stop, choose_version};
@@ -199,11 +198,7 @@ fn apply(
         .collect();
     let flags = SyncFlags {
         force,
-        upgrade: if upgrade.is_empty() {
-            Upgrade::None
-        } else {
-            Upgrade::Ids(upgrade)
-        },
+        upgrade,
         ..SyncFlags::default()
     };
     let mut report = sync::edit(source, root, &Edit::Change(&changes), &flags);

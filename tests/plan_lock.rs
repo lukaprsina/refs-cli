@@ -3,7 +3,7 @@ use refs_cli::active::active;
 use refs_cli::config::parse;
 use refs_cli::diagnostic::LockRefusal;
 use refs_cli::lock::{Field, Lock, LockedRepo};
-use refs_cli::plan::{Drift, LockFlags, Step, Upgrade, lock_drift, plan_lock};
+use refs_cli::plan::{Drift, LockFlags, Step, lock_drift, plan_lock};
 use refs_cli::source::Pin;
 
 const SHA: &str = "ee49b3e0123456789012345678901234567890ab";
@@ -158,12 +158,12 @@ fn three_locked() -> Lock {
 }
 
 /// Which repos resolve, in config order.
-fn resolved(upgrade: Upgrade) -> Vec<String> {
+fn resolved(upgrade: &[&str]) -> Vec<String> {
     let config = parse(THREE).unwrap();
     let set = active(&config);
     let locked = three_locked();
     let flags = LockFlags {
-        upgrade,
+        upgrade: upgrade.iter().map(ToString::to_string).collect(),
         ..LockFlags::default()
     };
     let plan = plan_lock(&set, Some(&locked), &flags).unwrap();
@@ -178,21 +178,18 @@ fn resolved(upgrade: Upgrade) -> Vec<String> {
 
 #[test]
 fn without_upgrade_nothing_floating_moves() {
-    assert_eq!(resolved(Upgrade::None), Vec::<String>::new());
+    assert_eq!(resolved(&[]), Vec::<String>::new());
 }
 
 #[test]
 fn upgrade_re_resolves_floating_refs_but_not_a_full_sha() {
-    assert_eq!(resolved(Upgrade::All), ["branch", "head"]);
+    assert_eq!(resolved(&["branch", "head", "pinned"]), ["branch", "head"]);
 }
 
 #[test]
 fn upgrade_with_ids_re_resolves_only_those() {
-    assert_eq!(resolved(Upgrade::Ids(vec!["head".into()])), ["head"]);
-    assert_eq!(
-        resolved(Upgrade::Ids(vec!["pinned".into()])),
-        Vec::<String>::new()
-    );
+    assert_eq!(resolved(&["head"]), ["head"]);
+    assert_eq!(resolved(&["pinned"]), Vec::<String>::new());
 }
 
 fn offline() -> LockFlags {
@@ -223,32 +220,4 @@ fn offline_with_a_current_lock_plans_normally() {
     let set = active(&config);
     let plan = plan_lock(&set, Some(&lock(vec![a_entry()])), &offline()).unwrap();
     assert!(matches!(plan.steps.as_slice(), [Step::Reuse(_)]));
-}
-
-#[test]
-fn upgrading_a_repo_that_is_not_active_is_a_refusal() {
-    let config = parse(&format!("{A}enabled = false\n")).unwrap();
-    let set = active(&config);
-    let flags = LockFlags {
-        upgrade: Upgrade::Ids(vec!["a".into(), "nope".into()]),
-        ..LockFlags::default()
-    };
-    let err = plan_lock(&set, None, &flags).unwrap_err();
-    assert_eq!(err.code().unwrap().to_string(), "refs::lock::unknown_id");
-    assert!(matches!(&err, LockRefusal::UnknownUpgradeId { ids } if ids == &["a", "nope"]));
-}
-
-#[test]
-fn offline_never_upgrades_even_with_a_current_lock() {
-    let config = parse(A).unwrap();
-    let set = active(&config);
-    let flags = LockFlags {
-        upgrade: Upgrade::All,
-        offline: true,
-    };
-    let err = plan_lock(&set, Some(&lock(vec![a_entry()])), &flags).unwrap_err();
-    assert_eq!(
-        err.code().unwrap().to_string(),
-        "refs::lock::offline_upgrade"
-    );
 }

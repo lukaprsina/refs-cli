@@ -18,7 +18,6 @@ use crate::config::Config;
 use crate::diagnostic::{Note, ProjectError, SourceError};
 use crate::edit::{AddRepo, Edit, Target};
 use crate::list::list;
-use crate::plan::{LockFlags, Upgrade};
 use crate::project;
 use crate::prompt::{self, Prompter};
 use crate::registry::pin::Say;
@@ -98,8 +97,6 @@ enum ConfigCommand {
 
 #[derive(Debug, Subcommand)]
 enum SourceCommand {
-    /// Resolve refs to commits and write refs.lock
-    Lock(LockArgs),
     /// Make the checkouts and the managed block match refs.lock
     Sync(SyncArgs),
 }
@@ -199,13 +196,6 @@ struct RemoveArgs {
 }
 
 #[derive(Debug, Args)]
-struct LockArgs {
-    /// Re-resolve floating refs: all of them, or only the given repos
-    #[arg(long, num_args = 0.., value_name = "ID")]
-    upgrade: Option<Vec<String>>,
-}
-
-#[derive(Debug, Args)]
 struct SyncArgs {
     /// Change nothing; exit 3 if the lock, checkouts or blocks are out of date
     #[arg(long)]
@@ -213,16 +203,6 @@ struct SyncArgs {
     /// Discard local changes in checkouts
     #[arg(long)]
     force: bool,
-}
-
-impl LockArgs {
-    fn upgrade(&self) -> Upgrade {
-        match &self.upgrade {
-            None => Upgrade::None,
-            Some(ids) if ids.is_empty() => Upgrade::All,
-            Some(ids) => Upgrade::Ids(ids.clone()),
-        }
-    }
 }
 
 /// Where a run's output goes, in uv's style: status lines on stderr (silenced by `-q`),
@@ -607,13 +587,6 @@ fn run_source<'a>(
 ) -> u8 {
     with_source(make_source, root, config, console, |source, console| {
         let (report, check) = match command {
-            SourceCommand::Lock(args) => {
-                let flags = LockFlags {
-                    upgrade: args.upgrade(),
-                    offline,
-                };
-                (sync::lock(source, root, config, &flags), false)
-            }
             SourceCommand::Sync(args) => {
                 let flags = SyncFlags {
                     offline,

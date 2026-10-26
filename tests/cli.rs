@@ -23,9 +23,6 @@ url = "https://github.com/o/a"
 url = "https://github.com/o/b"
 "#;
 
-const SHA_1: &str = "1111111111111111111111111111111111111111";
-const SHA_2: &str = "2222222222222222222222222222222222222222";
-
 struct Project {
     dir: TempDir,
     source: FakeSource,
@@ -61,17 +58,6 @@ impl Project {
 
     fn lock_text(&self) -> Option<String> {
         fs::read_to_string(self.path("refs.lock")).ok()
-    }
-
-    /// The locked commit of `id`, read from the lock file's text.
-    fn sha(&self, id: &str) -> String {
-        let text = self.lock_text().unwrap();
-        let entry = text
-            .split("[[repo]]")
-            .find(|e| e.contains(&format!("id = \"{id}\"")))
-            .unwrap();
-        let line = entry.lines().find(|l| l.starts_with("sha = ")).unwrap();
-        line.trim_start_matches("sha = ").trim_matches('"').into()
     }
 }
 
@@ -112,16 +98,6 @@ fn a_refusal_exits_1_with_or_without_check() {
     assert_eq!(p.run(&["sync"]), 1);
 }
 
-#[test]
-fn lock_writes_the_lock_and_touches_no_checkout() {
-    let p = Project::new(AB);
-
-    assert_eq!(p.run(&["lock"]), 0);
-
-    assert!(p.lock_text().is_some());
-    assert!(!p.path("AGENTS.md").exists());
-}
-
 /// What the Source was asked since call number `seen`, as the `offline` of each Verify and
 /// Materialise.
 fn offline_since(p: &Project, seen: usize) -> Vec<bool> {
@@ -150,27 +126,6 @@ fn offline_reaches_the_source_from_sync_and_from_an_edit_that_syncs() {
     assert_eq!(p.run(&["enable", "b", "--offline"]), 0);
     let asked = offline_since(&p, seen);
     assert!(!asked.is_empty() && asked.iter().all(|&offline| offline));
-}
-
-#[test]
-fn a_bare_upgrade_reaches_the_plan_as_all_and_ids_as_ids() {
-    let p = Project::new(AB);
-    p.source.set_commit("a", SHA_1);
-    p.source.set_commit("b", SHA_1);
-    assert_eq!(p.run(&["lock"]), 0);
-    p.source.set_commit("a", SHA_2);
-    p.source.set_commit("b", SHA_2);
-
-    assert_eq!(p.run(&["lock"]), 0);
-    assert_eq!((p.sha("a"), p.sha("b")), (SHA_1.into(), SHA_1.into()));
-
-    assert_eq!(p.run(&["lock", "--upgrade", "a"]), 0);
-    assert_eq!((p.sha("a"), p.sha("b")), (SHA_2.into(), SHA_1.into()));
-
-    p.source.set_commit("a", SHA_1);
-    p.source.set_commit("b", SHA_2);
-    assert_eq!(p.run(&["lock", "--upgrade"]), 0);
-    assert_eq!((p.sha("a"), p.sha("b")), (SHA_1.into(), SHA_2.into()));
 }
 
 #[test]
@@ -321,7 +276,7 @@ fn project_flag_overrides_the_directory_search() {
     let root = p.dir.path().to_str().unwrap();
 
     let code = run(
-        ["refs", "--project", root, "lock"].map(Into::into),
+        ["refs", "--project", root, "sync"].map(Into::into),
         elsewhere.path(),
         |_, _| Ok(Box::new(&p.source)),
     );
@@ -365,7 +320,7 @@ fn the_binary_exits_2_on_a_usage_error_and_0_on_help() {
 }
 
 #[test]
-fn the_binary_locks_with_git_and_reports_an_unknown_ref() {
+fn the_binary_syncs_with_git_and_reports_an_unknown_ref() {
     let remote = TempDir::new().unwrap();
     for args in [
         &["init", "-q", "-b", "main"][..],
@@ -402,13 +357,13 @@ fn the_binary_locks_with_git_and_reports_an_unknown_ref() {
     };
 
     config("main");
-    let out = binary(&project, &["--no-color", "lock"]);
+    let out = binary(&project, &["--no-color", "sync"]);
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert_eq!(out.status.code(), Some(0), "{stderr}");
     assert!(project.path().join("refs.lock").exists());
 
     config("nope");
-    let out = binary(&project, &["--no-color", "lock"]);
+    let out = binary(&project, &["--no-color", "sync"]);
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("refs::git::ref_not_found"), "{stderr}");
 }

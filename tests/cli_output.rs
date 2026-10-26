@@ -237,22 +237,15 @@ fn a_failed_sync_or_edit_says_why_before_the_hint() {
 #[test]
 fn a_run_that_left_nothing_to_fix_prints_no_sync_hint() {
     let p = Project::new(AB);
-    let failed_lock = Project::new(AB);
-    failed_lock.source.fail("a", Method::Resolve, "remote gone");
 
     let ok = p.run(&["sync"]);
     let again = p.run(&["-q", "sync"]);
-    let lock = p.run(&["lock"]);
     let stale = Project::new(AB).run(&["sync", "--check"]);
-    let lock_failed = failed_lock.run(&["lock"]);
 
-    for ran in [&ok, &again, &lock, &stale, &lock_failed] {
+    for ran in [&ok, &again, &stale] {
         assert!(!ran.stderr.contains("run `refs sync`"), "{}", ran.stderr);
     }
-    assert_eq!(
-        (ok.code, again.code, lock.code, stale.code, lock_failed.code),
-        (0, 0, 0, 3, 1)
-    );
+    assert_eq!((ok.code, again.code, stale.code), (0, 0, 3));
 }
 
 struct Binary {

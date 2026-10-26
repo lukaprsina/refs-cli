@@ -13,8 +13,8 @@ use crate::exclude;
 use crate::lock::Lock;
 pub use crate::plan::{Checkout, Hint, Outcome};
 use crate::plan::{
-    Checkouts, Drift, ExcludeAction, LockFlags, Plan, RepoAction, Step, Upgrade, check_outcome,
-    lock_drift, locked, plan_checkouts, plan_lock, shrunk_lock,
+    Checkouts, Drift, ExcludeAction, LockFlags, Plan, RepoAction, Step, check_outcome, lock_drift,
+    locked, plan_checkouts, plan_lock, shrunk_lock,
 };
 use crate::project;
 use crate::source::{MaterialiseOpts, Source, VerifyOpts};
@@ -26,8 +26,8 @@ pub struct SyncFlags {
     pub force: bool,
     pub check: bool,
     /// Floating Repos to re-resolve in the Lock. `update` sets it; `sync` has no such flag, but
-    /// reads it all the same (through `lock_flags`), as does `lock --upgrade`.
-    pub upgrade: Upgrade,
+    /// reads it all the same (through `lock_flags`).
+    pub upgrade: Vec<String>,
 }
 
 /// Something a run changed on disk, for the CLI to say.
@@ -47,7 +47,7 @@ pub enum Changed {
     AgentFile(String),
 }
 
-/// How a run went, for the CLI to print: the one result of `lock`, `sync` and every edit.
+/// How a run went, for the CLI to print: the one result of `sync` and every edit.
 #[derive(Debug)]
 pub struct Report {
     pub outcome: Outcome,
@@ -126,18 +126,6 @@ fn observe<'a>(root: &Path, config: &'a Config) -> Result<Observation<'a>, Repor
     let old = Lock::read(&Lock::path(root)).map_err(Report::failed)?;
     let drift = lock_drift(&active, old.as_ref());
     Ok(Observation { active, old, drift })
-}
-
-/// `refs lock`: stage 1 and a write.
-pub fn lock(source: &dyn Source, root: &Path, config: &Config, flags: &LockFlags) -> Report {
-    let Observation { active, old, drift } = match observe(root, config) {
-        Ok(observation) => observation,
-        Err(report) => return report,
-    };
-    match stage_one(source, &active, old, flags, root) {
-        Ok(stage_one) => finish(stage_one, drift, Report::new(Outcome::InSync)),
-        Err(report) => report.with_drift(drift),
-    }
 }
 
 /// `refs sync`. With `check`, nothing is resolved, verified, fetched or written.
@@ -405,7 +393,7 @@ fn stage_two_gate<'a>(
     }
 }
 
-/// Stage 1 as `lock` and `sync` run it: resolve and verify, then write the Lock.
+/// Stage 1 as `sync` and an edit run it: resolve and verify, then write the Lock.
 fn stage_one(
     source: &dyn Source,
     active: &ActiveSet,

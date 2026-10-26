@@ -1130,7 +1130,7 @@ fn paths_given_by_flag_win_over_the_registrys_directory_and_are_not_asked() {
 }
 
 #[test]
-fn a_repo_with_an_origin_locks_syncs_and_lists_without_the_registry() {
+fn a_repo_with_an_origin_syncs_and_lists_without_the_registry() {
     let dir = project();
     fs::write(
         dir.path().join("refs.toml"),
@@ -1139,7 +1139,7 @@ fn a_repo_with_an_origin_locks_syncs_and_lists_without_the_registry() {
     .unwrap();
     let source = FakeSource::new();
 
-    for command in ["lock", "sync", "list"] {
+    for command in ["sync", "list"] {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let code = run_on(
             ["refs", command].map(Into::into),

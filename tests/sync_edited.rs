@@ -5,7 +5,6 @@ use std::fs;
 
 use refs_cli::config::parse;
 use refs_cli::edit::{AddRepo, Edit, Target};
-use refs_cli::plan::Upgrade;
 use refs_cli::source::fake::{Call, FakeSource, Method};
 use refs_cli::sync::{Changed, Hint, Outcome, Report, SyncFlags, edit, edit_only};
 use tempfile::TempDir;
@@ -552,7 +551,7 @@ const SHA_2: &str = "2222222222222222222222222222222222222222";
 
 fn upgrading_a() -> SyncFlags {
     SyncFlags {
-        upgrade: Upgrade::Ids(vec!["a".into()]),
+        upgrade: vec!["a".into()],
         ..SyncFlags::default()
     }
 }
