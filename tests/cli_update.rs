@@ -698,15 +698,22 @@ fn short_and_long_help_print_the_same() {
 }
 
 #[test]
-fn bare_update_without_a_terminal_is_a_usage_error_pointing_at_list() {
+fn bare_update_without_a_terminal_lists_and_says_so() {
     let p = Project::new(&foo_at("foo-js-1.0.0"));
-    let calls = p.source.calls().len();
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3"]);
+    let before = (p.read("refs.toml"), p.read("refs.lock"));
 
     let run = p.update(&[]);
 
-    assert_eq!(run.code, 2, "{}", run.err);
-    assert!(run.err.contains("--list"), "{}", run.err);
-    assert_eq!(p.source.calls().len(), calls);
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(run.out, "foo  foo-js-1.0.0 → foo-js-1.2.3\n");
+    assert!(
+        run.err.contains("listing only; name repos to update"),
+        "{}",
+        run.err
+    );
+    assert_eq!((p.read("refs.toml"), p.read("refs.lock")), before);
 }
 
 #[test]

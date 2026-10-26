@@ -66,6 +66,28 @@ pub struct Done {
     pub listing: String,
 }
 
+/// What a run does, from the request and whether there is someone to ask.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Move the Repos named.
+    Named,
+    /// Offer every Repo and move the ones picked.
+    Pick,
+    /// Say what each Repo would do and break; ask nothing, change nothing. Also what a bare
+    /// `refs update` comes to with no one to ask.
+    List,
+}
+
+impl Mode {
+    fn of(request: &Request, asking: bool) -> Mode {
+        match (request.list, request.ids.is_empty(), asking) {
+            (true, ..) | (false, true, false) => Mode::List,
+            (false, false, _) => Mode::Named,
+            (false, true, true) => Mode::Pick,
+        }
+    }
+}
+
 /// Update the Repos `request` names. What it found out and decided is said through `say`: notes
 /// as status, skips as problems, and one `id  old → new` line per Repo once the edit was written.
 pub fn run(
@@ -92,17 +114,9 @@ pub fn run(
             unknown.join(", ")
         )));
     }
+    let mode = Mode::of(request, prompter.is_some());
     let ids: Vec<&str> = match request.ids {
-        [] => match prompter {
-            Some(_) => active.repos().map(|repo| repo.id).collect(),
-            None if request.list => active.repos().map(|repo| repo.id).collect(),
-            None => {
-                return Err(Failure::Usage(
-                    "`refs update` without repo names needs a terminal; name the repos or use `--list`"
-                        .into(),
-                ));
-            }
-        },
+        [] => active.repos().map(|repo| repo.id).collect(),
         named => named.iter().map(String::as_str).collect(),
     };
     let lock = Lock::read(&Lock::path(root)).map_err(Failure::Lock)?;
@@ -116,7 +130,12 @@ pub fn run(
     };
     let mut seen = Vec::<&str>::new();
     let mut found = Vec::new();
-    if (request.ids.is_empty() || request.list) && !ids.is_empty() {
+    if mode == Mode::List && request.ids.is_empty() && !request.list {
+        assessing
+            .say
+            .status("no terminal: listing only; name repos to update".into());
+    }
+    if mode != Mode::Named && !ids.is_empty() {
         assessing
             .say
             .status(format!("checking {} repos…", ids.len()));
@@ -129,16 +148,16 @@ pub fn run(
         let repo = active.get(id).expect("the ids were checked");
         found.push(assessing.find(repo, request));
     }
-    if request.list {
+    if mode == Mode::List {
         return Ok(Done {
             report: None,
             skipped: 0,
             listing: assessing.listing(&found),
         });
     }
-    let chosen = match request.ids.is_empty() {
-        true => assessing.pick(&found).map_err(Failure::Asked)?,
-        false => seen.clone(),
+    let chosen = match mode {
+        Mode::Pick => assessing.pick(&found).map_err(Failure::Asked)?,
+        _ => seen.clone(),
     };
     let (mut moves, mut skipped) = (Vec::<Move>::new(), 0);
     for candidate in found {
