@@ -3,6 +3,7 @@ pub mod add;
 pub mod agent_file;
 pub mod atomic;
 pub mod cli;
+mod commands;
 pub mod config;
 pub mod diagnostic;
 pub mod edit;

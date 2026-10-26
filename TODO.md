@@ -8,7 +8,6 @@
 
 ## repo structure rewrite
 
-- After the `ui`/`commands` move (#92-#95): split the long "Where decisions live" paragraph in `CODING_STANDARDS.md` into one bullet per command.
 - After the move: a `Project { root, config }` value for what `load`, `with_source` and every command pass together; a context value for `add::settle_ref` and `add::look` (six parameters each); and `registry_add` is worked out from `requested` in two places in `add`.
 - After the move: the advice strings ("use `--ref` to move it", `refs update {id} --ref <tag>`, the `pin` hint) in one helper built around what they share (the command form, the `--ref` pointer), not a constants file of whole sentences. Natural home: `ui`'s report words.
 - Name overlaps to settle after the move: `commands::init` and the domain `init`; `list_status` in `cli` and in `list`; `cli::Terminal` (styles) and the `inquire` `Terminal`; `tests/registry_pin.rs` keeps its old name.

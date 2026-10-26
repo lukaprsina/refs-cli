@@ -4,9 +4,13 @@
 //! what it read and decided. The questions themselves live with `add` and `update`; the pickers
 //! they share are in `pickers`.
 
+mod console;
 pub(crate) mod pickers;
+mod report;
 mod terminal;
 
+pub(crate) use console::{Console, EXIT_ERROR, EXIT_OUT_OF_DATE, fail, fail_all};
+pub(crate) use report::{failed, print_report};
 pub use terminal::{Terminal, path_scorer};
 
 /// Where a run says what it read and decided (`pin`, the manifests, the pickers).
