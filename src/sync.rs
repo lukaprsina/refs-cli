@@ -107,11 +107,16 @@ struct StageOne {
 
 /// The Report of a run that got through stage 1: `stage_two` is what stage 2 found or did,
 /// and the Lock write came before everything stage 2 did.
-fn finish(stage_one: StageOne, drift: Vec<Drift>, mut stage_two: Report) -> Report {
+fn finish(stage_one: StageOne, drift: Vec<Drift>, stage_two: Report) -> Report {
+    with_lock_change(stage_one, stage_two).with_drift(drift)
+}
+
+/// `stage_two`, with the Lock write that came before everything in it said first.
+fn with_lock_change(stage_one: StageOne, mut stage_two: Report) -> Report {
     if stage_one.wrote_lock {
         stage_two.changes.insert(0, Changed::Lock);
     }
-    stage_two.with_drift(drift)
+    stage_two
 }
 
 /// What every run starts from: the active set, the Lock on disk (if any) and how it differs.
@@ -329,37 +334,44 @@ pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) ->
 }
 
 fn apply_edit(source: &dyn Source, root: &Path, applied: Applied, flags: &SyncFlags) -> Report {
-    let config = &applied.config;
-    let Observation { active, old, drift } = match observe(root, config) {
+    let Observation { active, old, drift } = match observe(root, &applied.config) {
         Ok(observation) => observation,
         Err(report) => return report.with_hint(Hint::ConfigUnchanged),
     };
-    let lock = match shrunk_lock(&active, old.as_ref()) {
+    let report = match edit_stages(source, root, &applied, &active, old, flags) {
+        Ok(report) => applied.written(report),
+        Err(report) => report,
+    };
+    report.with_drift(drift)
+}
+
+/// Both stages of an edit. `Ok` is a run that wrote `refs.toml` (what stage 2 found or did);
+/// `Err` is one that stopped before, or failed to write it.
+fn edit_stages(
+    source: &dyn Source,
+    root: &Path,
+    applied: &Applied,
+    active: &ActiveSet,
+    old: Option<Lock>,
+    flags: &SyncFlags,
+) -> Result<Report, Report> {
+    let config = &applied.config;
+    let lock = match shrunk_lock(active, old.as_ref()) {
         Some(lock) => lock,
-        None => match resolve_all(source, &active, old.as_ref(), &lock_flags(flags)) {
-            Ok(lock) => lock,
-            Err(report) => {
-                let blocked = report.with_hint(Hint::ConfigUnchangedTryNoSync);
-                return blocked.with_drift(drift);
-            }
-        },
+        None => resolve_all(source, active, old.as_ref(), &lock_flags(flags))
+            .map_err(|report| report.with_hint(Hint::ConfigUnchangedTryNoSync))?,
     };
-    let plan = match stage_two_gate(source, root, config, &active, &lock, flags.force) {
-        Ok(plan) => plan,
-        Err(report) => return report.with_drift(drift),
-    };
-    let stage_one = match commit(root, old.as_ref(), lock) {
-        Ok(stage_one) => stage_one,
-        Err(report) => return report.with_drift(drift).with_hint(Hint::ConfigUnchanged),
-    };
+    let plan = stage_two_gate(source, root, config, active, &lock, flags.force)?;
+    let stage_one = commit(root, old.as_ref(), lock)
+        .map_err(|report| report.with_hint(Hint::ConfigUnchanged))?;
     if !applied.unchanged()
         && let Err(e) = project::write_config(root, &applied.after)
     {
-        return finish(stage_one, drift, rejected(e));
+        return Err(with_lock_change(stage_one, rejected(e)));
     }
-    let stage_two = apply_plan(source, root, config, &active, plan, flags)
+    let stage_two = apply_plan(source, root, config, active, plan, flags)
         .hint_if_incomplete(Hint::FixOrRemoveThenSync);
-    applied.written(finish(stage_one, drift, stage_two))
+    Ok(with_lock_change(stage_one, stage_two))
 }
 
 /// The stage 2 plan an edit may apply. Stage 2's refusals are predictable, so they are found
