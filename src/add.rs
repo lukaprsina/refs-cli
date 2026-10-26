@@ -8,11 +8,14 @@
 
 use std::path::Path;
 
+mod ask;
+
 use crate::config::Config;
 use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit};
 use crate::packages::{self, infer, manifest_paths};
-use crate::prompt::{self, Abort, Known, PackagesFor, Prompter};
+use crate::prompt::pickers::PackagesFor;
+use crate::prompt::{Abort, Prompter};
 use crate::registry::pin::{Pinned, Say, Stop, pin};
 use crate::registry::{self, Registry, RegistryError};
 use crate::source::{Outline, Source};
@@ -74,7 +77,7 @@ pub fn run(
 ) -> Result<Report, Failure> {
     let repo = prepare(repo, source, root, config, flags.offline, asking, say)?;
     if asking.prompter.is_some() {
-        say.status(format!("equivalent: {}", prompt::equivalent_command(&repo)));
+        say.status(format!("equivalent: {}", ask::equivalent_command(&repo)));
     }
     let edit = Edit::Add(&repo);
     Ok(match source {
@@ -101,7 +104,7 @@ fn prepare(
     if repo.url.is_empty()
         && let Some(prompter) = asking.prompter()
     {
-        repo.url = prompt::ask_url(prompter).map_err(Failure::Asked)?;
+        repo.url = ask::ask_url(prompter).map_err(Failure::Asked)?;
     }
     let paths_given = !repo.paths.is_empty();
     let expanded = registry::expand(&repo, asking.registry, offline).map_err(Failure::Registry)?;
@@ -136,7 +139,7 @@ fn prepare(
         && ask_ref
         && let Some(prompter) = asking.prompter()
     {
-        repo.git_ref = prompt::ask_ref(prompter).map_err(Failure::Asked)?;
+        repo.git_ref = ask::ask_ref(prompter).map_err(Failure::Asked)?;
     }
     // Looking at the repo comes before the rest of the questions, so that a bad URL or ref
     // fails before they are asked and with nothing edited.
@@ -171,14 +174,14 @@ fn prepare(
             false => Ok(repo),
         };
     };
-    let known = Known {
+    let known = ask::Known {
         described: described.as_deref(),
         looked_at: outline.as_ref(),
         // The directory the registry gave is where the picker starts, unlike one from `--paths`.
         paths_from_registry: registry_add && !paths_given && outline.is_some(),
         packages_for: outline.is_some().then_some(&packages_for as &PackagesFor),
     };
-    prompt::fill_add(&mut repo, config, prompter, &known, say).map_err(Failure::Asked)?;
+    ask::fill_add(&mut repo, config, prompter, &known, say).map_err(Failure::Asked)?;
     Ok(repo)
 }
 

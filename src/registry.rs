@@ -227,7 +227,7 @@ impl Registry for Unavailable {
 }
 
 /// Whether `url` is a shorthand `expand` would act on: a registry prefix and a name, or a forge
-/// prefix. The prompt accepts it as a URL (`prompt::ask_url`).
+/// prefix. The prompt accepts it as a URL (`add::ask::ask_url`).
 pub fn is_shorthand(url: &str) -> bool {
     forge::name(url).is_some() || parse_shorthand(url).is_some_and(|(_, name, _)| !name.is_empty())
 }

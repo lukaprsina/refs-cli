@@ -14,6 +14,8 @@
 
 use std::path::Path;
 
+mod ask;
+
 use crate::active::active;
 use crate::config::{Config, RepoRef, is_full_sha};
 use crate::diagnostic::LockError;
@@ -22,13 +24,14 @@ use crate::edit::{Edit, Fields, RepoChange};
 use crate::listing::{self, Gone};
 use crate::lock::Lock;
 use crate::packages::{self, manifest_paths};
-use crate::prompt::{Abort, Broken, Prompter, fill_update};
+use crate::prompt::{Abort, Prompter};
 use crate::registry::Package;
 use crate::registry::pin::{Say, Stop, choose_version};
 use crate::registry::tag::{newest, split, tag_for};
 use crate::registry::used::{self, Lookup, Pick};
 use crate::source::{Observed, Outline, Source};
 use crate::sync::{self, Report, SyncFlags};
+use ask::{Broken, fill_update};
 
 /// What `refs update` was asked for.
 pub struct Request<'a> {
