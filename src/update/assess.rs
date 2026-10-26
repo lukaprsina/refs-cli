@@ -91,6 +91,8 @@ fn skip(why: impl ToString) -> Stop {
     Stop::Refused(why.to_string())
 }
 
+/// What the stages of `update` share: where to look (`source`, `root`, the `lock`), who to ask and
+/// where to say what was found.
 pub(super) struct Assessing<'a, 'p> {
     source: &'a dyn Source,
     root: &'a Path,
