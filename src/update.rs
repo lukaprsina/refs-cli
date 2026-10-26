@@ -23,7 +23,7 @@ use crate::diagnostic::SourceError;
 use crate::edit::{Edit, Fields, RepoChange};
 use crate::listing::{self, Gone};
 use crate::lock::Lock;
-use crate::packages::{self, manifest_paths};
+use crate::manifests::Manifests;
 use crate::prompt::{Abort, Prompter};
 use crate::registry::Package;
 use crate::registry::pin::{Say, Stop, choose_version};
@@ -418,13 +418,8 @@ impl Assessing<'_, '_> {
                 "`{to}` no longer has {gone}; run `refs update {id}` in a terminal to choose others"
             )));
         };
-        let (manifests, _) = manifest_paths(&outline.paths, &[]);
-        let manifests = self
-            .source
-            .read(url, &outline.pin, &manifests)
-            .map_err(skip)?;
-        let packages_for = |paths: &[String]| packages::packages_for(&manifests, paths);
-        let have = packages_for(&paths);
+        let manifests = Manifests::read(self.source, url, &outline, &[], self.say).map_err(skip)?;
+        let have = manifests.packages_for(&paths);
         let vanished: Vec<String> = (repo.repo.package_strings().into_iter())
             .filter(|name| !have.contains(name))
             .collect();
@@ -435,7 +430,7 @@ impl Assessing<'_, '_> {
             listed: &outline.paths,
             gone: &gone,
             vanished: &vanished,
-            packages_for: &packages_for,
+            manifests: &manifests,
         };
         match fill_update(&broken, prompter, self.say).map_err(Stop::Asked)? {
             Some(fields) => {

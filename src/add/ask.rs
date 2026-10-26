@@ -3,9 +3,8 @@
 
 use crate::config::{self, Config};
 use crate::edit::{AddRepo, id_from_url};
-use crate::prompt::pickers::{
-    PackagesFor, ask_optional, ask_packages, ask_paths, ask_start, non_empty,
-};
+use crate::manifests::Manifests;
+use crate::prompt::pickers::{ask_optional, ask_packages, ask_paths, ask_start, non_empty};
 use crate::prompt::{Abort, Prompter};
 use crate::registry;
 use crate::registry::pin::Say;
@@ -21,8 +20,8 @@ pub(super) struct Known<'a> {
     /// Whether the `paths` of the repo are the registry's, to be picked from with those ticked,
     /// and not given on the command line.
     pub paths_from_registry: bool,
-    /// The packages the Manifests give for a Checkout of these `paths`, when they were read.
-    pub packages_for: Option<&'a PackagesFor<'a>>,
+    /// The Manifests read, when the repo was looked at.
+    pub manifests: Option<&'a Manifests>,
 }
 
 /// Complete `repo` by showing a summary of what will be written and asking `Customize?`. A value
@@ -62,7 +61,11 @@ pub(super) fn fill_add(
         repo.start.is_empty(),
         repo.packages.is_empty(),
     );
-    let packages_for = |paths: &[String]| known.packages_for.map_or_else(Vec::new, |f| f(paths));
+    let packages_for = |paths: &[String]| {
+        known
+            .manifests
+            .map_or_else(Vec::new, |m| m.packages_for(paths))
+    };
     if packages_open {
         repo.packages = packages_for(&repo.paths);
     }

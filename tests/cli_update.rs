@@ -839,6 +839,38 @@ fn a_vanished_package_is_kept_and_warned_about() {
     );
 }
 
+/// The new tree has `docs/intro.md` and `count` packages under `docs`.
+fn many_manifests(p: &Project, count: usize) {
+    let names: Vec<(String, String)> = (0..count)
+        .map(|i| {
+            (
+                format!("docs/p{i}/package.json"),
+                format!(r#"{{"name":"n{i}"}}"#),
+            )
+        })
+        .collect();
+    let mut files: Vec<(&str, &str)> = names.iter().map(|(p, t)| (&**p, &**t)).collect();
+    files.push(("docs/intro.md", "# intro"));
+    p.source.set_tree(FOO, SHA_2, &files);
+}
+
+#[test]
+fn manifests_beyond_the_cap_are_counted_when_a_break_is_asked() {
+    let p = Project::new(&foo_with_docs());
+    old_is_gone(&p);
+    many_manifests(&p, 230);
+    let mut prompter = Script::new([Answer::Yes(false)]);
+
+    let run = p.run(&["update", "foo"], Some(&mut prompter));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(
+        run.err.contains("read 200 Manifests and left 30 unread"),
+        "{}",
+        run.err
+    );
+}
+
 #[test]
 fn without_a_terminal_a_break_skips_that_repo_and_writes_nothing() {
     let p = Project::new(&foo_with_docs());

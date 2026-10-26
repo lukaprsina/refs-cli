@@ -3,7 +3,8 @@
 use crate::config::Repo;
 use crate::edit::Fields;
 use crate::listing::{self, Gone};
-use crate::prompt::pickers::{PackagesFor, ask_packages, ask_paths, ask_start};
+use crate::manifests::Manifests;
+use crate::prompt::pickers::{ask_packages, ask_paths, ask_start};
 use crate::prompt::{Abort, Prompter};
 use crate::registry::pin::Say;
 
@@ -17,7 +18,7 @@ pub(super) struct Broken<'a> {
     pub gone: &'a Gone,
     /// The `packages` that the Manifests of the new tree no longer give.
     pub vanished: &'a [String],
-    pub packages_for: &'a PackagesFor<'a>,
+    pub manifests: &'a Manifests,
 }
 
 /// Say what the new Ref took away and ask `Update?`. On yes, re-ask only the broken fields, each
@@ -53,7 +54,7 @@ pub(super) fn fill_update(
         let ticked = valid(paths.clone(), &gone.paths);
         paths = ask_paths(prompter, listed, (&paths, &ticked), say)?;
         let kept = repo.package_strings();
-        let offered = listing::with_ticked((broken.packages_for)(&paths), &kept);
+        let offered = listing::with_ticked(broken.manifests.packages_for(&paths), &kept);
         if !offered.is_empty() {
             fixed.packages = Some(ask_packages(prompter, &offered, &kept)?);
         }

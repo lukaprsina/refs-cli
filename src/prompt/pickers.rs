@@ -5,9 +5,6 @@ use crate::listing;
 use crate::prompt::{Abort, Prompter};
 use crate::registry::pin::Say;
 
-/// The package names for a Checkout of the given `paths`.
-pub(crate) type PackagesFor<'a> = dyn Fn(&[String]) -> Vec<String> + 'a;
-
 /// What a picker offers beyond what the tree lists, and which of it starts ticked. A ticked
 /// entry is always offered.
 pub(crate) type Entries<'a> = (&'a [String], &'a [String]);

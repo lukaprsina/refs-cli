@@ -13,12 +13,11 @@ mod ask;
 use crate::config::Config;
 use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit};
-use crate::packages::{self, infer, manifest_paths};
-use crate::prompt::pickers::PackagesFor;
+use crate::manifests::Manifests;
 use crate::prompt::{Abort, Prompter};
 use crate::registry::pin::{Pinned, Say, Stop, pin};
 use crate::registry::{self, Registry, RegistryError};
-use crate::source::{Outline, Source};
+use crate::source::Source;
 use crate::sync::{self, Report, SyncFlags};
 
 /// Who `add` can ask and what it can ask about.
@@ -147,7 +146,7 @@ fn prepare(
         !repo.url.is_empty() && !offline && (asking.prompter.is_some() || repo.packages.is_empty())
     });
     let mut described = registry_description;
-    let mut manifests = Vec::new();
+    let mut manifests = Manifests::default();
     let mut outline = None;
     if let Some(source) = looks {
         let git_ref = repo.git_ref.as_deref().unwrap_or("HEAD");
@@ -158,16 +157,16 @@ fn prepare(
         let nameless = repo.packages.is_empty();
         let undescribed = described.is_none() && repo.description.is_none();
         if nameless || undescribed {
-            manifests = read_manifests(source, &repo, &looked, say)?;
-            described = described.or(infer(&manifests).description);
+            manifests = Manifests::read(source, &repo.url, &looked, &repo.paths, say)
+                .map_err(Failure::Source)?;
+            described = described.or(manifests.description());
         }
         outline = Some(looked);
     }
     // Only the Manifests a Checkout of `paths` will hold count. None is fetched again.
-    let packages_for = |paths: &[String]| packages::packages_for(&manifests, paths);
     let Some(prompter) = asking.prompter() else {
         if repo.packages.is_empty() {
-            repo.packages = packages_for(&repo.paths);
+            repo.packages = manifests.packages_for(&repo.paths);
         }
         return match repo.url.is_empty() {
             true => Err(Failure::UrlRequired),
@@ -179,27 +178,8 @@ fn prepare(
         looked_at: outline.as_ref(),
         // The directory the registry gave is where the picker starts, unlike one from `--paths`.
         paths_from_registry: registry_add && !paths_given && outline.is_some(),
-        packages_for: outline.is_some().then_some(&packages_for as &PackagesFor),
+        manifests: outline.is_some().then_some(&manifests),
     };
     ask::fill_add(&mut repo, config, prompter, &known, say).map_err(Failure::Asked)?;
     Ok(repo)
-}
-
-/// The Manifests (path and text) of the `outline`d repo that `repo` will check out say. The Lock records
-/// what the sync resolves, which is another commit than this one if upstream moved in between:
-/// accepted.
-fn read_manifests(
-    source: &dyn Source,
-    repo: &AddRepo,
-    outline: &Outline,
-    say: &mut dyn Say,
-) -> Result<Vec<(String, String)>, Failure> {
-    let (chosen, left) = manifest_paths(&outline.paths, &repo.paths);
-    if left > 0 {
-        let read = chosen.len();
-        say.status(format!("read {read} Manifests and left {left} unread"));
-    }
-    source
-        .read(&repo.url, &outline.pin, &chosen)
-        .map_err(Failure::Source)
 }

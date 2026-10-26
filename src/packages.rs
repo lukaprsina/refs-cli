@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use crate::listing;
 
-/// The most Manifests `add` reads, shallowest first.
+/// The most Manifests `add` and `update` read, shallowest first.
 const MAX_MANIFESTS: usize = 200;
 
 /// Root Manifests in the order their description is taken from.

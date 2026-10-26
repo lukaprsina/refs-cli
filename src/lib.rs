@@ -12,6 +12,7 @@ mod line_ending;
 pub mod list;
 pub mod listing;
 pub mod lock;
+pub mod manifests;
 pub mod packages;
 pub mod plan;
 pub mod project;
