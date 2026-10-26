@@ -131,6 +131,58 @@ fn a_value_given_as_a_flag_is_not_asked_again() {
 }
 
 #[test]
+fn any_one_field_left_open_is_enough_to_offer_to_customize() {
+    let flags = [
+        ("id", ["--id", "mine"]),
+        ("group", ["--group", "core"]),
+        ("paths", ["--paths", "src"]),
+        ("start", ["--start", "README.md"]),
+        ("packages", ["--packages", "lib"]),
+    ];
+    for (open, _) in flags {
+        let dir = project();
+        let mut script = Script::takes_defaults(false);
+        // A missing description is asked before the summary, so it is never the one left open.
+        let mut args = vec![
+            "add",
+            "https://github.com/o/lib",
+            "--no-sync",
+            "--description",
+            "A lib",
+        ];
+        for (field, given) in &flags {
+            if *field != open {
+                args.extend(given);
+            }
+        }
+
+        let run = refs(dir.path(), &args, Some(&mut script));
+
+        assert_eq!(run.code, 0, "{open}: {}", run.err);
+        assert_eq!(script.asked_about("Customize?").len(), 1, "{open}");
+    }
+}
+
+#[test]
+fn a_url_git_would_misread_is_asked_again_at_the_url_question() {
+    let dir = project();
+    let mut script = Script::new([
+        Answer::Text("ext::sh -c true"),
+        Answer::Text("-x"),
+        Answer::Text("https://github.com/o/lib"),
+        Answer::Text(""), // ref
+        Answer::Text(""), // description
+        Answer::Yes(false),
+    ]);
+
+    let run = refs(dir.path(), &["add", "--no-sync"], Some(&mut script));
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert_eq!(script.rejected.len(), 2, "{:?}", script.rejected);
+    assert!(config_text(dir.path()).contains("url = \"https://github.com/o/lib\""));
+}
+
+#[test]
 fn a_bad_answer_is_asked_again() {
     let dir = project();
     let mut script = Script::new([

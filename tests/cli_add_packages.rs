@@ -99,6 +99,7 @@ fn a_plain_url_add_writes_the_packages_in_one_edit_and_one_sync() {
     let run = add_foo(dir.path(), &source, &[], Some(&mut script));
 
     assert_eq!(run.code, 0, "{}", run.err);
+    assert!(!run.err.contains("unread"), "{}", run.err);
     let config = config_text(dir.path());
     assert!(
         config.contains(r#"packages = ["@solidjs/store", "@solidjs/web", "other-js", "solid-js"]"#),

@@ -56,3 +56,10 @@ fn on_an_equal_match_the_shallower_path_comes_first() {
         ["lib", "b/lib", "a/b/lib", "c/d/e/lib"]
     );
 }
+
+#[test]
+fn a_better_match_beats_a_shallower_worse_one() {
+    let options = ["x/d_o_c".to_owned(), "a/b/c/doc".to_owned()];
+
+    assert_eq!(ranked("doc", &options), ["a/b/c/doc", "x/d_o_c"]);
+}

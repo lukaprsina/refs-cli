@@ -207,6 +207,34 @@ fn an_edit_that_changes_nothing_and_then_fails_says_to_run_sync_once_fixed() {
 }
 
 #[test]
+fn a_failed_sync_or_edit_says_why_before_the_hint() {
+    let corrupt_lock = Project::new(AB);
+    fs::write(corrupt_lock.dir.path().join("refs.lock"), "not a lock [[").unwrap();
+    let uninspectable = Project::new(AB);
+    assert_eq!(uninspectable.run(&["sync"]).code, 0);
+    uninspectable
+        .source
+        .fail("a", Method::Inspect, "cannot inspect");
+    let foreign = Project::new(AB);
+    assert_eq!(foreign.run(&["sync"]).code, 0);
+    foreign.source.seed("a", Observed::Foreign);
+
+    for (p, args, why) in [
+        (&corrupt_lock, &["sync"][..], "refs::lock::invalid"),
+        (&uninspectable, &["sync"][..], "refs::git::failed"),
+        (&uninspectable, &["remove", "b"][..], "refs::git::failed"),
+        (&foreign, &["remove", "b"][..], "refs::sync::foreign_dir"),
+    ] {
+        let ran = p.run(args);
+
+        assert_eq!(ran.code, 1, "{}", ran.stderr);
+        assert!(ran.stderr.contains(why), "{}", ran.stderr);
+        assert!(ran.stderr.lines().count() > 1, "{}", ran.stderr);
+        assert!(!ran.stderr.contains("nothing changed"), "{}", ran.stderr);
+    }
+}
+
+#[test]
 fn a_run_that_left_nothing_to_fix_prints_no_sync_hint() {
     let p = Project::new(AB);
     let failed_lock = Project::new(AB);

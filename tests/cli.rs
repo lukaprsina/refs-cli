@@ -122,6 +122,36 @@ fn lock_writes_the_lock_and_touches_no_checkout() {
     assert!(!p.path("AGENTS.md").exists());
 }
 
+/// What the Source was asked since call number `seen`, as the `offline` of each Verify and
+/// Materialise.
+fn offline_since(p: &Project, seen: usize) -> Vec<bool> {
+    p.source.calls()[seen..]
+        .iter()
+        .filter_map(|call| match call {
+            Call::Verify { offline, .. } | Call::Materialise { offline, .. } => Some(*offline),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn offline_reaches_the_source_from_sync_and_from_an_edit_that_syncs() {
+    let p = Project::new(AB);
+    assert_eq!(p.run(&["sync"]), 0);
+
+    let seen = p.source.calls().len();
+    assert_eq!(p.run(&["sync", "--offline"]), 0);
+    let asked = offline_since(&p, seen);
+    assert!(!asked.is_empty() && asked.iter().all(|&offline| offline));
+
+    // The lock still has `b`, so enabling it again needs no network.
+    assert_eq!(p.run(&["disable", "b", "--no-sync"]), 0);
+    let seen = p.source.calls().len();
+    assert_eq!(p.run(&["enable", "b", "--offline"]), 0);
+    let asked = offline_since(&p, seen);
+    assert!(!asked.is_empty() && asked.iter().all(|&offline| offline));
+}
+
 #[test]
 fn a_bare_upgrade_reaches_the_plan_as_all_and_ids_as_ids() {
     let p = Project::new(AB);

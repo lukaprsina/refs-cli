@@ -89,6 +89,7 @@ fn the_directories_of_the_repo_are_offered_and_the_picked_ones_written() {
 
     assert_eq!(run.code, 0, "{}", run.err);
     assert_eq!(script.offered[0], ["docs", "src", "src/util"]);
+    assert!(!run.err.contains("listed"), "{}", run.err);
     let config = config_text(dir.path());
     assert!(
         config.contains(r#"paths = ["docs", "src/util"]"#),

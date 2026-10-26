@@ -521,6 +521,12 @@ resolution: \"foo@npm:1.2.3\"\n";
     }
 
     #[test]
+    fn yarn_a_stray_unindented_line_in_a_block_does_not_replace_its_header() {
+        let text = "\"foo@^1.0.0\":\n  version \"1.2.3\"\nstray\n";
+        assert_eq!(yarn(text, "foo"), ["1.2.3"]);
+    }
+
+    #[test]
     fn yarn_cannot_say_what_is_direct() {
         let found = used_versions("yarn.lock", "react", YARN_V1).unwrap();
         assert!(!found.is_empty() && found.iter().all(|used| !used.direct));
@@ -661,6 +667,12 @@ mod poetry {
     fn a_package_from_git_or_another_index_is_not_a_pypi_version() {
         assert_eq!(of("iniconfig"), []);
         assert_eq!(of("numpy"), []);
+    }
+
+    #[test]
+    fn a_name_differing_by_more_than_separators_is_another_project() {
+        assert_eq!(of("cl-ick"), []);
+        assert_eq!(of("clic"), []);
     }
 
     #[test]
