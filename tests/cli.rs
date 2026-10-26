@@ -639,3 +639,46 @@ fn a_syncing_edit_that_cannot_get_a_source_prints_the_error_and_writes_nothing()
     assert_eq!(fs::read_to_string(p.path("refs.toml")).unwrap(), AB);
     assert_eq!(p.lock_text(), None);
 }
+
+#[test]
+fn quiet_still_syncs_after_an_edit() {
+    let p = Project::new(AB);
+
+    assert_eq!(p.run(&["-q", "add", "https://github.com/o/c"]), 0);
+
+    assert!(p.lock_text().unwrap().contains("id = \"c\""));
+}
+
+#[test]
+fn remove_of_a_dirty_checkout_exits_1_and_changes_nothing_until_forced() {
+    let p = synced_then_a_is_dirty();
+    let files = |p: &Project| {
+        ["refs.toml", "refs.lock", "AGENTS.md"].map(|name| fs::read(p.path(name)).unwrap())
+    };
+    let before = files(&p);
+
+    assert_eq!(p.run(&["remove", "a"]), 1);
+    assert_eq!(p.run(&["remove", "a"]), 1, "a retry refuses the same way");
+    assert_eq!(files(&p), before);
+
+    assert_eq!(p.run(&["remove", "a", "--force"]), 0);
+    assert!(
+        !fs::read_to_string(p.path("refs.toml"))
+            .unwrap()
+            .contains("[repos.a]")
+    );
+    assert_eq!(p.run(&["sync", "--check"]), 0);
+}
+
+#[test]
+fn remove_syncs_too_and_no_sync_leaves_that_to_the_user() {
+    let p = Project::new(AB);
+    assert_eq!(p.run(&["sync"]), 0);
+
+    assert_eq!(p.run(&["remove", "a", "--no-sync"]), 0);
+    assert_eq!(p.run(&["sync", "--check"]), 3, "the lock still has a");
+
+    assert_eq!(p.run(&["remove", "b"]), 0);
+    assert_eq!(p.run(&["sync", "--check"]), 0);
+    assert!(!p.lock_text().unwrap().contains("id = "));
+}

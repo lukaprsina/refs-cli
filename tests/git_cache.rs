@@ -1,4 +1,4 @@
-//! `GitSource::verify` and `materialise` against real git: a local `file://` remote that
+//! `GitSource` against real git (`verify`, `materialise`, the state of a Checkout, `outline`): a local `file://` remote that
 //! allows filters (spec §7.1), a Cache in a temporary directory, Checkouts beside it.
 
 mod common;
@@ -531,6 +531,59 @@ mod checkout {
             pin: remote.pin(),
             paths: paths.iter().map(|p| p.to_string()).collect(),
             dirty_files: vec![],
+        }
+    }
+
+    #[test]
+    fn a_fresh_checkout_is_observed_at_its_pin_and_listed() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        fs::create_dir_all(env.checkouts().join("stray")).unwrap();
+
+        assert_eq!(
+            source.inspect("r").unwrap(),
+            clean_at(&remote, &["docs/guide"])
+        );
+        assert_eq!(source.list().unwrap(), ["r", "stray"]);
+    }
+
+    #[test]
+    fn modified_and_untracked_files_are_dirty() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        let checkout = env.checkouts().join("r");
+        fs::write(checkout.join("docs/guide/a.md"), "edited").unwrap();
+        fs::write(checkout.join("notes.txt"), "mine").unwrap();
+
+        let Observed::At { dirty_files, .. } = source.inspect("r").unwrap() else {
+            panic!("a checkout with edits is still a checkout");
+        };
+
+        assert_eq!(dirty_files, ["docs/guide/a.md", "notes.txt"]);
+    }
+
+    #[test]
+    fn a_directory_refs_did_not_make_is_foreign() {
+        let env = Env::new();
+        let source = env.source();
+        let checkouts = env.checkouts();
+        fs::create_dir_all(checkouts.join("plain")).unwrap();
+        fs::create_dir_all(checkouts.join("clone")).unwrap();
+        git(&checkouts.join("clone"), &["init", "-q"]);
+        fs::create_dir_all(checkouts.join("elsewhere")).unwrap();
+        fs::write(
+            checkouts.join("elsewhere/.git"),
+            "gitdir: /somewhere/else/worktrees/x\n",
+        )
+        .unwrap();
+        fs::write(checkouts.join("file"), "not a directory").unwrap();
+
+        for id in ["plain", "clone", "elsewhere", "file"] {
+            assert_eq!(source.inspect(id).unwrap(), Observed::Foreign, "{id}");
         }
     }
 
