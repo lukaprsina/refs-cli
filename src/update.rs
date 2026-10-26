@@ -39,7 +39,6 @@ pub struct Request<'a> {
     pub force: bool,
     /// `--list`: say what would move and what it would break; ask nothing, change nothing.
     pub list: bool,
-    pub offline: bool,
 }
 
 /// Why `update` stopped before it edited anything.
@@ -74,11 +73,6 @@ pub fn run(
     prompter: Option<&mut dyn Prompter>,
     say: &mut dyn Say,
 ) -> Result<Done, Failure> {
-    if request.offline {
-        return Err(Failure::Refused(
-            "`refs update` asks the remotes and needs the network; drop `--offline`".into(),
-        ));
-    }
     if request.git_ref.is_some() && request.ids.len() != 1 {
         return Err(Failure::Usage("`--ref` sets the Ref of one repo".into()));
     }

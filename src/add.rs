@@ -20,10 +20,9 @@ use crate::sync::{self, Report, SyncFlags};
 
 /// Who `add` can ask and what it can ask about.
 pub struct Asking<'a> {
-    /// The person to ask, when stdin and stderr are terminals and `--no-input` is not set.
+    /// The person to ask, when stdin and stderr are terminals; `add` drops it under `--no-input`.
     pub prompter: Option<&'a mut dyn Prompter>,
     pub registry: &'a dyn Registry,
-    pub offline: bool,
 }
 
 impl Asking<'_> {
@@ -73,7 +72,7 @@ pub fn run(
     asking: &mut Asking,
     say: &mut dyn Say,
 ) -> Result<Report, Failure> {
-    let repo = prepare(repo, source, root, config, asking, say)?;
+    let repo = prepare(repo, source, root, config, flags.offline, asking, say)?;
     if asking.prompter.is_some() {
         say.status(format!("equivalent: {}", prompt::equivalent_command(&repo)));
     }
@@ -94,6 +93,7 @@ fn prepare(
     source: Option<&dyn Source>,
     root: &Path,
     config: &Config,
+    offline: bool,
     asking: &mut Asking,
     say: &mut dyn Say,
 ) -> Result<AddRepo, Failure> {
@@ -104,8 +104,7 @@ fn prepare(
         repo.url = prompt::ask_url(prompter).map_err(Failure::Asked)?;
     }
     let paths_given = !repo.paths.is_empty();
-    let expanded =
-        registry::expand(&repo, asking.registry, asking.offline).map_err(Failure::Registry)?;
+    let expanded = registry::expand(&repo, asking.registry, offline).map_err(Failure::Registry)?;
     if let Some(ignored) = &expanded.ignored {
         let shorthand = &repo.url;
         say.warning(format!(
@@ -142,9 +141,7 @@ fn prepare(
     // Looking at the repo comes before the rest of the questions, so that a bad URL or ref
     // fails before they are asked and with nothing edited.
     let looks = source.filter(|_| {
-        !repo.url.is_empty()
-            && !asking.offline
-            && (asking.prompter.is_some() || repo.packages.is_empty())
+        !repo.url.is_empty() && !offline && (asking.prompter.is_some() || repo.packages.is_empty())
     });
     let mut described = registry_description;
     let mut manifests = Vec::new();

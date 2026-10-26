@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::Path;
 
-use refs_cli::cli::run;
+use refs_cli::cli::run_with;
 use refs_cli::diagnostic::SourceError;
 use refs_cli::source::Source;
 use tempfile::TempDir;
@@ -26,16 +26,17 @@ fn project(config: &str) -> TempDir {
 }
 
 fn refs(dir: &Path, args: &[&str]) -> u8 {
-    // `cli::run` asks in a real terminal; a test must never wait on someone typing.
-    let args = std::iter::once("refs")
-        .chain(args.iter().copied())
-        .chain(["--no-input"]);
-    run(
-        args.map(Into::into),
+    // No prompter is given, so a test never waits on someone typing.
+    run_with(
+        std::iter::once("refs")
+            .chain(args.iter().copied())
+            .map(Into::into),
         dir,
         |_, _| -> Result<Box<dyn Source>, SourceError> {
             panic!("a config-only command asked for a Source")
         },
+        &mut std::io::sink(),
+        &mut std::io::sink(),
     )
 }
 
@@ -208,4 +209,16 @@ fn add_with_a_missing_group_then_remove_leave_refs_toml_byte_identical() {
 
     assert_eq!(refs(dir.path(), &["remove", "r", "--no-sync"]), 0);
     assert_eq!(config_text(&dir), CONFIG);
+}
+
+#[test]
+fn only_the_commands_that_prompt_take_no_input() {
+    let dir = project(CONFIG);
+    for args in [
+        &["remove", "a", "--no-input"][..],
+        &["disable", "a", "--no-input"],
+        &["list", "--no-input"],
+    ] {
+        assert_eq!(refs(dir.path(), args), 2, "{args:?}");
+    }
 }

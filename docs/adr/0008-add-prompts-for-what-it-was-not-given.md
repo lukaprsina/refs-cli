@@ -14,7 +14,7 @@ ADR 0005 has `refs` follow uv, and uv never prompts. `refs add` departs from tha
 - **Validation.** The URL, id and group name are checked with the same rules as `config::parse`, so a bad answer is re-asked on the spot. The free-text answers (ref, description, paths, packages, start) are left to `config::parse`, which stays the final authority and rejects them after the edit, as it does for flags.
 - **Cancel.** Esc or Ctrl-C changes nothing, prints "cancelled" (even with `-q`) and exits 1; a terminal that fails prints why and exits 1. No new exit code.
 - **Echo.** The equivalent command line is printed as a status line (hidden by `-q`), so the flags get learned. It comes before the edit and the sync, so a failed sync does not lose it (ADR 0011). It is printed whenever there was someone to ask (a terminal, without `--no-input`), whether or not a question came up.
-- **`--no-input` is global**, like `-q`, so `remove`, `enable` and `disable` can reuse it. No environment variable for now.
+- **`--no-input` is an option of the commands that can ask** (`add` and `update`); it was global until #91, though no other command prompts. No environment variable for now.
 
 ## Why
 

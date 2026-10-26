@@ -653,15 +653,30 @@ fn unknown_and_disabled_ids_refuse_the_whole_run_before_the_network() {
 }
 
 #[test]
-fn update_is_refused_offline() {
+fn update_has_no_offline_option() {
     let p = Project::new(&foo_at("foo-js-1.0.0"));
     let calls = p.source.calls().len();
 
-    let run = p.run(&["--offline", "update", "foo", "--ref", "v2"], None);
-
-    assert_eq!(run.code, 1, "{}", run.err);
-    assert!(run.err.contains("network"), "{}", run.err);
+    for args in [
+        &["update", "foo", "--offline"][..],
+        &["update", "--list", "--offline"],
+    ] {
+        let run = p.run(args, None);
+        assert_eq!(run.code, 2, "{}", run.err);
+        assert!(run.err.contains("--offline"), "{}", run.err);
+    }
     assert_eq!(p.source.calls().len(), calls);
+}
+
+#[test]
+fn short_and_long_help_print_the_same() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+
+    let short = p.run(&["update", "-h"], None);
+    let long = p.run(&["update", "--help"], None);
+
+    assert_eq!((short.code, long.code), (0, 0));
+    assert_eq!(short.out, long.out);
 }
 
 #[test]
@@ -1077,11 +1092,6 @@ fn list_with_ids_lists_only_those_and_offline_is_an_error() {
         run.out,
         "bar  not moved: `v1` has no version to compare; use `--ref` to move it\n"
     );
-
-    let offline = p.run(&["--offline", "update", "--list"], None);
-    assert_eq!(offline.code, 1, "{}", offline.err);
-    assert!(offline.err.contains("needs the network"), "{}", offline.err);
-    assert_eq!(offline.out, "");
 }
 
 #[test]

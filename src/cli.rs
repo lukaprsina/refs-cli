@@ -43,12 +43,6 @@ pub struct Cli {
     /// Plain output, no colors or box drawing
     #[arg(long, global = true)]
     no_color: bool,
-    /// Never prompt, even in a terminal
-    #[arg(long, global = true)]
-    no_input: bool,
-    /// Never contact the network
-    #[arg(long, global = true)]
-    offline: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -65,10 +59,10 @@ enum Command {
     #[command(subcommand, name = "self")]
     SelfCommand(SelfCommand),
     /// Move repos to the version the project uses now, or to a ref given
-    ///
-    /// A repo that cannot be assessed, or has uncommitted changes, is skipped and named; the
-    /// rest are moved. A failure the remote causes after that, when the edited config is
-    /// resolved and verified, blocks the whole run.
+    #[command(after_help = "\
+A repo that cannot be assessed, or has uncommitted changes, is skipped and named; the rest \
+are moved. A failure the remote causes after that, when the edited config is resolved and \
+verified, blocks the whole run.")]
     Update(UpdateArgs),
     #[command(flatten)]
     Config(ConfigCommand),
@@ -86,6 +80,8 @@ enum ConfigCommand {
         repo: AddRepo,
         #[command(flatten)]
         flags: EditFlags,
+        #[command(flatten)]
+        input: Input,
     },
     /// Remove a repo from refs.toml
     Remove(RemoveArgs),
@@ -117,13 +113,31 @@ struct EditFlags {
     /// Discard local changes in a checkout the edit moves or removes
     #[arg(long, conflicts_with = "no_sync")]
     force: bool,
+    /// Never contact the network
+    #[arg(long)]
+    offline: bool,
+}
+
+/// What the commands that can ask a question take.
+#[derive(Debug, Args)]
+struct Input {
+    /// Never prompt, even in a terminal
+    #[arg(long)]
+    no_input: bool,
+}
+
+impl Input {
+    /// `prompter`, unless this run was told never to ask.
+    fn gate<'a>(&self, prompter: Option<&'a mut dyn Prompter>) -> Option<&'a mut dyn Prompter> {
+        prompter.filter(|_| !self.no_input)
+    }
 }
 
 impl EditFlags {
     /// What the sync an edit runs takes from the command line.
-    fn sync_flags(&self, asking: &Asking) -> SyncFlags {
+    fn sync_flags(&self) -> SyncFlags {
         SyncFlags {
-            offline: asking.offline,
+            offline: self.offline,
             force: self.force,
             ..SyncFlags::default()
         }
@@ -172,6 +186,8 @@ struct UpdateArgs {
     /// Print what would move and what it would break, and change nothing
     #[arg(long, conflicts_with = "force")]
     list: bool,
+    #[command(flatten)]
+    input: Input,
 }
 
 #[derive(Debug, Subcommand)]
@@ -203,6 +219,9 @@ struct SyncArgs {
     /// Discard local changes in checkouts
     #[arg(long)]
     force: bool,
+    /// Never contact the network
+    #[arg(long)]
+    offline: bool,
 }
 
 /// Where a run's output goes, in uv's style: status lines on stderr (silenced by `-q`),
@@ -304,7 +323,7 @@ pub fn run_with<'a>(
 
 /// What a run reaches beyond its files and its `Source`, given so a test can script it.
 pub struct Outside<'a> {
-    /// Who to ask. `None` means there is nobody; `--no-input` ignores a given prompter.
+    /// Who to ask. `None` means there is nobody; `--no-input` (on `add` and `update`) ignores a given one.
     pub prompter: Option<&'a mut dyn Prompter>,
     /// What `self update` installs through.
     pub updater: &'a dyn Updater,
@@ -352,7 +371,6 @@ pub fn run_on<'a>(
         err,
         quiet: cli.quiet,
     };
-    let prompter = outside.prompter.filter(|_| !cli.no_input);
     match cli.command {
         Command::Init(args) => init(start, args.here, &mut console),
         Command::SelfCommand(SelfCommand::Update(args)) => {
@@ -370,8 +388,8 @@ pub fn run_on<'a>(
                         git_ref: args.git_ref.as_deref(),
                         force: args.force,
                         list: args.list,
-                        offline: cli.offline,
                     };
+                    let prompter = args.input.gate(outside.prompter);
                     run_update(source, &root, &config, &request, prompter, console)
                 },
             ),
@@ -385,23 +403,15 @@ pub fn run_on<'a>(
                 color,
                 make_source,
                 Asking {
-                    prompter,
+                    prompter: outside.prompter,
                     registry: outside.registry,
-                    offline: cli.offline,
                 },
                 &mut console,
             ),
             Err(code) => code,
         },
         Command::Source(command) => match load(start, &mut console) {
-            Ok((root, config)) => run_source(
-                &command,
-                &root,
-                &config,
-                cli.offline,
-                make_source,
-                &mut console,
-            ),
+            Ok((root, config)) => run_source(&command, &root, &config, make_source, &mut console),
             Err(code) => code,
         },
     }
@@ -450,8 +460,9 @@ fn run_config<'a>(
             console.data(&list(config, color));
             return 0;
         }
-        ConfigCommand::Add { repo, flags } => {
-            let flags_for_sync = flags.sync_flags(&asking);
+        ConfigCommand::Add { repo, flags, input } => {
+            asking.prompter = input.gate(asking.prompter.take());
+            let flags_for_sync = flags.sync_flags();
             let mut add = |source: Option<&dyn Source>, console: &mut Console| {
                 add(
                     source,
@@ -479,7 +490,7 @@ fn run_config<'a>(
         print_report(&sync::edit_only(root, &edit), false, console)
     } else {
         with_source(make_source, root, config, console, |source, console| {
-            let report = sync::edit(source, root, &edit, &flags.sync_flags(&asking));
+            let report = sync::edit(source, root, &edit, &flags.sync_flags());
             print_report(&report, false, console)
         })
     }
@@ -581,7 +592,6 @@ fn run_source<'a>(
     command: &SourceCommand,
     root: &Path,
     config: &Config,
-    offline: bool,
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
     console: &mut Console,
 ) -> u8 {
@@ -589,7 +599,7 @@ fn run_source<'a>(
         let (report, check) = match command {
             SourceCommand::Sync(args) => {
                 let flags = SyncFlags {
-                    offline,
+                    offline: args.offline,
                     force: args.force,
                     check: args.check,
                     ..SyncFlags::default()

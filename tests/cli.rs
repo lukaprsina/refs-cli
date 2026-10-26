@@ -11,7 +11,7 @@ use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use std::process::Command;
 
-use refs_cli::cli::run;
+use refs_cli::cli::{run, run_with};
 use refs_cli::source::Observed;
 use refs_cli::source::fake::{Call, FakeSource, Method};
 use tempfile::TempDir;
@@ -43,13 +43,15 @@ impl Project {
     fn run(&self, args: &[&str]) -> u8 {
         let sub = self.dir.path().join("sub");
         fs::create_dir_all(&sub).unwrap();
-        // `cli::run` asks in a real terminal; a test must never wait on someone typing.
-        let args = std::iter::once("refs")
-            .chain(args.iter().copied())
-            .chain(["--no-input"]);
-        run(args.map(Into::into), &sub, |_, _| {
-            Ok(Box::new(&self.source))
-        })
+        // No prompter is given, so a test never waits on someone typing.
+        let args = std::iter::once("refs").chain(args.iter().copied());
+        run_with(
+            args.map(Into::into),
+            &sub,
+            |_, _| Ok(Box::new(&self.source)),
+            &mut std::io::sink(),
+            &mut std::io::sink(),
+        )
     }
 
     fn path(&self, name: &str) -> PathBuf {
