@@ -228,7 +228,7 @@ pub fn run<'a>(
 ) -> u8 {
     use std::io::IsTerminal;
     let styled = no_color_env_unset();
-    let terminal = Styled {
+    let styles = Styled {
         out: styled && std::io::stdout().is_terminal(),
         err: styled && std::io::stderr().is_terminal(),
     };
@@ -241,7 +241,7 @@ pub fn run<'a>(
         make_source,
         &mut std::io::stdout(),
         &mut std::io::stderr(),
-        terminal,
+        styles,
         Outside {
             prompter: interactive.then_some(&mut prompter as &mut dyn Prompter),
             updater: &self_update::Axo,
@@ -300,16 +300,16 @@ pub fn run_on<'a>(
     make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
     out: &mut dyn Write,
     err: &mut dyn Write,
-    terminal: Styled,
+    styles: Styled,
     outside: Outside,
 ) -> u8 {
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(e) => {
             let styled = if e.use_stderr() {
-                terminal.err
+                styles.err
             } else {
-                terminal.out
+                styles.out
             };
             let rendered = e.render();
             let text = if styled {
@@ -327,7 +327,7 @@ pub fn run_on<'a>(
     };
     install_report_handler(cli.no_color);
     let start = cli.project.as_deref().unwrap_or(cwd);
-    let color = !cli.no_color && terminal.out;
+    let color = !cli.no_color && styles.out;
     let mut console = Console::new(out, err, cli.quiet);
     match cli.command {
         Command::Init(args) => commands::init::run(start, args.here, &mut console),
