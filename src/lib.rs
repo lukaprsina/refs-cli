@@ -7,6 +7,7 @@ pub mod config;
 pub mod diagnostic;
 pub mod edit;
 pub mod exclude;
+pub mod failure;
 pub mod init;
 mod line_ending;
 pub mod list;

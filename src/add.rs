@@ -11,12 +11,12 @@ use std::path::Path;
 mod ask;
 
 use crate::config::Config;
-use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit};
+use crate::failure::Failure;
 use crate::manifests::Manifests;
-use crate::prompt::{Abort, Prompter};
-use crate::registry::pin::{Pinned, Say, Stop, pin};
-use crate::registry::{self, Registry, RegistryError};
+use crate::prompt::Prompter;
+use crate::registry::pin::{Pinned, Say, pin};
+use crate::registry::{self, Registry};
 use crate::source::Source;
 use crate::sync::{self, Report, SyncFlags};
 
@@ -32,30 +32,6 @@ impl Asking<'_> {
         self.prompter
             .as_mut()
             .map(|p| &mut **p as &mut dyn Prompter)
-    }
-}
-
-/// Why `add` stopped before it edited anything.
-#[derive(Debug)]
-pub enum Failure {
-    Registry(RegistryError),
-    /// The remote could not be looked at: a bad URL or ref, or its tags could not be listed.
-    Source(SourceError),
-    /// A question ended without an answer.
-    Asked(Abort),
-    /// A question had to be asked and there is no one to ask: the message says what to do.
-    Refused(String),
-    /// There is no URL and no one to ask for it.
-    UrlRequired,
-}
-
-impl From<Stop> for Failure {
-    fn from(stop: Stop) -> Failure {
-        match stop {
-            Stop::Source(e) => Failure::Source(e),
-            Stop::Asked(abort) => Failure::Asked(abort),
-            Stop::Refused(why) => Failure::Refused(why),
-        }
     }
 }
 
@@ -169,7 +145,9 @@ fn prepare(
             repo.packages = manifests.packages_for(&repo.paths);
         }
         return match repo.url.is_empty() {
-            true => Err(Failure::UrlRequired),
+            true => Err(Failure::Usage(
+                "a URL is required when not run in a terminal".into(),
+            )),
             false => Ok(repo),
         };
     };

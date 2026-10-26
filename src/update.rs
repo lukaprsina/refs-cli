@@ -5,7 +5,8 @@
 //! newest tag of its own kind (`tag::newest`). A branch Ref (no Ref, or one that is not a tag)
 //! follows the remote, and moves when the remote's commit differs from the Lock's; a commit has
 //! no news and a note pointing at `--ref`. `--ref` sets the Ref by hand. The Registry is never asked.
-//! `--list` stops after that assessment and prints what each Repo would do and break.
+//! `--list` stops after that assessment and prints what each Repo would do and break; so does a
+//! bare run with no one to ask, which says so.
 //!
 //! Everything that can be found out before the edit is: a Repo that cannot be assessed, whose
 //! new Ref does not exist or whose Checkout has uncommitted changes (unless forced) is skipped
@@ -18,9 +19,9 @@ mod ask;
 
 use crate::active::active;
 use crate::config::{Config, RepoRef, is_full_sha};
-use crate::diagnostic::LockError;
 use crate::diagnostic::SourceError;
 use crate::edit::{Edit, Fields, RepoChange};
+use crate::failure::Failure;
 use crate::listing::{self, Gone};
 use crate::lock::Lock;
 use crate::manifests::Manifests;
@@ -40,20 +41,9 @@ pub struct Request<'a> {
     pub git_ref: Option<&'a str>,
     /// Move a Repo whose Checkout has uncommitted changes, discarding them.
     pub force: bool,
-    /// `--list`: say what would move and what it would break; ask nothing, change nothing.
+    /// `--list`: say what would move and what it would break; ask nothing, change nothing. A
+    /// bare run with no one to ask comes to the same (see `Mode`).
     pub list: bool,
-}
-
-/// Why `update` stopped before it edited anything.
-#[derive(Debug)]
-pub enum Failure {
-    /// The command line asked for something that cannot be done: the message says what.
-    Refused(String),
-    /// The command line is wrong.
-    Usage(String),
-    Lock(LockError),
-    /// A question ended without an answer.
-    Asked(Abort),
 }
 
 /// What a run came to.
@@ -130,12 +120,12 @@ pub fn run(
     };
     let mut seen = Vec::<&str>::new();
     let mut found = Vec::new();
-    if mode == Mode::List && request.ids.is_empty() && !request.list {
-        assessing
-            .say
-            .status("no terminal: listing only; name repos to update".into());
-    }
     if mode != Mode::Named && !ids.is_empty() {
+        if !request.list && request.ids.is_empty() && mode == Mode::List {
+            assessing
+                .say
+                .status("no terminal: listing only; name repos to update".into());
+        }
         assessing
             .say
             .status(format!("checking {} repos…", ids.len()));

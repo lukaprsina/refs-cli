@@ -117,7 +117,7 @@ Commit `refs.toml`, `refs.lock` and `AGENTS.md`. `.references/` is excluded thro
 | `refs disable` / `enable` | Switch a repo or group (`--group`) off or on without removing it |
 | `refs list` | Show the repos; `--status` adds the lock and checkout state |
 | `refs sync` | Make checkouts and the block match `refs.lock`; `--check` exits 3 when out of date, for CI |
-| `refs update [id…]` | Move repos (no ids, in a terminal: pick them from a list of `current → new`, nothing ticked): a pinned repo to the version your lockfile uses now (or, with no lockfile answer, the newest tag with the same prefix), a branch to the remote's newest commit. `--ref <r>` sets the ref of one repo; `--force` moves a repo whose checkout has changes; `--list` prints what would move and what it would break, with no terminal and no changes |
+| `refs update [id…]` | Move repos (no ids, in a terminal: pick them from a list of `current → new`, nothing ticked; without a terminal, the list only): a pinned repo to the version your lockfile uses now (or, with no lockfile answer, the newest tag with the same prefix), a branch to the remote's newest commit. `--ref <r>` sets the ref of one repo; `--force` moves a repo whose checkout has changes; `--list` prints what would move and what it would break, with no terminal and no changes |
 | `refs self update` | Replace this program with the latest release |
 
 Flags: `refs <command> --help`. `--offline` (`sync`, `add`, `remove`, `disable`, `enable`) never contacts the network; `--no-input` (`add`, `update`) never prompts. Exit codes: 0 ok, 1 error, 2 usage, 3 out of date (`--check`).

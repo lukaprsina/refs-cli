@@ -13,10 +13,11 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::add::{Asking, Failure};
+use crate::add::Asking;
 use crate::config::Config;
 use crate::diagnostic::{Note, ProjectError, SourceError};
 use crate::edit::{AddRepo, Edit, Target};
+use crate::failure::Failure;
 use crate::list::list;
 use crate::project;
 use crate::prompt::{self, Prompter};
@@ -174,7 +175,7 @@ struct InitArgs {
 
 #[derive(Debug, Args)]
 struct UpdateArgs {
-    /// The repos to move; none opens a picker
+    /// The repos to move; none opens a picker, or with no terminal lists
     #[arg(value_name = "ID")]
     ids: Vec<String>,
     /// Set the ref of the one repo named, without reading a lockfile
@@ -519,18 +520,19 @@ fn aborted(abort: prompt::Abort, console: &mut Console) -> u8 {
     EXIT_ERROR
 }
 
-/// Say why `add` stopped, and give the exit code.
+/// Say why `add` or `update` stopped, and give the exit code.
 fn failed(failure: Failure, console: &mut Console) -> u8 {
     match failure {
         Failure::Registry(e) => fail(e, console),
         Failure::Source(e) => fail(e, console),
+        Failure::Lock(e) => fail(e, console),
         Failure::Asked(abort) => aborted(abort, console),
         Failure::Refused(why) => {
             console.problem(format_args!("error: {why}"));
             EXIT_ERROR
         }
-        Failure::UrlRequired => {
-            console.problem("error: a URL is required when not run in a terminal");
+        Failure::Usage(why) => {
+            console.problem(format_args!("error: {why}"));
             EXIT_USAGE
         }
     }
@@ -683,16 +685,7 @@ fn run_update(
                 }
             }
         }
-        Err(update::Failure::Refused(why)) => {
-            console.problem(format_args!("error: {why}"));
-            EXIT_ERROR
-        }
-        Err(update::Failure::Usage(why)) => {
-            console.problem(format_args!("error: {why}"));
-            EXIT_USAGE
-        }
-        Err(update::Failure::Lock(e)) => fail(e, console),
-        Err(update::Failure::Asked(abort)) => aborted(abort, console),
+        Err(failure) => failed(failure, console),
     }
 }
 

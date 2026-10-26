@@ -1066,6 +1066,7 @@ fn list_prints_what_would_move_on_stdout_and_changes_nothing() {
         assert_eq!(run.code, 0, "{}", run.err);
         assert_eq!(run.out, "foo  foo-js-1.0.0 → foo-js-1.2.3\n");
         assert!(run.err.contains("checking 1 repos…"), "{}", run.err);
+        assert!(!run.err.contains("listing only"), "{}", run.err);
         assert!(!run.err.contains("→"), "{}", run.err);
     }
     assert!(prompter.questions().is_empty());
