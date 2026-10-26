@@ -1,5 +1,5 @@
-//! The command line: parsing, output and exit codes. No logic: every
-//! decision is made by `sync` and `plan`.
+//! The command line: parsing, output and exit codes. What to do is decided by `sync`, `plan`,
+//! `add` and `update`; this module only chooses which to run and how to report what came back.
 //!
 //! The `Source` is injected into `run` as a function of the loaded project (the real one
 //! needs its root and `references_dir`): tests return the fake in-process (the `testing`
@@ -372,50 +372,45 @@ pub fn run_on<'a>(
         err,
         quiet: cli.quiet,
     };
+    let prompter = outside.prompter.filter(|_| !cli.no_input);
     match cli.command {
         Command::Init(args) => init(start, args.here, &mut console),
         Command::SelfCommand(SelfCommand::Update(args)) => {
             run_self_update(outside.updater, args.check, &mut console)
         }
         Command::Update(args) => match load(start, &mut console) {
-            Ok((root, config)) => {
-                let prompter = outside.prompter.filter(|_| !cli.no_input);
-                with_source(
-                    make_source,
-                    &root,
-                    &config,
-                    &mut console,
-                    |source, console| {
-                        let request = update::Request {
-                            ids: &args.ids,
-                            git_ref: args.git_ref.as_deref(),
-                            force: args.force,
-                            list: args.list,
-                            offline: cli.offline,
-                        };
-                        run_update(source, &root, &config, &request, prompter, console)
-                    },
-                )
-            }
+            Ok((root, config)) => with_source(
+                make_source,
+                &root,
+                &config,
+                &mut console,
+                |source, console| {
+                    let request = update::Request {
+                        ids: &args.ids,
+                        git_ref: args.git_ref.as_deref(),
+                        force: args.force,
+                        list: args.list,
+                        offline: cli.offline,
+                    };
+                    run_update(source, &root, &config, &request, prompter, console)
+                },
+            ),
             Err(code) => code,
         },
         Command::Config(command) => match load_for(&command, start, &mut console) {
-            Ok((root, config)) => {
-                let prompter = outside.prompter.filter(|_| !cli.no_input);
-                run_config(
-                    &command,
-                    &root,
-                    &config,
-                    color,
-                    make_source,
-                    Asking {
-                        prompter,
-                        registry: outside.registry,
-                        offline: cli.offline,
-                    },
-                    &mut console,
-                )
-            }
+            Ok((root, config)) => run_config(
+                &command,
+                &root,
+                &config,
+                color,
+                make_source,
+                Asking {
+                    prompter,
+                    registry: outside.registry,
+                    offline: cli.offline,
+                },
+                &mut console,
+            ),
             Err(code) => code,
         },
         Command::Source(command) => match load(start, &mut console) {
