@@ -131,7 +131,7 @@ pub fn run(
         }
         seen.push(id);
         let repo = active.get(id).expect("the ids were checked");
-        found.push((repo, assessing.find(repo, request)));
+        found.push(assessing.find(repo, request));
     }
     if request.list {
         return Ok(Done {
@@ -145,14 +145,12 @@ pub fn run(
         false => seen.clone(),
     };
     let (mut moves, mut skipped) = (Vec::<Move>::new(), 0);
-    for (repo, found) in found {
-        if !chosen.contains(&repo.id) {
+    for candidate in found {
+        let id = candidate.repo.id;
+        if !chosen.contains(&id) {
             continue;
         }
-        match found
-            .map_err(Stop::Refused)
-            .and_then(|found| assessing.settle(repo, found))
-        {
+        match assessing.settle(candidate) {
             Ok(moved) => moves.extend(moved),
             Err(stop) => {
                 let why = match stop {
@@ -162,7 +160,7 @@ pub fn run(
                 };
                 assessing
                     .say
-                    .shown(format!("`{}` was not updated: {why}", repo.id));
+                    .shown(format!("`{id}` was not updated: {why}"));
                 skipped += 1;
             }
         }
@@ -239,15 +237,45 @@ struct Move {
     fields: Fields,
 }
 
-/// What is known about a Repo before anyone is asked anything.
-enum Assessed {
+/// Where a Repo goes, once nothing is left to ask.
+enum Outcome {
     Move(Move),
     /// Nothing to do: the reason, which reads after "`id` is" in a note and after the id in a label.
     Stay(String),
+}
+
+/// What is known about a Repo before anyone is asked anything.
+enum Assessed {
+    Ready(Outcome),
     /// The lockfile has several versions of the Package: which one moves it is for the person.
     Choose(Choice),
     /// The Ref is gone from the remote: another is for the person to give.
     Deleted,
+    /// The Repo could not be assessed: why.
+    Cannot(String),
+}
+
+impl Assessed {
+    /// Whether the Repo would move, as opposed to one that stays or cannot be checked.
+    fn moves(&self) -> bool {
+        matches!(
+            self,
+            Assessed::Ready(Outcome::Move(_)) | Assessed::Choose(_) | Assessed::Deleted
+        )
+    }
+}
+
+impl From<Outcome> for Assessed {
+    fn from(outcome: Outcome) -> Self {
+        Assessed::Ready(outcome)
+    }
+}
+
+/// A Repo, what is known about it, and why its Checkout must not be moved over, if it moves.
+struct Candidate<'r> {
+    repo: RepoRef<'r>,
+    found: Assessed,
+    hold: Option<Hold>,
 }
 
 /// What it takes to move a pinned Repo once the version is chosen.
@@ -257,11 +285,6 @@ struct Choice {
     versions: Vec<String>,
     current: String,
     tags: Vec<String>,
-}
-
-/// The reason a Repo cannot be assessed.
-fn fail(why: impl ToString) -> String {
-    why.to_string()
 }
 
 /// The reason a Repo is left as it is, as a `Stop` that is `Refused`.
@@ -282,28 +305,34 @@ struct Assessing<'a, 'p> {
 impl Assessing<'_, '_> {
     /// What is known about `repo` from the remote and the lockfile alone: no question, no
     /// outline, no look at the Checkout.
-    fn find(&mut self, repo: RepoRef, request: &Request) -> Result<Assessed, String> {
-        match request.git_ref {
-            Some(git_ref) => Ok(self.set(repo, git_ref)),
-            None => self.follow(repo),
-        }
+    fn find<'r>(&mut self, repo: RepoRef<'r>, request: &Request) -> Candidate<'r> {
+        let found = match request.git_ref {
+            Some(git_ref) => self.set(repo, git_ref).into(),
+            None => self.follow(repo).unwrap_or_else(Assessed::Cannot),
+        };
+        let hold = found.moves().then(|| self.hold_of(repo.id)).flatten();
+        Candidate { repo, found, hold }
     }
 
-    /// Decide what `found` comes to for a Repo the person named or picked: hold it back if its
+    /// Decide what `candidate` comes to for a Repo the person named or picked: hold it back if its
     /// Checkout has changes, ask what it needs, then see what the new Ref breaks.
-    fn settle(&mut self, repo: RepoRef, found: Assessed) -> Result<Option<Move>, Stop> {
-        if !matches!(found, Assessed::Stay(_)) {
-            self.must_be_clean(repo.id)?;
+    fn settle(&mut self, candidate: Candidate) -> Result<Option<Move>, Stop> {
+        let repo = candidate.repo;
+        if let Some(hold) = candidate.hold.filter(|_| !self.force) {
+            return Err(skip(format!(
+                "its checkout has {}; `--force` moves it anyway",
+                hold.why()
+            )));
         }
-        let found = match found {
+        let outcome = match candidate.found {
+            Assessed::Ready(outcome) => outcome,
             Assessed::Choose(choice) => self.choose(repo, choice)?,
             Assessed::Deleted => self.ask_ref(repo)?,
-            settled => settled,
+            Assessed::Cannot(why) => return Err(Stop::Refused(why)),
         };
-        match found {
-            Assessed::Move(found) => self.mend(repo, found),
-            Assessed::Stay(reason) => Ok(self.stays(repo.id, &reason)),
-            Assessed::Choose(_) | Assessed::Deleted => unreachable!("asked above"),
+        match outcome {
+            Outcome::Move(found) => self.mend(repo, found),
+            Outcome::Stay(reason) => Ok(self.stays(repo.id, &reason)),
         }
     }
 
@@ -314,19 +343,16 @@ impl Assessing<'_, '_> {
     }
 
     /// The multi-select over `found`, nothing ticked: the ids of the Repos picked.
-    fn pick<'r>(
-        &mut self,
-        found: &[(RepoRef<'r>, Result<Assessed, String>)],
-    ) -> Result<Vec<&'r str>, Abort> {
+    fn pick<'r>(&mut self, found: &[Candidate<'r>]) -> Result<Vec<&'r str>, Abort> {
         let labels: Vec<String> = found
             .iter()
-            .map(|(repo, found)| {
-                let dirty = matches!(self.hold_of(repo.id), Some(Hold::Dirty(_)));
-                let held = match moves(found) && !self.force && dirty {
+            .map(|candidate| {
+                let dirty = matches!(candidate.hold, Some(Hold::Dirty(_)));
+                let held = match !self.force && dirty {
                     true => "  (uncommitted changes)",
                     false => "",
                 };
-                format!("{}{held}", self.label(repo.id, found))
+                format!("{}{held}", self.label(candidate))
             })
             .collect();
         let Some(prompter) = self.prompter.as_deref_mut() else {
@@ -337,41 +363,42 @@ impl Assessing<'_, '_> {
             .iter()
             .zip(&labels)
             .filter(|(_, label)| picked.contains(label))
-            .map(|((repo, _), _)| repo.id)
+            .map(|(candidate, _)| candidate.repo.id)
             .collect())
     }
 
     /// `id  current → new`, or why there is none.
-    fn label(&self, id: &str, found: &Result<Assessed, String>) -> String {
-        match found {
-            Ok(Assessed::Move(found)) => found.line.clone(),
-            Ok(Assessed::Choose(choice)) => format!("{id}  {} → choose version…", choice.current),
-            Ok(Assessed::Deleted) => format!("{id}  (its Ref is no longer in the remote)"),
-            Ok(Assessed::Stay(reason)) => format!("{id}  {reason}"),
-            Err(why) => format!("{id}  (cannot check: {why})"),
+    fn label(&self, candidate: &Candidate) -> String {
+        let id = candidate.repo.id;
+        match &candidate.found {
+            Assessed::Ready(Outcome::Move(found)) => found.line.clone(),
+            Assessed::Choose(choice) => format!("{id}  {} → choose version…", choice.current),
+            Assessed::Deleted => format!("{id}  (its Ref is no longer in the remote)"),
+            Assessed::Ready(Outcome::Stay(reason)) => format!("{id}  {reason}"),
+            Assessed::Cannot(why) => format!("{id}  (cannot check: {why})"),
         }
     }
 
     /// `--list`: for each Repo its label, then a line for what the move would break and for why
     /// it would be skipped. Nothing is asked.
-    fn listing(&self, found: &[(RepoRef, Result<Assessed, String>)]) -> String {
+    fn listing(&self, found: &[Candidate]) -> String {
         let mut text = String::new();
-        for (repo, found) in found {
-            text += &format!("{}\n", self.label(repo.id, found));
+        for candidate in found {
+            text += &format!("{}\n", self.label(candidate));
             let mut notes = vec![];
-            match found {
-                Ok(Assessed::Move(found)) => match self.look(*repo, found) {
+            match &candidate.found {
+                Assessed::Ready(Outcome::Move(found)) => match self.look(candidate.repo, found) {
                     Ok((_, gone)) if gone.is_empty() => {}
                     Ok((_, gone)) => notes.push(format!("no longer has {gone}")),
                     Err(e) => notes.push(format!("cannot check: {e}")),
                 },
-                Ok(Assessed::Choose(choice)) => {
+                Assessed::Choose(choice) => {
                     let versions = choice.versions.join(", ");
                     notes.push(format!("{} has {versions}", choice.file));
                 }
                 _ => {}
             }
-            if let Some(hold) = self.hold_of(repo.id).filter(|_| moves(found)) {
+            if let Some(hold) = &candidate.hold {
                 notes.push(format!("would be skipped: {}", hold.why()));
             }
             for note in notes {
@@ -441,11 +468,11 @@ impl Assessing<'_, '_> {
     }
 
     /// `--ref`: the Ref asked for, if the remote has it.
-    fn set(&self, repo: RepoRef, git_ref: &str) -> Assessed {
+    fn set(&self, repo: RepoRef, git_ref: &str) -> Outcome {
         let id = repo.id;
         let current = repo.repo.effective_ref();
         if git_ref == current {
-            return Assessed::Stay(format!("already at `{current}`"));
+            return Outcome::Stay(format!("already at `{current}`"));
         }
         moved_to(id, current, git_ref)
     }
@@ -454,19 +481,20 @@ impl Assessing<'_, '_> {
     fn follow(&mut self, repo: RepoRef) -> Result<Assessed, String> {
         let git_ref = repo.repo.configured_ref();
         if git_ref.is_some_and(is_full_sha) {
-            return Ok(Assessed::Stay(
-                "pinned to a commit; use `--ref` to move it".into(),
-            ));
+            return Ok(Outcome::Stay("pinned to a commit; use `--ref` to move it".into()).into());
         }
         let Some(git_ref) = git_ref else {
             return self.by_remote(repo);
         };
-        let tags = self.source.tags(repo.repo.url.as_ref()).map_err(fail)?;
+        let tags = self
+            .source
+            .tags(repo.repo.url.as_ref())
+            .map_err(|e| e.to_string())?;
         if !tags.iter().any(|tag| tag == git_ref) {
             return self.by_remote(repo);
         }
         let Some(origin) = &repo.repo.origin else {
-            return Ok(by_kind(repo, git_ref, &tags));
+            return Ok(by_kind(repo, git_ref, &tags).into());
         };
         let package = Package::from_origin(origin.as_ref())
             .expect("an origin is validated when the config loads");
@@ -484,9 +512,9 @@ impl Assessing<'_, '_> {
         let name = &package.name;
         let found = match used::find(package, self.root) {
             Lookup::Found(found) => found,
-            Lookup::Missing => return Ok(by_kind(repo, current, tags)),
+            Lookup::Missing => return Ok(by_kind(repo, current, tags).into()),
             Lookup::Unreadable { file, why } => {
-                return Err(fail(format!("cannot read {}: {why}", file.display())));
+                return Err(format!("cannot read {}: {why}", file.display()));
             }
         };
         let file = found
@@ -496,7 +524,7 @@ impl Assessing<'_, '_> {
             .display()
             .to_string();
         let version = match found.pick() {
-            Pick::Nothing => return Ok(by_kind(repo, current, tags)),
+            Pick::Nothing => return Ok(by_kind(repo, current, tags).into()),
             Pick::One(version) => version.to_owned(),
             Pick::Several(versions) => {
                 return Ok(Assessed::Choose(Choice {
@@ -508,11 +536,11 @@ impl Assessing<'_, '_> {
                 }));
             }
         };
-        Ok(by_version(repo, name, &version, current, tags))
+        Ok(by_version(repo, name, &version, current, tags).into())
     }
 
     /// Ask which of the versions the lockfile has moves `repo`.
-    fn choose(&mut self, repo: RepoRef, choice: Choice) -> Result<Assessed, Stop> {
+    fn choose(&mut self, repo: RepoRef, choice: Choice) -> Result<Outcome, Stop> {
         let Choice {
             name,
             file,
@@ -535,18 +563,16 @@ impl Assessing<'_, '_> {
     fn by_remote(&mut self, repo: RepoRef) -> Result<Assessed, String> {
         let id = repo.id;
         let Some(locked) = self.lock.as_ref().and_then(|lock| lock.get(id)) else {
-            return Ok(Assessed::Stay(
-                "not locked yet; `refs sync` locks it".into(),
-            ));
+            return Ok(Outcome::Stay("not locked yet; `refs sync` locks it".into()).into());
         };
         let now = match self.source.resolve(repo) {
             Err(SourceError::RefNotFound { .. }) => return Ok(Assessed::Deleted),
-            now => now.map_err(fail)?,
+            now => now.map_err(|e| e.to_string())?,
         };
         if now.sha() == locked.pin.sha() {
-            return Ok(Assessed::Stay("up to date".into()));
+            return Ok(Outcome::Stay("up to date".into()).into());
         }
-        Ok(Assessed::Move(Move {
+        Ok(Outcome::Move(Move {
             id: id.into(),
             git_ref: None,
             look_at: now.sha().into(),
@@ -557,11 +583,12 @@ impl Assessing<'_, '_> {
                 repo.repo.effective_ref()
             ),
             fields: Fields::default(),
-        }))
+        })
+        .into())
     }
 
     /// The Ref of `repo` is gone from the remote: ask for another, starting from the old one.
-    fn ask_ref(&mut self, repo: RepoRef) -> Result<Assessed, Stop> {
+    fn ask_ref(&mut self, repo: RepoRef) -> Result<Outcome, Stop> {
         let (id, old, url) = (repo.id, repo.repo.effective_ref(), repo.repo.url.as_ref());
         let Some(prompter) = self.prompter.as_deref_mut() else {
             return Err(skip(format!(
@@ -590,17 +617,6 @@ impl Assessing<'_, '_> {
             _ => None,
         }
     }
-
-    /// A Repo that moves is left alone if its Checkout has changes `--force` was not given for.
-    fn must_be_clean(&self, id: &str) -> Result<(), Stop> {
-        match self.hold_of(id).filter(|_| !self.force) {
-            Some(hold) => Err(skip(format!(
-                "its checkout has {}; `--force` moves it anyway",
-                hold.why()
-            ))),
-            None => Ok(()),
-        }
-    }
 }
 
 /// Why a Checkout is not moved over.
@@ -619,46 +635,35 @@ impl Hold {
     }
 }
 
-/// Whether `found` is a Repo that would move, as opposed to one that stays or cannot be checked.
-fn moves(found: &Result<Assessed, String>) -> bool {
-    !matches!(found, Ok(Assessed::Stay(_)) | Err(_))
-}
-
 /// Where `repo` moves from the tag `current` when no Package lockfile answers: the newest tag of
 /// its own kind (`tag::newest`). A tag with no version stays, with a note pointing at `--ref`.
-fn by_kind(repo: RepoRef, current: &str, tags: &[String]) -> Assessed {
+fn by_kind(repo: RepoRef, current: &str, tags: &[String]) -> Outcome {
     if split(current).is_none() {
-        return Assessed::Stay(format!(
+        return Outcome::Stay(format!(
             "not moved: `{current}` has no version to compare; use `--ref` to move it"
         ));
     }
     match newest(current, tags) {
         Some(tag) => moved_to(repo.id, current, tag),
-        None => Assessed::Stay("up to date".into()),
+        None => Outcome::Stay("up to date".into()),
     }
 }
 
 /// Where the lockfile's `version` of the Package moves `repo` from `current`, by its Version tag.
-fn by_version(
-    repo: RepoRef,
-    name: &str,
-    version: &str,
-    current: &str,
-    tags: &[String],
-) -> Assessed {
+fn by_version(repo: RepoRef, name: &str, version: &str, current: &str, tags: &[String]) -> Outcome {
     let id = repo.id;
     match tag_for(name, version, tags) {
-        Some(tag) if tag == current => Assessed::Stay("up to date".into()),
+        Some(tag) if tag == current => Outcome::Stay("up to date".into()),
         Some(tag) => moved_to(id, current, tag),
-        None => Assessed::Stay(format!(
+        None => Outcome::Stay(format!(
             "not moved: {name}@{version} is not tagged in {}; use `--ref` to choose a tag",
             repo.repo.url.as_ref()
         )),
     }
 }
 
-fn moved_to(id: &str, from: &str, to: &str) -> Assessed {
-    Assessed::Move(Move {
+fn moved_to(id: &str, from: &str, to: &str) -> Outcome {
+    Outcome::Move(Move {
         id: id.into(),
         git_ref: Some(to.into()),
         look_at: to.into(),

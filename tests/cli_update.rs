@@ -1007,6 +1007,18 @@ fn list_prints_what_would_move_on_stdout_and_changes_nothing() {
 }
 
 #[test]
+fn naming_a_repo_does_not_announce_a_check_of_all() {
+    let p = Project::new(&foo_at("foo-js-1.0.0"));
+    p.write("package-lock.json", NPM_LOCK_ONE);
+    with_tags(&p, &["foo-js-1.0.0", "foo-js-1.2.3"]);
+
+    let run = p.update(&["foo"]);
+
+    assert_eq!(run.code, 0, "{}", run.err);
+    assert!(!run.err.contains("checking"), "{}", run.err);
+}
+
+#[test]
 fn list_says_what_a_mover_would_break() {
     let p = Project::new(&foo_with_docs());
     old_is_gone(&p);
