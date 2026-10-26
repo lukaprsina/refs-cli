@@ -1,7 +1,8 @@
 //! What talks to the person. The `Prompter` seam (ADR 0008): the questions go through it, so
 //! tests script the answers and only `cli::run` puts a terminal behind it; `Terminal` is the
 //! `inquire` adapter, and `path_scorer` orders what its pickers list. `Say` is where a run says
-//! what it read and decided. The questions themselves live with `add` and `update`; the pickers
+//! what it read and decided, `Console` is where its output goes, and `report` holds the words of its
+//! ending. The questions themselves live with `add` and `update`; the pickers
 //! they share are in `pickers`.
 
 mod console;
