@@ -257,7 +257,7 @@ enum Assessed {
 
 impl Assessed {
     /// Whether the Repo would move, as opposed to one that stays or cannot be checked.
-    fn moves(&self) -> bool {
+    fn would_move(&self) -> bool {
         matches!(
             self,
             Assessed::Ready(Outcome::Move(_)) | Assessed::Choose(_) | Assessed::Deleted
@@ -310,7 +310,7 @@ impl Assessing<'_, '_> {
             Some(git_ref) => self.set(repo, git_ref).into(),
             None => self.follow(repo).unwrap_or_else(Assessed::Cannot),
         };
-        let hold = found.moves().then(|| self.hold_of(repo.id)).flatten();
+        let hold = found.would_move().then(|| self.hold_of(repo.id)).flatten();
         Candidate { repo, found, hold }
     }
 
@@ -328,7 +328,7 @@ impl Assessing<'_, '_> {
             Assessed::Ready(outcome) => outcome,
             Assessed::Choose(choice) => self.choose(repo, choice)?,
             Assessed::Deleted => self.ask_ref(repo)?,
-            Assessed::Cannot(why) => return Err(Stop::Refused(why)),
+            Assessed::Cannot(why) => return Err(skip(why)),
         };
         match outcome {
             Outcome::Move(found) => self.mend(repo, found),
