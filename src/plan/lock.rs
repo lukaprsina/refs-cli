@@ -19,7 +19,7 @@ pub enum Drift {
 /// every Repo afterwards, so verification is not a variant (ADR 0006).
 #[derive(Debug)]
 pub enum Step<'a> {
-    /// Ask the Source for a new pin: a new, re-enabled or changed Repo, or an upgrade.
+    /// Ask the Source for a new pin: a new, re-enabled or changed Repo, or one named in `reresolve`.
     Resolve(RepoRef<'a>),
     /// Keep the locked entry.
     Reuse(LockedRepo),
@@ -41,7 +41,7 @@ pub fn locked(repo: RepoRef, pin: crate::source::Pin) -> LockedRepo {
 #[derive(Debug, Default)]
 pub struct LockFlags {
     /// Floating Repos to re-resolve even though their Pin is current.
-    pub upgrade: Vec<String>,
+    pub reresolve: Vec<String>,
     pub offline: bool,
 }
 
@@ -110,7 +110,7 @@ pub fn plan_lock<'a>(
             .repos()
             .map(|repo| match lock.and_then(|l| l.get(repo.id)) {
                 Some(entry)
-                    if entry.pin.drift_from(repo.repo).is_empty() && !flags.upgrades(repo) =>
+                    if entry.pin.drift_from(repo.repo).is_empty() && !flags.reresolves(repo) =>
                 {
                     Step::Reuse(entry.clone())
                 }
@@ -121,8 +121,8 @@ pub fn plan_lock<'a>(
 }
 
 impl LockFlags {
-    fn upgrades(&self, repo: RepoRef) -> bool {
-        repo.repo.is_floating() && self.upgrade.iter().any(|id| id == repo.id)
+    fn reresolves(&self, repo: RepoRef) -> bool {
+        repo.repo.is_floating() && self.reresolve.iter().any(|id| id == repo.id)
     }
 }
 

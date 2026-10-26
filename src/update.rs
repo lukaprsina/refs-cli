@@ -191,14 +191,14 @@ fn apply(
             fields: found.fields.clone(),
         })
         .collect();
-    let upgrade: Vec<String> = moves
+    let reresolve: Vec<String> = moves
         .iter()
         .filter(|found| found.git_ref.is_none())
         .map(|found| found.id.clone())
         .collect();
     let flags = SyncFlags {
         force,
-        upgrade,
+        reresolve,
         ..SyncFlags::default()
     };
     let mut report = sync::edit(source, root, &Edit::Change(&changes), &flags);

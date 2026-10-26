@@ -27,7 +27,7 @@ pub struct SyncFlags {
     pub check: bool,
     /// Floating Repos to re-resolve in the Lock. `update` sets it; `sync` has no such flag, but
     /// reads it all the same (through `lock_flags`).
-    pub upgrade: Vec<String>,
+    pub reresolve: Vec<String>,
 }
 
 /// Something a run changed on disk, for the CLI to say.
@@ -156,7 +156,7 @@ fn run_sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
 /// Stage 1 as `sync` and an edit run it.
 fn lock_flags(flags: &SyncFlags) -> LockFlags {
     LockFlags {
-        upgrade: flags.upgrade.clone(),
+        reresolve: flags.reresolve.clone(),
         offline: flags.offline,
     }
 }
@@ -309,7 +309,7 @@ pub fn edit_only(root: &Path, edit: &Edit) -> Report {
 /// The report says the write of `refs.toml` first (`Changed::Config`, then any `Group`), and
 /// has a `Hint` for an edit that was not written: a write that fails says only that
 /// `refs.toml` is as it was. An edit that changes nothing goes the same way and writes no
-/// `refs.toml`, so `flags.upgrade` can move a Lock entry alone and a refusal still blocks it;
+/// `refs.toml`, so `flags.reresolve` can move a Lock entry alone and a refusal still blocks it;
 /// its failures are hinted as a failed `sync` is. `flags.check` is not for this function: it
 /// writes. The Lock is written before `refs.toml`, so a failed write of `refs.toml` leaves a
 /// Lock with an entry the config does not have, which the next `sync` removes.
@@ -322,11 +322,7 @@ pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) ->
     let report = apply_edit(source, root, applied, flags);
     if unchanged {
         // "refs.toml is as it was" says nothing about an edit that had nothing to write.
-        Report {
-            hint: None,
-            ..report
-        }
-        .hint_if_incomplete(Hint::RunSyncOnceFixed)
+        report.hint_if_incomplete(Hint::RunSyncOnceFixed)
     } else {
         report
     }

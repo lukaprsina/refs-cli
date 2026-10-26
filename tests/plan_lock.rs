@@ -158,12 +158,12 @@ fn three_locked() -> Lock {
 }
 
 /// Which repos resolve, in config order.
-fn resolved(upgrade: &[&str]) -> Vec<String> {
+fn resolved(reresolve: &[&str]) -> Vec<String> {
     let config = parse(THREE).unwrap();
     let set = active(&config);
     let locked = three_locked();
     let flags = LockFlags {
-        upgrade: upgrade.iter().map(ToString::to_string).collect(),
+        reresolve: reresolve.iter().map(ToString::to_string).collect(),
         ..LockFlags::default()
     };
     let plan = plan_lock(&set, Some(&locked), &flags).unwrap();

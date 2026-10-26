@@ -290,7 +290,7 @@ fn a_dirty_checkout_is_refused_until_forced() {
     p.source.set_commit("a", &"c".repeat(40));
     // the Lock moves on, so the dirty checkout has to be replaced
     let moving = SyncFlags {
-        upgrade: vec!["a".into()],
+        reresolve: vec!["a".into()],
         ..SyncFlags::default()
     };
 

@@ -551,7 +551,7 @@ const SHA_2: &str = "2222222222222222222222222222222222222222";
 
 fn upgrading_a() -> SyncFlags {
     SyncFlags {
-        upgrade: vec!["a".into()],
+        reresolve: vec!["a".into()],
         ..SyncFlags::default()
     }
 }
