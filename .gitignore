@@ -5,3 +5,5 @@
 /.claude/worktrees
 /mutants.out
 /mutants-results
+.env*
+!.env.example*
