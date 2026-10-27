@@ -1,10 +1,44 @@
-# refs
+<h1 align="center">refs</h1>
 
-Local reference repos for coding agents.
+<p align="center">Your agent's dependencies, checked out at the version you locked</p>
 
-`refs` clones the git repos your project depends on, checks out only the parts that matter at a pinned commit into `.references/`, and writes a short block into `AGENTS.md`: what exists, which packages each repo documents, where to start. The agent then reads real, current source with its own read and grep tools. No MCP server, no query API.
+<p align="center">
+  <a href="https://github.com/lukaprsina/refs-cli/releases/latest"><img src="https://img.shields.io/github/v/release/lukaprsina/refs-cli?style=flat" alt="Latest release" /></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/github/license/lukaprsina/refs-cli?style=flat" alt="License: MIT" /></a>
+  <a href="https://github.com/lukaprsina/refs-cli"><img src="https://img.shields.io/github/stars/lukaprsina/refs-cli" alt="GitHub stars" /></a>
+</p>
 
-Anything an agent has to decide to call often goes uncalled; the block sits in `AGENTS.md`, so it is always in context. Pinned commits make it reproducible, sparse checkouts keep it small.
+<br/>
+
+<p align="center">
+  <img src="docs/assets/demo.webp" width="800" height="532" alt="A coding agent writes a call to a function that huggingface_hub 2.0 removed and gets an AttributeError. After it re-reads AGENTS.md, it finds the migration guide in .references/ and uses the new function." />
+</p>
+
+<br/>
+
+Coding agents write library code from training data. When the library has changed since, you get calls to functions that no longer exist. `huggingface_hub` 2.0 removed `upload_large_folder`; a model trained before that writes it anyway.
+
+`refs` fixes this at the source. It checks out the library's repo at the version in your lockfile, into `.references/`, and writes a short pointer into `AGENTS.md`. The agent reads the real source, docs and migration guides with its own read and grep tools.
+
+```sh
+refs add pypi:huggingface-hub   # pins the version from uv.lock
+refs add npm:solid-js           # or cargo:serde, gh:owner/repo, any git URL
+refs update                     # follow your lockfile after an upgrade
+refs sync --check               # exit 3 if out of date, for CI
+```
+
+- 📌 **Your version** — pinned to the tag your lockfile uses (`uv.lock`, `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `poetry.lock`)
+- 📖 **Source and docs** — migration guides and changelogs included, not a summary of them
+- 🧠 **Always in context** — the pointer lives in `AGENTS.md`, so the agent doesn't have to decide to look something up
+- 🔌 **No server** — no MCP server, no query API, no key
+- 🪶 **Small** — shallow, sparse checkouts; `.references/` stays out of git
+- 🔁 **Reproducible** — `refs.toml` and `refs.lock` are committed
+
+| Instead of | Why `refs` |
+|---|---|
+| A docs MCP server or web search | The agent has to choose to call it, and often doesn't. The pointer in `AGENTS.md` is always there. |
+| `llms.txt` or a docs snapshot | These usually describe the latest release. `refs` follows your lockfile. |
+| Submodules or vendored copies | Sparse, shallow, and excluded through `.git/info/exclude`. |
 
 ## Install
 
@@ -20,70 +54,19 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/lukaprsina/refs-cli/rel
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/lukaprsina/refs-cli/releases/latest/download/refs-cli-installer.ps1 | iex"
 ```
 
-With a Rust toolchain: `cargo binstall refs-cli` (prebuilt binary) or `cargo install refs-cli` (builds from source).
+Or, with a Rust toolchain: `cargo binstall refs-cli` (prebuilt binary) or `cargo install refs-cli` (builds from source). Update with `refs self update` (installer installs only).
 
-Update with `refs self update`; it works for installs made by the installers above, not by cargo. If GitHub rate-limits the lookup, set `AXOUPDATER_GITHUB_TOKEN`, e.g. `AXOUPDATER_GITHUB_TOKEN=$(gh auth token) refs self update`.
-
-Release artifacts carry GitHub artifact attestations:
-
-```sh
-gh attestation verify <file> -R lukaprsina/refs-cli
-```
+Release artifacts carry GitHub artifact attestations: `gh attestation verify <file> -R lukaprsina/refs-cli`.
 
 ## Quick start
 
+In a project with a lockfile:
+
 ```sh
-refs add
+refs add pypi:huggingface-hub
 ```
 
-`refs add` creates `refs.toml` if there is none. In a terminal it asks for the URL (or a shorthand such as `gh:owner/repo` or `npm:name`) and the ref, then looks at the repo: a bad URL or ref fails here, before anything is edited. It reads the repo's manifests (`package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`) for the package names and a description, shows one summary of what it will write, and asks `Customize?`. Enter adds as shown; yes asks for each value in turn, starting from the summary's. It prints the equivalent command line before it syncs:
-
-```text
-$ refs add gh:solidjs/solid
-> Ref (empty: the remote's default branch) next
-id          solid
-ref         next (a1b2c3d)
-paths       (everything)
-start       (none)
-packages    @solidjs/signals, @solidjs/web, solid-js
-description Solid 2.0 core packages and 2.0 design docs
-group       (none)
-> Customize? No
-equivalent: refs add https://github.com/solidjs/solid --ref next --description "Solid 2.0 core packages and 2.0 design docs" --packages @solidjs/signals @solidjs/web solid-js
-created refs.toml
-updated refs.lock
-created checkout `solid`
-updated AGENTS.md
-```
-
-A registry shorthand (`npm:name`) pins the version your lockfile or `@version` gives and does not ask for the ref (`--ref` overrides the pin); with no lockfile pin it asks, and an empty answer follows the default branch. `npm:name@next` is refused: `next` looks like a tag, and `npm:name --ref next` follows a git ref named `next`, which may not be the dist-tag.
-
-A registry add also stores the package it came from, as `origin = "npm:solid-js"` in the repo's table (a version is never part of it). A repo added by URL or `gh:` has none. `--origin <package>` records one on any add (`npm:solid-js`, `cargo:serde` or `pypi:requests`, with no version), and replaces the one a shorthand gives. It only records: nothing is read or pinned. An origin is the Package whose lockfile entry the repo follows, so a package whose version scheme differs from the repo's tags will not match them. To attach one to a repo added earlier, add the line to `refs.toml` by hand.
-
-Flags skip the questions. Without a terminal, or with `--no-input`, nothing is asked, so scripts pass a URL and flags.
-
-The result is in `refs.toml`, which you can also write by hand:
-
-```toml
-[settings]  # optional; these are the defaults
-references_dir = ".references"
-agents_files = ["AGENTS.md"]
-
-[groups.solidjs-2]
-name = "SolidJS 2.0"
-description = "Solid 2.0 release candidates, router and docs. Newer than your training data; many APIs differ from Solid 1.x."
-
-[repos.solid]
-url = "https://github.com/solidjs/solid"
-group = "solidjs-2"
-ref = "next"
-description = "Solid 2.0 core packages and 2.0 design docs"
-paths = ["packages", "documentation"]
-packages = ["solid-js", "@solidjs/web", "@solidjs/signals"]
-start = ["documentation/solid-2.0/MIGRATION.md"]
-```
-
-`refs sync` (which `add` runs for you) checks out the repos and writes the block into `AGENTS.md`:
+`refs add` looks up where the package lives, reads the version from your lockfile, checks out that tag, and updates `AGENTS.md`:
 
 ````markdown
 <!-- BEGIN:refs -->
@@ -94,41 +77,45 @@ start = ["documentation/solid-2.0/MIGRATION.md"]
 Source and docs for some dependencies are checked out read-only in `.references/`, pinned in `refs.lock`. …
 ```
 
-### SolidJS 2.0
+### Ungrouped
 
 ```text
-Solid 2.0 release candidates, router and docs. Newer than your training data; many APIs differ from Solid 1.x.
-
-[solid @ next ee49b3e] Solid 2.0 core packages and 2.0 design docs. Packages: solid-js, @solidjs/web, @solidjs/signals. Start: documentation/solid-2.0/MIGRATION.md.
+[huggingface_hub @ v2.3.0 587e09a] Client library to download and publish models, datasets and other repos on the huggingface.co hub. Packages: huggingface-hub. Start: docs/source/en/concepts/migration_v2.md.
 ```
 
 <!-- END:refs -->
 ````
 
-Commit `refs.toml`, `refs.lock` and `AGENTS.md`. `.references/` is excluded through `.git/info/exclude`.
+Commit `refs.toml`, `refs.lock` and `AGENTS.md`. Teammates and CI run `refs sync` to get the same checkouts.
+
+Without a registry package, pass a git URL or `gh:owner/repo`. In a terminal `refs add` asks for what is missing; scripts pass flags and `--no-input`.
 
 ## Commands
 
 | Command | Does |
 |---|---|
-| `refs init` | Create `refs.toml` (with a commented template) and the git exclude rule |
-| `refs add [url]` | Add a repo, lock it, sync. `url` can be `gh:owner/repo` or `gl:group/sub/repo` (also `github:`, `gitlab:`, `bitbucket:`; a path after the repository is ignored with a note), or `npm:<name>`, `cargo:<name>` or `pypi:<name>`, each with an optional `@<version>`: the registry says where the package lives. With no version, `add` reads the one your lockfile uses (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `uv.lock`, `poetry.lock`) and pins its tag. Asks for what is missing in a terminal; `--no-input` turns that off, `--no-sync` only edits |
+| `refs init` | Create `refs.toml` and the git exclude rule |
+| `refs add [url]` | Add a repo (`gh:`, `gl:`, `npm:`, `cargo:`, `pypi:` or a git URL), lock it, sync |
 | `refs remove <id>` | Remove a repo |
-| `refs disable` / `enable` | Switch a repo or group (`--group`) off or on without removing it |
-| `refs list` | Show the repos; `--status` adds the lock and checkout state |
-| `refs sync` | Make checkouts and the block match `refs.lock`; `--check` exits 3 when out of date, for CI |
-| `refs update [id…]` | Move repos (no ids, in a terminal: pick them from a list of `current → new`, nothing ticked; without a terminal, the list only): a pinned repo to the version your lockfile uses now (or, with no lockfile answer, the newest tag with the same prefix), a branch to the remote's newest commit. `--ref <r>` sets the ref of one repo; `--force` moves a repo whose checkout has changes; `--list` prints what would move and what it would break, with no terminal and no changes |
+| `refs disable` / `enable` | Switch a repo or group off or on |
+| `refs list` | Show the repos; `--status` adds lock and checkout state |
+| `refs sync` | Make checkouts and the `AGENTS.md` block match `refs.lock`; `--check` for CI |
+| `refs update [id…]` | Move repos to the version your lockfile uses now, or a branch to its newest commit |
 | `refs self update` | Replace this program with the latest release |
 
-Flags: `refs <command> --help`. `--offline` (`sync`, `add`, `remove`, `disable`, `enable`) never contacts the network; `--no-input` (`add`, `update`) never prompts. Exit codes: 0 ok, 1 error, 2 usage, 3 out of date (`--check`).
+`refs <command> --help` has the flags. Exit codes: 0 ok, 1 error, 2 usage, 3 out of date (`--check`).
 
 ## Notes
 
-- Linters, formatters and type checkers may scan `.references/`. `refs sync` and `refs add` say which of Prettier, ESLint, Oxlint and tsc do not exclude it and what to add; refs never edits their files. Not detected: Ruff, Biome, Stylelint, and editors (`files.exclude`, `search.exclude`); exclude `.references/` there yourself. Silence one with `tooling_ignore = ["tsc"]` at the top of `refs.toml`.
-- `rg` skips `.references/` by default; pass the path (`rg foo .references/solid`).
-- Checkouts are read-only. `sync` and every command that edits `refs.toml` refuse to touch one with local changes (an edit that is refused writes nothing); `--force` discards them.
-- Claude Code ignores `AGENTS.md` if a `CLAUDE.md` exists; add `CLAUDE.md` to `agents_files`.
+- Linters, formatters and type checkers may scan `.references/`. `refs sync` says which of Prettier, ESLint, Oxlint and tsc need an exclude; refs never edits their files. Exclude it yourself in Ruff, Biome, Stylelint and your editor.
+- `rg` skips `.references/` by default; pass the path (`rg foo .references/huggingface_hub`).
+- Checkouts are read-only. `--force` discards local changes in one.
+- Claude Code ignores `AGENTS.md` if a `CLAUDE.md` exists. Add `CLAUDE.md` to `agents_files` in `refs.toml`.
 
 ## Thanks
 
 The registry lookups, the cleaning of repository URLs and the reading of `pnpm-lock.yaml` and `yarn.lock` build on [opensrc](https://github.com/vercel-labs/opensrc) by Vercel (Apache-2.0; see `NOTICE`).
+
+## License
+
+[MIT](LICENSE)
