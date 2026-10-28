@@ -16,7 +16,7 @@ use crate::sync::SyncFlags;
 use crate::ui::{
     Console, EXIT_OUT_OF_DATE, Prompter, fail, fail_all, failed, print_report, skipped,
 };
-use crate::update;
+use crate::update::{self, Done};
 
 /// The project at or above `start`; on failure the problems are printed and the exit code
 /// returned.
@@ -152,12 +152,16 @@ pub(crate) fn update(
         prompter,
         console,
     ) {
-        Ok(done) => {
-            console.data(&done.listing);
-            let code = done
-                .report
-                .map_or(0, |report| print_report(&report, false, console));
-            skipped(done.skipped, code, console)
+        Ok(Done::Listed(listing)) => {
+            console.data(&listing);
+            0
+        }
+        Ok(Done::Ran {
+            report,
+            skipped: skipped_count,
+        }) => {
+            let code = report.map_or(0, |report| print_report(&report, false, console));
+            skipped(skipped_count, code, console)
         }
         Err(failure) => failed(failure, console),
     }

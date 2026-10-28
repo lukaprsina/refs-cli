@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use super::Request;
-use super::ask::{Broken, fill_update};
+use super::ask::fill_update;
 // `update` shares the version question with `add`, so it imports from `add::pin` (and nothing else of `add`).
 use crate::add::pin::choose_version;
 use crate::config::{RepoRef, is_full_sha};
@@ -251,16 +251,24 @@ impl<'a, 'p> Assessing<'a, 'p> {
         let vanished: Vec<String> = (repo.repo.package_strings().into_iter())
             .filter(|name| !have.contains(name))
             .collect();
-        let broken = Broken {
-            id,
-            to,
-            repo: repo.repo,
-            listed: &outline.paths,
-            gone: &gone,
-            vanished: &vanished,
-            manifests: &manifests,
-        };
-        match fill_update(&broken, prompter, self.say).map_err(Failure::Asked)? {
+        self.say
+            .shown(format!("`{id}`: `{to}` no longer has {gone}"));
+        if !vanished.is_empty() {
+            let names: Vec<_> = vanished.iter().map(|name| format!("`{name}`")).collect();
+            self.say.warning(format!(
+                "`{id}`: `{to}` has no package {}; kept",
+                names.join(", ")
+            ));
+        }
+        let asked = fill_update(
+            repo.repo,
+            &outline.paths,
+            &gone,
+            &manifests,
+            prompter,
+            self.say,
+        );
+        match asked.map_err(Failure::Asked)? {
             Some(fields) => {
                 found.fields = fields;
                 Ok(Some(found))
