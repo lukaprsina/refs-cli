@@ -6,9 +6,9 @@ use std::path::Path;
 
 use crate::active::{ActiveSet, active};
 use crate::agent_file;
-use crate::config::Config;
+use crate::config::{self, Config};
 use crate::diagnostic::Note;
-use crate::edit::Edit;
+use crate::edit::{self, Edit};
 use crate::exclude;
 use crate::lock::{Lock, LockedRepo};
 pub use crate::plan::{Checkout, Hint, Outcome};
@@ -238,37 +238,37 @@ fn rejected(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
 
 /// An edit applied to the text of `<root>/refs.toml` and parsed, but not yet written: the
 /// config a sync runs against.
-struct Applied {
+struct Edited {
     /// Whether the edit starts `refs.toml` from nothing.
     created: bool,
     before: String,
-    after: String,
-    config: Config,
-    group_created: Option<String>,
-    /// Whether the edit is an `add` that takes the Project from no active Repo to one.
-    first_active: bool,
+    applied: edit::Applied,
 }
 
-impl Applied {
-    fn read(root: &Path, edit: &Edit) -> Result<Applied, Report> {
+impl Edited {
+    fn read(root: &Path, edit: &Edit) -> Result<Edited, Report> {
         let created = !root.join(project::CONFIG_FILE).exists();
         let before = match created {
             true => String::new(),
             false => project::read_config(root).map_err(rejected)?,
         };
         let applied = edit.apply(&before).map_err(rejected)?;
-        Ok(Applied {
-            first_active: applied.first_active,
+        Ok(Edited {
             created,
             before,
-            after: applied.text,
-            config: applied.config,
-            group_created: applied.group_created,
+            applied,
         })
     }
 
+    /// Whether the edit takes the Project from no active Repo to one. The old text parsed when
+    /// it was last written; one a hand edit broke counts as having none.
+    fn first_active(&self) -> bool {
+        let any = |config: &Config| active(config).repos().next().is_some();
+        !config::parse(&self.before).is_ok_and(|old| any(&old)) && any(&self.applied.config)
+    }
+
     fn unchanged(&self) -> bool {
-        self.after == self.before
+        self.applied.text == self.before
     }
 
     /// `report` of a run that came after the edit was written: what the edit did is said
@@ -282,7 +282,7 @@ impl Applied {
         } else {
             Changed::Config
         }];
-        edit.extend(self.group_created.map(Changed::Group));
+        edit.extend(self.applied.group_created.map(Changed::Group));
         report.changes.splice(0..0, edit);
         report
     }
@@ -292,18 +292,18 @@ impl Applied {
 /// is needed, and nothing is resolved or verified. An edit that changes nothing writes
 /// nothing.
 pub fn edit_only(root: &Path, edit: &Edit) -> Report {
-    let applied = match Applied::read(root, edit) {
-        Ok(applied) => applied,
+    let edited = match Edited::read(root, edit) {
+        Ok(edited) => edited,
         Err(report) => return report,
     };
-    if applied.unchanged() {
+    if edited.unchanged() {
         return Report::new(Outcome::InSync);
     }
-    match project::write_config(root, &applied.after) {
+    match project::write_config(root, &edited.applied.text) {
         Ok(()) => {
             let report = Report::new(Outcome::InSync)
-                .with_editor_hint(applied.first_active, &applied.config);
-            applied.written(report).with_hint(Hint::RunSync)
+                .with_editor_hint(edited.first_active(), &edited.applied.config);
+            edited.written(report).with_hint(Hint::RunSync)
         }
         Err(e) => rejected(e),
     }
@@ -327,12 +327,12 @@ pub fn edit_only(root: &Path, edit: &Edit) -> Report {
 /// writes. The Lock is written before `refs.toml`, so a failed write of `refs.toml` leaves a
 /// Lock with an entry the config does not have, which the next `sync` removes.
 pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) -> Report {
-    let applied = match Applied::read(root, edit) {
-        Ok(applied) => applied,
+    let edited = match Edited::read(root, edit) {
+        Ok(edited) => edited,
         Err(report) => return report,
     };
-    let unchanged = applied.unchanged();
-    let report = apply_edit(source, root, applied, flags);
+    let unchanged = edited.unchanged();
+    let report = apply_edit(source, root, edited, flags);
     if unchanged {
         // "refs.toml is as it was" says nothing about an edit that had nothing to write.
         report.hint_if_incomplete(Hint::RunSyncOnceFixed)
@@ -341,13 +341,13 @@ pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) ->
     }
 }
 
-fn apply_edit(source: &dyn Source, root: &Path, applied: Applied, flags: &SyncFlags) -> Report {
-    let Observation { active, old, drift } = match observe(root, &applied.config) {
+fn apply_edit(source: &dyn Source, root: &Path, edited: Edited, flags: &SyncFlags) -> Report {
+    let Observation { active, old, drift } = match observe(root, &edited.applied.config) {
         Ok(observation) => observation,
         Err(report) => return report.with_hint(Hint::ConfigUnchanged),
     };
-    let report = match edit_stages(source, root, &applied, &active, old, flags) {
-        Ok(report) => applied.written(report),
+    let report = match edit_stages(source, root, &edited, &active, old, flags) {
+        Ok(report) => edited.written(report),
         Err(report) => report,
     };
     report.with_drift(drift)
@@ -358,12 +358,12 @@ fn apply_edit(source: &dyn Source, root: &Path, applied: Applied, flags: &SyncFl
 fn edit_stages(
     source: &dyn Source,
     root: &Path,
-    applied: &Applied,
+    edited: &Edited,
     active: &ActiveSet,
     old: Option<Lock>,
     flags: &SyncFlags,
 ) -> Result<Report, Report> {
-    let config = &applied.config;
+    let config = &edited.applied.config;
     let lock = match shrunk_lock(active, old.as_ref()) {
         Some(lock) => lock,
         None => resolve_all(source, active, old.as_ref(), flags)
@@ -372,13 +372,13 @@ fn edit_stages(
     let plan = stage_two_gate(source, root, config, active, &lock, flags.force)?;
     let stage_one = commit(root, old.as_ref(), lock)
         .map_err(|report| report.with_hint(Hint::ConfigUnchanged))?;
-    if !applied.unchanged()
-        && let Err(e) = project::write_config(root, &applied.after)
+    if !edited.unchanged()
+        && let Err(e) = project::write_config(root, &edited.applied.text)
     {
         return Err(with_lock_change(stage_one, rejected(e)));
     }
     let stage_two = apply_plan(source, root, config, active, plan, flags)
-        .with_editor_hint(applied.first_active, config)
+        .with_editor_hint(edited.first_active(), config)
         .hint_if_incomplete(Hint::FixOrRemoveThenSync);
     Ok(with_lock_change(stage_one, stage_two))
 }

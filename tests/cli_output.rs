@@ -390,13 +390,13 @@ mod editor_hint {
     }
 
     #[test]
-    fn enabling_a_repo_does_not() {
+    fn so_does_enabling_the_first_one() {
         let p = Project::new("[repos.a]\nurl = \"https://github.com/o/a\"\nenabled = false\n");
 
         let ran = p.run(&["enable", "a"]);
 
         assert_eq!(ran.code, 0, "{}", ran.stderr);
-        assert!(!ran.stderr.contains(HINT), "{}", ran.stderr);
+        assert!(ran.stderr.contains(HINT), "{}", ran.stderr);
     }
 
     #[test]
