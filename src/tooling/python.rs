@@ -19,7 +19,7 @@ pub(super) fn black(site: &Site) -> Finding {
         .iter()
         .filter_map(|name| option(name)?.as_str())
         .any(|regex| regex.contains(&site.name) || regex.contains(&escaped));
-    // Without `exclude`, Black also skips what `.gitignore` of its root names (fifth pass).
+    // Without `exclude`, Black also skips what `.gitignore` of its root names (tested: `docs/research/tool-ignore-support.md`).
     let by_gitignore = option("exclude").is_none() && site.lists_dir(".gitignore");
     if excluded || by_gitignore || (hook && site.any_names_dir(&[PRE_COMMIT])) {
         return Finding::Covered;

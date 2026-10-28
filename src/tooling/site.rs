@@ -77,7 +77,7 @@ impl Site {
             return false;
         };
         text.lines().any(|line| {
-            let line = line.trim();
+            let line = line.trim().trim_start_matches('\u{feff}');
             let path = line.strip_prefix('/').unwrap_or(line).trim_end_matches('/');
             path == self.seen || (path == self.name && !line.starts_with('/'))
         })

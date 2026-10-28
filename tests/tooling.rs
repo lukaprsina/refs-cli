@@ -271,6 +271,32 @@ fn a_gitignore_without_the_directory_does_not_cover_black() {
 }
 
 #[test]
+fn only_the_markdownlint_config_covers_it() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("package.json"),
+        r#"{"scripts": {"clean": "rm -rf .references"}, "devDependencies": {"markdownlint-cli2": "^0.24"}}"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        gaps(dir.path(), DIR, &[]),
+        [to_create(
+            "markdownlint",
+            ".markdownlint-cli2.jsonc",
+            r#""ignores": [".references/**"]"#
+        )]
+    );
+}
+
+#[test]
+fn a_prettierignore_with_a_byte_order_mark_still_covers() {
+    let dir = prettierignore("\u{feff}.references/\n");
+
+    assert_eq!(gaps(dir.path(), DIR, &[]), []);
+}
+
+#[test]
 fn oxlint_and_tsc_are_not_reported() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join(".oxlintrc.json"), "{}").unwrap();

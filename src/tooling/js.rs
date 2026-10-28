@@ -22,7 +22,7 @@ const PRETTIER: &[&str] = &[
 ];
 
 /// Prettier skips what `.prettierignore` or the `.gitignore` of its working directory names: its
-/// config and `package.json` have no ignore option (research note).
+/// config and `package.json` have no ignore option.
 pub(super) fn prettier(site: &Site) -> Finding {
     let signals = [
         (
@@ -61,7 +61,7 @@ const ESLINT_LEGACY: &[&str] = &[
 ];
 
 /// With a flat config ESLint skips what an `ignores` entry of it names. With only the legacy
-/// files it skips dot-folders by itself (ESLint 8 docs, not run), so those are covered whatever
+/// files it skips dot-folders by itself (from the ESLint 8 docs; not run, see the research note), so those are covered whatever
 /// they say.
 pub(super) fn eslint(site: &Site) -> Finding {
     let flat = site.present(ESLINT_FLAT);
@@ -129,15 +129,17 @@ const MARKDOWNLINT: &[&str] = &[
     ".markdownlint-cli2.mjs",
 ];
 
+/// markdownlint-cli2 skips what an `ignores` entry of its own config names. Its `gitignore` option
+/// is off by default, so no `.gitignore` covers it.
 pub(super) fn markdownlint(site: &Site) -> Finding {
     let own = site.present(MARKDOWNLINT);
     let signals = [
         (PACKAGE_JSON, site.dependency("markdownlint-cli2")),
         (PRE_COMMIT, site.hook("markdownlint-cli2")),
     ];
-    let Some(mut files) = site.in_use(&own, &signals) else {
+    if site.in_use(&own, &signals).is_none() {
         return Finding::Absent;
-    };
+    }
     let file = own.first().copied().unwrap_or(".markdownlint-cli2.jsonc");
     let dir = &site.seen;
     let snippet = match file.rsplit('.').next() {
@@ -145,8 +147,7 @@ pub(super) fn markdownlint(site: &Site) -> Finding {
         Some("jsonc") => format!(r#""ignores": ["{dir}/**"]"#),
         _ => format!(r#"ignores: ["{dir}/**"]"#),
     };
-    files.push(file);
-    match site.any_names_dir(&files) {
+    match site.any_names_dir(&own) {
         true => Finding::Covered,
         false => Finding::gap(file, snippet),
     }

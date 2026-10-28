@@ -89,8 +89,7 @@ pub struct Fields {
     pub packages: Option<Vec<String>>,
 }
 
-/// What an edit gave: the new text, that text parsed, the Group it had to create for it, and
-/// whether it took the config from no active Repo to one.
+/// What an edit gave: the new text, that text parsed, and what it did besides.
 #[derive(Debug)]
 pub struct Applied {
     pub text: String,
@@ -104,8 +103,8 @@ impl Edit<'_> {
     /// The text this edit gives `text`.
     pub fn apply(&self, text: &str) -> Result<Applied, EditError> {
         // `text` parsed when it was last written; a hand edit that broke it is the edit's problem.
-        let had_active =
-            config::parse(text).is_ok_and(|config| active(&config).repos().next().is_some());
+        let adds_first = matches!(self, Edit::Add(_))
+            && !config::parse(text).is_ok_and(|config| active(&config).repos().next().is_some());
         let (text, group_created) = match self {
             Edit::Add(req) => add(text, req)?,
             Edit::Remove(id) => (remove(text, id)?, None),
@@ -114,8 +113,7 @@ impl Edit<'_> {
             Edit::Change(changes) => (change(text, changes)?, None),
         };
         let config = config::parse(&text)?;
-        let first_active =
-            matches!(self, Edit::Add(_)) && !had_active && active(&config).repos().next().is_some();
+        let first_active = adds_first && active(&config).repos().next().is_some();
         Ok(Applied {
             text,
             config,
