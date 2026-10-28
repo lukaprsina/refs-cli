@@ -81,13 +81,9 @@ pub enum ConfigProblem {
     )]
     StartOutsidePaths { start: String },
 
-    #[error("`{path}` must be a relative path without `..`")]
+    #[error("`{path}` must be a relative path without `..`, `.`, an empty part or a trailing `/`")]
     #[diagnostic(code(refs::config::bad_path))]
     BadPath { path: String },
-
-    #[error("`start` file `{path}` must be spelled as a file: no trailing `/`, `.` or empty part")]
-    #[diagnostic(code(refs::config::bad_start))]
-    BadStart { path: String },
 
     #[error(
         "`{path}` must be a path inside the project: relative, without `..`, backticks or control characters"
@@ -138,9 +134,7 @@ impl ConfigProblem {
             ConfigProblem::BadId { .. } => "not a valid directory name",
             ConfigProblem::DanglingGroup { .. } => "no such group",
             ConfigProblem::StartOutsidePaths { .. } => "not checked out",
-            ConfigProblem::BadPath { .. }
-            | ConfigProblem::BadStart { .. }
-            | ConfigProblem::BadSettingsPath { .. } => "not allowed",
+            ConfigProblem::BadPath { .. } | ConfigProblem::BadSettingsPath { .. } => "not allowed",
             ConfigProblem::BadUrl { .. } => "rejected",
             ConfigProblem::BadRef => "git would read this as an option",
             ConfigProblem::BadOrigin { .. } => "rejected",

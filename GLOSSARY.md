@@ -51,7 +51,7 @@ A code host (GitHub, GitLab, Bitbucket, Codeberg) that `add` names with a prefix
 _Avoid_: Registry, Provider
 
 **Start**:
-Files inside a Repo's Paths that are worth reading first.
+Files in a Repo's Checkout (inside its Paths, or directly at the root) that are worth reading first. Never a directory.
 _Avoid_: Entry points, hints
 
 **Ref**:
