@@ -452,9 +452,9 @@ pub enum Note {
     #[diagnostic(
         code(refs::tooling::editor_hint),
         help(
-            "Zed: add `\"file_scan_exclusions\": [\"**/{references_dir}\", \"...\"]` to .zed/settings.json. \
-             JetBrains: right-click {references_dir}, Mark Directory as, Excluded. \
-             VS Code search, Helix and Neovim already skip it."
+            "Zed (needed on Windows, not tried elsewhere): add `\"file_scan_exclusions\": [\"**/{references_dir}\", \"...\"]` to .zed/settings.json. \
+             JetBrains (not tried): right-click {references_dir}, Mark Directory as, Excluded. \
+             VS Code search, Helix and Neovim's ripgrep or fd pickers already skip it."
         )
     )]
     EditorHint { references_dir: String },

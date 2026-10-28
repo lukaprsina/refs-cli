@@ -329,12 +329,16 @@ fn the_binary_init_prints_the_editor_hint_with_the_new_config_only() {
         "{}",
         first.stderr
     );
-    assert!(
-        first.stderr.contains("Mark Directory as"),
-        "{}",
-        first.stderr
-    );
+    // Miette wraps the help, so compare it with the whitespace collapsed.
+    let hint = first
+        .stderr
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(hint.contains("Mark Directory as"), "{hint}");
     assert!(!second.stderr.contains("editor_hint"), "{}", second.stderr);
+    // It names no tool, so it has no `tooling_ignore` to point at.
+    assert!(!first.stderr.contains("tooling_ignore"), "{}", first.stderr);
     let quiet = Binary::new();
     git(quiet.dir.path(), &["init", "-q"]);
     assert_eq!(quiet.run(&["-q", "init", "--here"]).stderr, "");
