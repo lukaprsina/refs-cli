@@ -87,18 +87,15 @@ pub fn check_version(output: &str) -> Result<(), SourceError> {
     let mut parts = found
         .strip_prefix("git version ")
         .unwrap_or_default()
-        .split(|c: char| !c.is_ascii_digit())
-        .map(|p| p.parse::<u32>());
-    let Some((Ok(major), Ok(minor), Ok(patch))) = parts
-        .next()
-        .zip(parts.next())
-        .zip(parts.next())
-        .map(|((a, b), c)| (a, b, c))
-    else {
+        .split(|c: char| !c.is_ascii_digit());
+    let mut number = || parts.next().map(|p| p.parse::<u32>());
+    // A git built from a source tree without tags says `2.45.GIT`: no patch level, so 0.
+    let (Some(Ok(major)), Some(Ok(minor))) = (number(), number()) else {
         return Err(SourceError::Failed {
             message: format!("could not read the git version from `{found}`"),
         });
     };
+    let patch = number().and_then(Result::ok).unwrap_or(0);
     if (major, minor, patch) < MINIMUM_VERSION {
         return Err(SourceError::TooOld {
             found: found.trim_start_matches("git version ").into(),

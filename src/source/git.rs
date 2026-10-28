@@ -38,7 +38,8 @@ impl GitSource {
             std::env::var("HOME").ok().as_deref(),
         )
         .ok_or_else(|| SourceError::Failed {
-            message: "cannot find the cache directory: set XDG_CACHE_HOME (or LOCALAPPDATA on \n                      Windows, or HOME)"
+            message: "cannot find the cache directory: set XDG_CACHE_HOME (or LOCALAPPDATA on \
+                      Windows, or HOME)"
                 .into(),
         })?;
         Ok(GitSource::new(cache, checkouts))
