@@ -4,11 +4,25 @@
 pub mod fake;
 pub mod git;
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Repo, RepoRef, is_full_sha};
+use crate::config::{Config, Repo, RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
 use crate::lock::Field;
+
+/// How a run gets its `Source`, once the project is loaded: it needs the project's root and
+/// config (the real one wants its `references_dir`). Tests return the fake.
+pub trait MakeSource<'a>:
+    FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>
+{
+}
+
+impl<'a, F> MakeSource<'a> for F where
+    F: FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>
+{
+}
 
 /// A resolved identity of a Repo: a commit of a git remote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

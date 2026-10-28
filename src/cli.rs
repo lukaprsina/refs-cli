@@ -1,6 +1,6 @@
 //! The command line: parsing and the entry points. What to do is decided by `sync`, `plan`, `add`
-//! and `update`; this module parses the arguments into plain values and calls one driver in
-//! `commands`, which reports through `ui`.
+//! and `update`; this module parses the arguments into plain values and, in `dispatch`, strings the steps
+//! in `commands` together for each command, which reports through `ui`.
 //!
 //! The `Source` is injected into `run` as a function of the loaded project (the real one
 //! needs its root and `references_dir`): tests return the fake in-process (the `testing`
@@ -15,13 +15,11 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::add::Asking;
 use crate::commands;
-use crate::config::Config;
-use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit, Target};
 use crate::registry::{self, Registry};
 use crate::self_update::{self, Updater};
-use crate::source::Source;
-use crate::sync::SyncFlags;
+use crate::source::MakeSource;
+use crate::sync::{self, SyncFlags};
 use crate::ui::{self, Console, EXIT_ERROR, Prompter};
 use crate::update;
 
@@ -224,7 +222,7 @@ struct SyncArgs {
 pub fn run<'a>(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
-    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    make_source: impl MakeSource<'a>,
 ) -> u8 {
     use std::io::IsTerminal;
     let styled = no_color_env_unset();
@@ -264,7 +262,7 @@ pub struct Styled {
 pub fn run_with<'a>(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
-    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    make_source: impl MakeSource<'a>,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> u8 {
@@ -297,7 +295,7 @@ pub struct Outside<'a> {
 pub fn run_on<'a>(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
-    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    make_source: impl MakeSource<'a>,
     out: &mut dyn Write,
     err: &mut dyn Write,
     styles: Styled,
@@ -329,12 +327,35 @@ pub fn run_on<'a>(
     let start = cli.project.as_deref().unwrap_or(cwd);
     let color = !cli.no_color && styles.out;
     let mut console = Console::new(out, err, cli.quiet);
-    match cli.command {
-        Command::Init(args) => commands::init::run(start, args.here, &mut console),
+    dispatch(
+        cli.command,
+        start,
+        make_source,
+        color,
+        outside,
+        &mut console,
+    )
+    .unwrap_or_else(|code| code)
+}
+
+/// Run one command. `Err` is the exit code of a project or a `Source` that did not load; the
+/// problems are already printed.
+fn dispatch<'a>(
+    command: Command,
+    start: &Path,
+    make_source: impl MakeSource<'a>,
+    color: bool,
+    outside: Outside,
+    console: &mut Console,
+) -> Result<u8, u8> {
+    let code = match command {
+        Command::Init(args) => commands::init(start, args.here, console),
         Command::SelfCommand(SelfCommand::Update(args)) => {
-            commands::self_update::run(outside.updater, args.check, &mut console)
+            commands::self_update(outside.updater, args.check, console)
         }
         Command::Update(args) => {
+            let project = commands::load(start, console)?;
+            let source = commands::source(make_source, &project, console)?;
             let request = update::Request {
                 ids: &args.ids,
                 git_ref: args.git_ref.as_deref(),
@@ -342,75 +363,91 @@ pub fn run_on<'a>(
                 list: args.list,
             };
             let prompter = args.input.gate(outside.prompter);
-            commands::update::run(start, make_source, &request, prompter, &mut console)
+            commands::update(&*source, &project, &request, prompter, console)
         }
         Command::Config(ConfigCommand::List(args)) => {
-            commands::list::run(start, make_source, args.status, color, &mut console)
+            let project = commands::load(start, console)?;
+            if args.status {
+                let source = commands::source(make_source, &project, console)?;
+                commands::list_status(&*source, &project, color, console)
+            } else {
+                commands::list(&project, color, console)
+            }
         }
         Command::Config(ConfigCommand::Add { repo, flags, input }) => {
+            // With no `refs.toml` yet, `add` makes one (ADR 0005).
+            let project = commands::load_or_create(start, console)?;
+            let source = if flags.no_sync {
+                None
+            } else {
+                Some(commands::source(make_source, &project, console)?)
+            };
             let asking = Asking {
                 prompter: input.gate(outside.prompter),
                 registry: outside.registry,
             };
-            commands::add::run(
-                start,
-                make_source,
+            commands::add(
+                source.as_deref(),
+                &project,
                 &repo,
-                flags.no_sync,
                 &flags.sync_flags(),
                 asking,
-                &mut console,
+                console,
             )
         }
         Command::Config(ConfigCommand::Remove(args)) => edit(
             start,
             make_source,
-            &Edit::Remove(&args.id),
+            Edit::Remove(&args.id),
             &args.flags,
-            &mut console,
-        ),
+            console,
+        )?,
         Command::Config(ConfigCommand::Disable(args)) => edit(
             start,
             make_source,
-            &Edit::Disable(args.target()),
+            Edit::Disable(args.target()),
             &args.flags,
-            &mut console,
-        ),
+            console,
+        )?,
         Command::Config(ConfigCommand::Enable(args)) => edit(
             start,
             make_source,
-            &Edit::Enable(args.target()),
+            Edit::Enable(args.target()),
             &args.flags,
-            &mut console,
-        ),
+            console,
+        )?,
         Command::Source(SourceCommand::Sync(args)) => {
+            let project = commands::load(start, console)?;
+            let source = commands::source(make_source, &project, console)?;
             let flags = SyncFlags {
                 offline: args.offline,
                 force: args.force,
                 check: args.check,
                 ..SyncFlags::default()
             };
-            commands::sync::run(start, make_source, &flags, &mut console)
+            let report = sync::sync(&*source, &project.root, &project.config, &flags);
+            ui::print_report(&report, flags.check, console)
         }
-    }
+    };
+    Ok(code)
 }
 
-/// `remove`, `enable` and `disable`: the same drive over different edits.
+/// `remove`, `enable` and `disable`: an edit of `refs.toml`, then a sync unless `--no-sync`.
 fn edit<'a>(
     start: &Path,
-    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
-    edit: &Edit,
+    make_source: impl MakeSource<'a>,
+    edit: Edit,
     flags: &EditFlags,
     console: &mut Console,
-) -> u8 {
-    commands::edit::run(
-        start,
-        make_source,
-        edit,
-        flags.no_sync,
-        &flags.sync_flags(),
-        console,
-    )
+) -> Result<u8, u8> {
+    let project = commands::load(start, console)?;
+    let report = if flags.no_sync {
+        sync::edit_only(&project.root, &edit)
+    } else {
+        let source = commands::source(make_source, &project, console)?;
+        sync::edit(&*source, &project.root, &edit, &flags.sync_flags())
+    };
+    Ok(ui::print_report(&report, false, console))
 }
 
 fn no_color_env_unset() -> bool {
