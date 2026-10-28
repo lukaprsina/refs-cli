@@ -59,7 +59,7 @@ Claude Code reads AGENTS.md only when there is no CLAUDE.md; to use CLAUDE.md, l
 pub(crate) fn init(start: &Path, here: bool, console: &mut Console) -> u8 {
     let result = project::init_root(start, here)
         .map_err(miette::Report::new)
-        .and_then(|root| crate::init::init(&root).map_err(miette::Report::new));
+        .and_then(|root| crate::init::init(&root));
     match result {
         Ok(done) => {
             if !done.in_git {

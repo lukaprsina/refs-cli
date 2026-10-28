@@ -82,7 +82,7 @@ impl Report {
         self
     }
 
-    fn with(outcome: Outcome, diagnostics: Vec<miette::Report>) -> Report {
+    fn of(outcome: Outcome, diagnostics: Vec<miette::Report>) -> Report {
         Report {
             diagnostics,
             ..Report::new(outcome)
@@ -90,7 +90,7 @@ impl Report {
     }
 
     fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
-        Report::with(Outcome::Failed, vec![miette::Report::new(error)])
+        Report::of(Outcome::Failed, vec![miette::Report::new(error)])
     }
 
     fn with_drift(mut self, drift: Vec<Drift>) -> Report {
@@ -195,7 +195,7 @@ fn plan_and_apply(
     let plan = match plan_stage_two(source, root, config, active, &stage_one.lock, flags.force) {
         Ok(plan) => plan,
         Err(errors) => {
-            let stage_two = Report::with(Outcome::Failed, errors);
+            let stage_two = Report::of(Outcome::Failed, errors);
             return finish(stage_one, drift, stage_two);
         }
     };
@@ -397,13 +397,13 @@ fn stage_two_gate<'a>(
 ) -> Result<Plan<'a>, Report> {
     match plan_stage_two(source, root, config, active, lock, force) {
         Ok(plan) if plan.refusals.is_empty() => Ok(plan),
-        Ok(plan) => Err(Report::with(
+        Ok(plan) => Err(Report::of(
             Outcome::Refused,
             plan.refusals.into_iter().map(miette::Report::new).collect(),
         )
         .with_hint(Hint::ConfigUnchanged)),
         Err(errors) => {
-            Err(Report::with(Outcome::Failed, errors).with_hint(Hint::ConfigUnchangedUnobserved))
+            Err(Report::of(Outcome::Failed, errors).with_hint(Hint::ConfigUnchangedUnobserved))
         }
     }
 }
@@ -429,7 +429,7 @@ fn resolve_all(
     flags: &SyncFlags,
 ) -> Result<Lock, Report> {
     let steps = plan_lock(active, old, &flags.reresolve, flags.offline)
-        .map_err(|refusal| Report::with(Outcome::Refused, vec![refusal.into()]))?;
+        .map_err(|refusal| Report::of(Outcome::Refused, vec![refusal.into()]))?;
     let mut errors: Vec<miette::Report> = Vec::new();
     let mut entries = Vec::new();
     for step in steps {
@@ -457,7 +457,7 @@ fn resolve_all(
     if errors.is_empty() {
         Ok(Lock::new(passed))
     } else {
-        Err(Report::with(Outcome::Failed, errors))
+        Err(Report::of(Outcome::Failed, errors))
     }
 }
 
@@ -514,7 +514,7 @@ fn plan_stage_two<'a>(
 /// `--check`: report what applying the plan would do.
 fn check(plan: Plan, lock_drifted: bool) -> Report {
     let outcome = check_outcome(Some(&plan), lock_drifted);
-    Report::with(
+    Report::of(
         outcome,
         plan.refusals.into_iter().map(miette::Report::new).collect(),
     )

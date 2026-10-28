@@ -1,6 +1,6 @@
 # Diagnostics use miette, with stable codes
 
-Library errors are `thiserror` enums that also derive `miette::Diagnostic`, so `sync` and every edit share one diagnostic contract (severity, help, stable code, optional labelled spans) instead of a bespoke type. Only `refs.toml` validation errors carry source spans; git and I/O failures are plain messages with help text. Tests assert on diagnostic codes, not message strings. In miette 7.6 `Diagnostic::code()` returns `Option<Box<dyn Display>>`, so the assertion is `d.code().unwrap().to_string()`. Codes are named `refs::<area>::<name>`. We chose miette over anyhow (no spans, no severity or help) and color-eyre (aimed at developers reading crash dumps, not end users).
+Library errors are `thiserror` enums that also derive `miette::Diagnostic`, so `sync` and every edit share one diagnostic contract (severity, help, stable code, optional labelled spans) instead of a bespoke type. Only `refs.toml` validation errors carry source spans; git and I/O failures are plain messages with help text. Tests assert on diagnostic codes, not message strings. In miette 7.6 `Diagnostic::code()` returns `Option<Box<dyn Display>>`, so the assertion is `d.code().unwrap().to_string()`. Codes are named `refs::<area>::<name>`. We chose miette over anyhow (no spans, no severity or help) and color-eyre (aimed at developers reading crash dumps, not end users). A function the CLI alone calls, such as `init`, may return a `miette::Report` instead: the codes pass through unchanged.
 
 ## Consequences
 
