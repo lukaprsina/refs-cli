@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use super::command::Cmd;
 use super::remote::{
-    EntryKind, ancestor_dirs, cache_dir_name, commit_unavailable, entry_kind, missing_oids,
-    normalise_url, tree_blobs,
+    EntryKind, ancestor_dirs, cache_dir_name, entry_kind, missing_oids, normalise_url,
+    object_unavailable, tree_blobs,
 };
 use crate::diagnostic::SourceError;
 
@@ -249,7 +249,7 @@ impl Repo {
             .run()
             .map(drop)
             .map_err(|failure| {
-                if commit_unavailable(&failure.stderr) {
+                if object_unavailable(&failure.stderr) {
                     SourceError::CommitUnavailable {
                         url: url.into(),
                         sha: sha.into(),
@@ -344,7 +344,7 @@ impl Repo {
             .run()
             .map(drop)
             .map_err(|failure| {
-                if commit_unavailable(&failure.stderr) {
+                if object_unavailable(&failure.stderr) {
                     SourceError::ObjectsUnavailable
                 } else {
                     failure.into()

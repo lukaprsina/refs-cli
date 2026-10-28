@@ -201,7 +201,7 @@ pub fn tree_blobs(ls_tree_z: &str) -> Vec<String> {
 
 /// Whether a failed `git fetch <id>` means the remote will not send that object (a commit or a
 /// blob): it does not have it, or refuses to serve an object by its id. Git gives no other signal.
-pub fn commit_unavailable(stderr: &str) -> bool {
+pub fn object_unavailable(stderr: &str) -> bool {
     stderr.contains("not our ref") || stderr.contains("unadvertised object")
 }
 

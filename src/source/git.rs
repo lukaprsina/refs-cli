@@ -160,14 +160,14 @@ impl Source for GitSource {
             cache.ensure_commit(url, sha, opts.offline)?;
             cache.prefetch(repo.id, sha, &paths, opts.offline)
         })?;
-        // The Cache lock is let go between the two steps on purpose: removing a Checkout of
-        // another remote takes that remote's lock, and holding two could deadlock.
         // A Checkout of another remote cannot move here: its objects are in another Cache.
         if let Layout::Linked(link) = checkout::layout(&dest, self.cache.root())?
             && link.cache_name != cache_name
         {
             self.remove(repo.id)?;
         }
+        // The Cache lock is let go between the two steps on purpose: removing a Checkout of
+        // another remote takes that remote's lock, and holding two could deadlock.
         self.cache.with_repo(url, sha, opts.offline, |cache| {
             // Checked under the lock, so what is discarded on failure is only what this call made.
             let moving = match checkout::layout(&dest, self.cache.root())? {
