@@ -4,7 +4,8 @@
 
 use std::fs;
 
-use refs_cli::add::pin::{Pinned, Stop, pin};
+use refs_cli::add::pin::{Pinned, pin};
+use refs_cli::failure::Failure;
 use refs_cli::registry::{Ecosystem, Package};
 use refs_cli::source::fake::{FakeSource, Method};
 use refs_cli::ui::{Abort, Say};
@@ -88,7 +89,7 @@ fn run(
     version: Option<&str>,
     dir: &TempDir,
     source: Option<&FakeSource>,
-) -> (Result<Pinned, Stop>, Vec<String>) {
+) -> (Result<Pinned, Failure>, Vec<String>) {
     let mut say = Lines::default();
     let source = source.map(|s| s as &dyn refs_cli::source::Source);
     let pinned = pin(&serde(), version, URL, dir.path(), source, None, &mut say);
@@ -155,7 +156,7 @@ fn a_person_is_asked_before_an_untagged_version_follows_the_default_branch() {
         Some(&mut no),
         &mut say,
     );
-    assert!(matches!(pinned, Err(Stop::Asked(Abort::Cancelled))));
+    assert!(matches!(pinned, Err(Failure::Asked(Abort::Cancelled))));
 }
 
 #[test]
@@ -249,7 +250,7 @@ fn several_versions_are_asked_and_the_one_chosen_is_pinned() {
 fn several_versions_with_no_one_to_ask_are_refused() {
     let dir = project(Some(TWO_SERDES));
     let (pinned, _) = run(None, &dir, Some(&tagged(&["v1.0.200"])));
-    let Err(Stop::Refused(why)) = pinned else {
+    let Err(Failure::Refused(why)) = pinned else {
         panic!("expected a refusal");
     };
     assert_eq!(
@@ -293,7 +294,7 @@ fn another_lockfile_of_the_ecosystem_in_the_same_directory_is_named_as_not_read(
 fn failing_to_list_tags_still_names_what_was_read_first() {
     let dir = project(Some(ONE_SERDE));
     let (pinned, said) = run(None, &dir, Some(&unreachable()));
-    assert!(matches!(pinned, Err(Stop::Source(_))));
+    assert!(matches!(pinned, Err(Failure::Source(_))));
     assert_eq!(said, ["status: `serde` is 1.0.200 in Cargo.lock"]);
 }
 
@@ -301,6 +302,6 @@ fn failing_to_list_tags_still_names_what_was_read_first() {
 fn failing_to_list_tags_for_a_given_version_read_nothing() {
     let dir = project(Some(ONE_SERDE));
     let (pinned, said) = run(Some("1.0.1"), &dir, Some(&unreachable()));
-    assert!(matches!(pinned, Err(Stop::Source(_))));
+    assert!(matches!(pinned, Err(Failure::Source(_))));
     assert!(said.is_empty());
 }
