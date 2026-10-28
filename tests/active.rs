@@ -9,7 +9,7 @@ fn sections(text: &str) -> Vec<(Option<String>, Vec<String>)> {
         .iter()
         .map(|s| {
             (
-                s.group.map(|(id, _)| id.to_string()),
+                s.group.map(|g| g.id.to_string()),
                 s.repos.iter().map(|r| r.id.to_string()).collect(),
             )
         })
