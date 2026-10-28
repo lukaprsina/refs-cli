@@ -189,7 +189,7 @@ fn plan_and_apply(
         .iter()
         .any(|d| matches!(d, Drift::LockMissing | Drift::Added(_)));
     if flags.check && uncovered {
-        let stage_two = Report::new(check_outcome(None, true));
+        let stage_two = Report::new(Outcome::OutOfDate);
         return finish(stage_one, drift, stage_two);
     }
     let plan = match plan_stage_two(source, root, config, active, &stage_one.lock, flags.force) {
@@ -513,7 +513,7 @@ fn plan_stage_two<'a>(
 
 /// `--check`: report what applying the plan would do.
 fn check(plan: Plan, lock_drifted: bool) -> Report {
-    let outcome = check_outcome(Some(&plan), lock_drifted);
+    let outcome = check_outcome(&plan, lock_drifted);
     Report::of(
         outcome,
         plan.refusals.into_iter().map(miette::Report::new).collect(),
@@ -530,10 +530,15 @@ fn apply(
     flags: &SyncFlags,
 ) -> Report {
     let mut diagnostics: Vec<miette::Report> = Vec::new();
-    let mut outcome = plan.applied_outcome();
-    let mut failed_actions = Vec::new();
+    let mut outcome = if plan.refusals.is_empty() {
+        Outcome::InSync
+    } else {
+        Outcome::Refused
+    };
+    // A removed Checkout is not listed in the block, so only a failed Materialise stales it.
+    let mut held_back = false;
     let mut changes = Vec::new();
-    for (i, action) in plan.repos.iter().enumerate() {
+    for action in &plan.repos {
         match run(source, action, flags.offline) {
             Ok(note) => {
                 diagnostics.extend(note.map(miette::Report::new));
@@ -545,11 +550,10 @@ fn apply(
             Err(e) => {
                 diagnostics.push(e);
                 outcome = Outcome::Failed;
-                failed_actions.push(i);
+                held_back |= matches!(action, RepoAction::Materialise { .. });
             }
         }
     }
-    let held_back = plan.holds_back_writes(&failed_actions);
     diagnostics.extend(plan.refusals.into_iter().map(miette::Report::new));
     if !held_back {
         for write in plan.writes {

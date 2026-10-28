@@ -4,7 +4,7 @@ status: accepted
 
 # `sync` is planned in two pure stages, grouped by Repo; `Source` only reports and executes
 
-This is the one statement of how `sync` decides and acts. `plan` decides everything that is a decision: which names are observed, how Lock entries are built, which actions run, what Lock a shrinking edit leaves (`shrunk_lock`). `sync` is a loop: it runs the typed actions through `Source`, collects the failures and builds the `Report` once after stage 2 (a run that stops earlier, in stage 1 or on a rejected edit, reports what stopped it). The follow-up `Hint` is not a decision about the project but a consequence of where a run stopped, so `sync` sets it at that point and `cli` only gives it words. The Plan is grouped by Repo rather than a flat list of actions whose order carried implicit dependencies that only the executor knew, so the failure policy is data.
+This is the one statement of how `sync` decides and acts. `plan` decides everything that is a decision: which names are observed, how Lock entries are built, which actions run, what Lock a shrinking edit leaves (`shrunk_lock`). `sync` is a loop: it runs the typed actions through `Source`, collects the failures and builds the `Report` once after stage 2 (a run that stops earlier, in stage 1 or on a rejected edit, reports what stopped it). The follow-up `Hint` is not a decision about the project but a consequence of where a run stopped, so `sync` sets it at that point and `cli` only gives it words. The Plan is grouped by Repo rather than a flat list of actions whose order carried implicit dependencies that only the executor knew, so the order is data.
 
 ## Decisions in `plan`, mechanics in `Source`
 
@@ -73,7 +73,7 @@ With no active Repo the Plan removes the Managed block, markers included, from e
 
 ## Consequences
 
-- The fake `Source` is stateful and in-memory: seedable with any `Observed`, able to inject failures per Repo and method, and mutated by `materialise` and `remove`. The failure policy is tested as Plan data; the executor tests only check that it does what the Plan says.
+- The fake `Source` is stateful and in-memory: seedable with any `Observed`, able to inject failures per Repo and method, and mutated by `materialise` and `remove`. The order of the Plan is tested as data; the executor tests check what a failure holds back (the block is written only if no `Materialise` failed).
 - The idempotence test is "apply a plan, re-plan, expect it empty".
 - `sync --check` and any advisory read `Checkouts`, `ProjectObserved` and the stage 2 Plan, and see "this Repo will be replaced" instead of a sequence to interpret.
 - Considered and rejected: a flat `Vec<Action>` with explicit `after` edges. It would have described the dependencies instead of removing them, and the only dependency that existed was remove-then-materialise.

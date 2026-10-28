@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-pub(super) const PACKAGE_JSON: &str = "package.json";
+const PACKAGE_JSON: &str = "package.json";
 pub(super) const PYPROJECT: &str = "pyproject.toml";
 pub(super) const PRE_COMMIT: &str = ".pre-commit-config.yaml";
 

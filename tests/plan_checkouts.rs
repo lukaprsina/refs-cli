@@ -506,25 +506,6 @@ fn a_dangling_non_active_name_is_left_alone() {
 }
 
 #[test]
-fn only_actions_on_a_checkout_the_block_lists_gate_the_agent_file_writes() {
-    let config = parse(CONFIG).unwrap();
-    let set = active(&config);
-    let source = FakeSource::new();
-    source.seed("old", at(OTHER_SHA, &[], &[]));
-    let plan = plan_with(&source, &["old"], &project(&set), false);
-    let gates: Vec<(&str, bool)> = plan
-        .repos
-        .iter()
-        .map(|a| match a {
-            RepoAction::Remove { id } => (id.as_str(), a.gates_writes()),
-            RepoAction::Materialise { repo, .. } => (repo.id, a.gates_writes()),
-        })
-        .collect();
-    // `old` is only removed, `a` is materialised and listed in the block
-    assert_eq!(gates, [("old", false), ("a", true)]);
-}
-
-#[test]
 fn a_recreate_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
     let config = parse(CONFIG).unwrap();
     let set = active(&config);
@@ -538,7 +519,6 @@ fn a_recreate_is_one_action_so_a_dangling_checkout_has_no_loose_remove() {
             ..
         }]
     ));
-    assert!(plan.repos[0].gates_writes());
 }
 
 const MARKED: &str = "# Notes\n\n<!-- BEGIN:refs -->\nold\n<!-- END:refs -->\n\nafter\n";

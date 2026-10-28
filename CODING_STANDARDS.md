@@ -8,7 +8,7 @@ A change that alters behaviour updates, in the same change, every doc that descr
 
 ## Where decisions live
 
-`plan` decides and returns data; `sync` runs typed actions through `Source` and reports; `cli` parses arguments into plain values and strings the steps in `commands` together per command (ADR 0006): load the project, build the `Source` if the command syncs, run, and print the typed result through `ui` (`print_report`, `Console`). A `match` on policy in `sync`, `cli` or `commands` belongs in `plan`. The follow-up `Hint` is not policy: it records where a run stopped, so `sync` sets it there. A fact about an edit (the Group it created, whether it gave the config its first active Repo) lives with `Edit` and comes back in `edit::Applied`; `sync` copies it.
+`plan` decides and returns data; `sync` runs typed actions through `Source` and reports; `cli` parses arguments into plain values and strings the steps in `commands` together per command (ADR 0006): load the project, build the `Source` if the command syncs, run, and print the typed result through `ui` (`print_report`, `Console`). A `match` on policy in `sync`, `cli` or `commands` belongs in `plan`; the one exception is `sync::apply` holding back the Agent file writes when a `Materialise` fails. The follow-up `Hint` is not policy: it records where a run stopped, so `sync` sets it there. A fact about an edit (the Group it created, whether it gave the config its first active Repo) lives with `Edit` and comes back in `edit::Applied`; `sync` copies it.
 
 Per command:
 
