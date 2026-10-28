@@ -37,11 +37,6 @@ impl FakeUpdater {
         Self::with(Ok(None))
     }
 
-    /// No install receipt for this binary.
-    pub fn unmanaged() -> Self {
-        Self::with(Err(SelfUpdateError::NotInstalledByInstaller))
-    }
-
     /// The lookup or the install failed with `why`.
     pub fn failing(why: &str) -> Self {
         Self::with(Err(SelfUpdateError::Failed(why.into())))
@@ -64,8 +59,8 @@ impl Updater for FakeUpdater {
     }
 }
 
-/// An updater with no installer behind it, for a run that never self-updates. Unlike
-/// `FakeUpdater::unmanaged` it keeps no calls, so a test can borrow it without a local.
+/// An updater with no installer behind it: no receipt for this binary. It keeps no calls, so a
+/// test can borrow it without a local.
 pub struct Unmanaged;
 
 impl Updater for Unmanaged {
