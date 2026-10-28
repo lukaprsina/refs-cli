@@ -6,7 +6,8 @@ use std::path::Path;
 
 use refs_cli::cli::{Outside, Styled, run_on};
 use refs_cli::diagnostic::SourceError;
-use refs_cli::self_update::fake::{Call, FakeUpdater};
+use refs_cli::self_update::Updater;
+use refs_cli::self_update::fake::{Call, FakeUpdater, Unmanaged};
 use refs_cli::source::Source;
 use tempfile::TempDir;
 
@@ -16,7 +17,7 @@ struct Run {
     err: String,
 }
 
-fn refs(dir: &Path, args: &[&str], updater: &FakeUpdater) -> Run {
+fn refs(dir: &Path, args: &[&str], updater: &dyn Updater) -> Run {
     let args = std::iter::once("refs").chain(args.iter().copied());
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = run_on(
@@ -31,7 +32,7 @@ fn refs(dir: &Path, args: &[&str], updater: &FakeUpdater) -> Run {
         Outside {
             prompter: None,
             updater,
-            registry: &refs_cli::registry::Unavailable,
+            registry: &refs_cli::registry::fake::Unused,
         },
     );
     Run {
@@ -113,7 +114,7 @@ fn self_update_on_a_binary_the_installer_did_not_put_there_says_how_to_update() 
     let dir = TempDir::new().unwrap();
 
     for args in [&["self", "update"][..], &["self", "update", "--check"]] {
-        let run = refs(dir.path(), args, &FakeUpdater::unmanaged());
+        let run = refs(dir.path(), args, &Unmanaged);
 
         assert_eq!(run.code, 1, "{args:?}");
         assert!(

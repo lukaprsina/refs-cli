@@ -11,7 +11,7 @@ use common::git;
 use refs_cli::config::{Repo, RepoRef, parse};
 use refs_cli::source::fake::FakeSource;
 use refs_cli::source::git::GitSource;
-use refs_cli::source::{MaterialiseOpts, Observed, Pin, Source};
+use refs_cli::source::{Observed, Pin, Source};
 use tempfile::TempDir;
 
 /// The one Repo every row is about, and the paths the config asks for; `OTHER_PATHS` is what a
@@ -125,7 +125,7 @@ impl GitHarness {
                     repo: &repo,
                 },
                 pin,
-                MaterialiseOpts::default(),
+                false,
             )
             .unwrap();
     }
@@ -303,7 +303,7 @@ fn materialise_rows<H: Harness>(new: &impl Fn() -> H) {
                 repo: &repo,
             },
             &first,
-            MaterialiseOpts::default(),
+            false,
         );
         let (ok, left) = match state {
             Observed::Foreign | Observed::Dangling => (false, state),

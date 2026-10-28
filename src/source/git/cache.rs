@@ -41,6 +41,13 @@ fn failed(message: String) -> SourceError {
     SourceError::Failed { message }
 }
 
+fn not_cached(url: &str, sha: &str) -> SourceError {
+    SourceError::NotCached {
+        url: url.into(),
+        sha: sha.into(),
+    }
+}
+
 fn io(what: &str, path: &Path, source: std::io::Error) -> SourceError {
     failed(format!("{what} {}: {source}", path.display()))
 }
@@ -99,9 +106,9 @@ impl Cache {
         f()
     }
 
-    /// Run `f` on the Cache repository for `url` while holding its lock. A missing repository
-    /// is created empty, unless `offline`: then it is an error naming `sha`, the commit the
-    /// caller wanted.
+    /// Run `f` on the Cache repository for `url` while holding its lock, once it has `sha` as a
+    /// commit. A missing repository is created empty and the commit fetched, unless `offline`:
+    /// then either is an error naming `sha`.
     pub fn with_repo<T>(
         &self,
         url: &str,
@@ -116,10 +123,7 @@ impl Cache {
             if dir.exists() {
                 Self::check_url(&url_file, url)?;
             } else if offline {
-                return Err(SourceError::NotCached {
-                    url: url.into(),
-                    sha: sha.into(),
-                });
+                return Err(not_cached(url, sha));
             } else {
                 self.init_repo(url, &name)?;
             }
@@ -127,7 +131,9 @@ impl Cache {
                 crate::atomic::write(&url_file, &format!("{url}\n"))
                     .map_err(|e| io("could not write", &url_file, e))?;
             }
-            f(&Repo { dir })
+            let repo = Repo { dir };
+            repo.ensure_commit(url, sha, offline)?;
+            f(&repo)
         })
     }
 
@@ -213,14 +219,11 @@ impl Repo {
     /// Make sure `sha` is a commit in the repository, fetching it (with its trees, no
     /// blobs) unless `offline`. A tag object is refused: `worktree add` and `ls-tree` would
     /// peel it silently, so the Lock would name a different commit than the one checked out.
-    pub fn ensure_commit(&self, url: &str, sha: &str, offline: bool) -> Result<(), SourceError> {
+    fn ensure_commit(&self, url: &str, sha: &str, offline: bool) -> Result<(), SourceError> {
         let mut kind = self.object_type(sha);
         if kind.is_none() {
             if offline {
-                return Err(SourceError::NotCached {
-                    url: url.into(),
-                    sha: sha.into(),
-                });
+                return Err(not_cached(url, sha));
             }
             self.fetch_commit(url, sha)?;
             kind = self.object_type(sha);

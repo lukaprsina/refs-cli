@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use super::url::{clean, on_forge};
-use super::used::{poetry, uv};
 use super::{Answer, Found, Spec, non_blank, parse};
 
 pub(super) const SPEC: Spec = Spec {
@@ -14,7 +13,6 @@ pub(super) const SPEC: Spec = Spec {
     registry: "PyPI",
     url: "https://pypi.org/pypi/{name}/json",
     found,
-    lockfiles: &[("uv.lock", uv::used), ("poetry.lock", poetry::used)],
 };
 
 #[derive(Deserialize)]

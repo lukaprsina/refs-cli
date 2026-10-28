@@ -22,7 +22,6 @@ pub mod registry;
 pub mod render;
 pub mod self_update;
 pub mod source;
-pub mod status;
 pub mod sync;
 pub mod tooling;
 pub mod ui;

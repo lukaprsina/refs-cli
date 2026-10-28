@@ -48,7 +48,7 @@ impl Project {
         run_with(
             args.map(Into::into),
             &sub,
-            |_, _| Ok(Box::new(&self.source)),
+            |_, _| Ok(Box::new(self.source.clone())),
             &mut std::io::sink(),
             &mut std::io::sink(),
         )
@@ -133,11 +133,10 @@ fn offline_reaches_the_source_from_sync_and_from_an_edit_that_syncs() {
 #[test]
 fn a_usage_error_is_styled_only_for_a_terminal() {
     use refs_cli::cli::{Outside, Styled, run_on, run_with};
-    use refs_cli::self_update::Unmanaged;
     use refs_cli::source::Source;
     let p = Project::new(AB);
     let args = || ["refs", "sync", "--frobnicate"].map(std::ffi::OsString::from);
-    let source = |_: &_, _: &_| Ok(Box::new(&p.source) as Box<dyn Source>);
+    let source = |_: &_, _: &_| Ok(Box::new(p.source.clone()) as Box<dyn Source>);
 
     let (mut out, mut plain) = (Vec::new(), Vec::new());
     assert_eq!(
@@ -157,11 +156,7 @@ fn a_usage_error_is_styled_only_for_a_terminal() {
             &mut out,
             &mut styled,
             terminal,
-            Outside {
-                prompter: None,
-                updater: &Unmanaged,
-                registry: &refs_cli::registry::Unavailable,
-            }
+            Outside::offline(None)
         ),
         2
     );
@@ -178,7 +173,6 @@ fn a_usage_error_is_styled_only_for_a_terminal() {
 /// `refs list` on a project with one disabled repo, with the streams styled as given.
 fn list_output(args: &[&str], terminal: refs_cli::cli::Styled) -> String {
     use refs_cli::cli::{Outside, run_on};
-    use refs_cli::self_update::Unmanaged;
     use refs_cli::source::Source;
     let p = Project::new(
         "[repos.a]
@@ -191,7 +185,7 @@ enabled = false
     let args = std::iter::once("refs")
         .chain(["list"])
         .chain(args.iter().copied());
-    let source = |_: &_, _: &_| Ok(Box::new(&p.source) as Box<dyn Source>);
+    let source = |_: &_, _: &_| Ok(Box::new(p.source.clone()) as Box<dyn Source>);
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = run_on(
         args.map(Into::into),
@@ -200,11 +194,7 @@ enabled = false
         &mut out,
         &mut err,
         terminal,
-        Outside {
-            prompter: None,
-            updater: &Unmanaged,
-            registry: &refs_cli::registry::Unavailable,
-        },
+        Outside::offline(None),
     );
     assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
     String::from_utf8(out).unwrap()
@@ -280,7 +270,7 @@ fn project_flag_overrides_the_directory_search() {
     let code = run(
         ["refs", "--project", root, "sync"].map(Into::into),
         elsewhere.path(),
-        |_, _| Ok(Box::new(&p.source)),
+        |_, _| Ok(Box::new(p.source.clone())),
     );
 
     assert_eq!(code, 0);

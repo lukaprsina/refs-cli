@@ -50,7 +50,7 @@ impl Project {
         let code = run_with(
             args.map(Into::into),
             self.dir.path(),
-            |_, _| Ok(Box::new(&self.source)),
+            |_, _| Ok(Box::new(self.source.clone())),
             &mut out,
             &mut err,
         );

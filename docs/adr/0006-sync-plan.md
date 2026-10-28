@@ -16,7 +16,7 @@ This is the one statement of how `sync` decides and acts. `plan` decides everyth
 
 Which Repos re-resolve is a pure decision, but the pins it produces exist only after `resolve` has run, so one `plan` over (config, Lock, `Observed`) cannot also decide the checkouts. Planning is two pure functions with the executor between them.
 
-1. `plan_lock(active, lock, flags)` decides which Repos to resolve or reuse (pin reuse keyed on url, ref and source; the Repos `update` names; newly active). Verification is not a decision: the executor verifies every active Repo. `lock_drift(active, lock)` is the stale check on its own, which `sync --check` needs. With `--offline`, a missing or stale Lock is a refusal here.
+1. `plan_lock(active, lock, reresolve, offline)` decides which Repos to resolve or reuse (pin reuse keyed on url, ref and source; the Repos `update` names; newly active). Verification is not a decision: the executor verifies every active Repo. `lock_drift(active, lock)` is the stale check on its own, which `sync --check` needs. With `--offline`, a missing or stale Lock is a refusal here.
 2. `plan_checkouts(active, lock, checkouts, project, force)` returns a `Plan`.
 
 There is no `refs lock` (ADR 0013). `sync` always runs stage 1 (with a current Lock every step is a reuse, but every Repo is verified, and the Lock is written only if it changed), then stage 2. `sync --check` runs stage 2 only, against the existing Lock; a missing or stale Lock is out of date without resolving.
@@ -24,7 +24,7 @@ There is no `refs lock` (ADR 0013). `sync` always runs stage 1 (with a current L
 ## The Plan is grouped by Repo
 
 ```
-Plan { repos: Vec<RepoAction>, writes: Vec<WriteAgentFile>, exclude: Option<ExcludeAction>, refusals: Vec<Refusal> }
+Plan { repos: Vec<RepoAction>, writes: Vec<WriteAgentFile>, exclude: Exclude, refusals: Vec<Refusal> }
 ```
 
 - A `RepoAction` is one unit per Repo: `Materialise { repo, pin, placement }` (`Create`, `Move`, `Recreate` or `Overwrite`, decided in `plan` from what was observed; the last two remove the Checkout first: a Dangling one, or a dirty one under `--force`) and `Remove { id }` (a Checkout of a name that is no longer active; a Checkout can outlive its config entry, so this takes an id). Actions for active Repos carry the `RepoRef`, so the executor never looks a Repo up again.
@@ -49,7 +49,7 @@ The format version is 1.
 ## Verification and offline
 
 - `verify` runs for every active Repo on `sync`, against the Cache, fetching commits and trees only on a miss. `start` and `paths` edits do not stale the Lock, so change detection cannot skip them. `--check` never verifies.
-- `plan` ignores `--offline` in stage 2. `materialise(opts.offline)` errors, naming a missing object; other Repos proceed like any failure. There is no all-or-nothing pre-check, so an offline failure may leave some Repos updated. `--offline --check` never needs the Cache.
+- `plan` ignores `--offline` in stage 2. `materialise(offline)` errors, naming a missing object; other Repos proceed like any failure. There is no all-or-nothing pre-check, so an offline failure may leave some Repos updated. `--offline --check` never needs the Cache.
 
 ## Failures and exit codes
 

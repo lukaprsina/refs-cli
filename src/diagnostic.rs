@@ -474,18 +474,6 @@ pub enum Note {
     EditorHint { references_dir: String },
 }
 
-/// Why `refs init` stopped.
-#[derive(Debug, Error, Diagnostic)]
-pub enum InitError {
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    File(#[from] FileError),
-
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Invalid(#[from] ConfigErrors),
-}
-
 /// A problem with the Project directory or its output paths.
 #[derive(Debug, Error, Diagnostic)]
 pub enum ProjectError {

@@ -6,7 +6,6 @@ use std::fs;
 use std::path::Path;
 
 use refs_cli::cli::{Outside, Styled, run_on};
-use refs_cli::self_update::Unmanaged;
 use refs_cli::source::fake::{Call, FakeSource, Method};
 use refs_cli::ui::Prompter;
 use tempfile::TempDir;
@@ -74,15 +73,11 @@ fn add_foo(
             .chain(args)
             .map(Into::into),
         dir,
-        |_, _| Ok(Box::new(source)),
+        |_, _| Ok(Box::new(source.clone())),
         &mut out,
         &mut err,
         Styled::default(),
-        Outside {
-            prompter,
-            updater: &Unmanaged,
-            registry: &refs_cli::registry::Unavailable,
-        },
+        Outside::offline(prompter),
     );
     Run {
         code,

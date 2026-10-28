@@ -14,7 +14,7 @@ use refs_cli::config::{Repo, RepoRef, parse};
 use refs_cli::diagnostic::SourceError;
 use refs_cli::source::git::GitSource;
 use refs_cli::source::git::remote::cache_dir_name;
-use refs_cli::source::{MaterialiseOpts, Observed, Pin, Source, VerifyOpts};
+use refs_cli::source::{Observed, Pin, Source};
 use tempfile::TempDir;
 
 fn code(e: impl Diagnostic) -> String {
@@ -185,7 +185,7 @@ fn at<'a>(id: &'a str, repo: &'a Repo) -> RepoRef<'a> {
 
 fn verify(source: &GitSource, remote: &Remote, repo: &Repo, offline: bool) -> Result<(), String> {
     source
-        .verify(at("r", repo), &remote.pin(), VerifyOpts { offline })
+        .verify(at("r", repo), &remote.pin(), offline)
         .map_err(code)
 }
 
@@ -197,7 +197,7 @@ fn materialise(
     offline: bool,
 ) -> Result<(), String> {
     source
-        .materialise(at(id, repo), &remote.pin(), MaterialiseOpts { offline })
+        .materialise(at(id, repo), &remote.pin(), offline)
         .map_err(code)
 }
 
@@ -252,9 +252,7 @@ mod verify {
         let old = remote.pin();
         remote.advance();
 
-        source
-            .materialise(at("old", &repo), &old, MaterialiseOpts::default())
-            .unwrap();
+        source.materialise(at("old", &repo), &old, false).unwrap();
         materialise(&source, "new", &remote, &repo, ONLINE).unwrap();
 
         assert_eq!(
@@ -285,7 +283,7 @@ mod verify {
         let repo = remote.repo(&["docs/nope"], &[]);
         let err = env
             .source()
-            .verify(at("r", &repo), &remote.pin(), VerifyOpts::default())
+            .verify(at("r", &repo), &remote.pin(), false)
             .unwrap_err();
         assert_eq!(err.code().unwrap().to_string(), "refs::git::path_missing");
         let message = err.to_string();
@@ -335,7 +333,7 @@ mod verify {
 
         let err = env
             .source()
-            .verify(at("r", &repo), &pin, VerifyOpts::default())
+            .verify(at("r", &repo), &pin, false)
             .unwrap_err();
         assert_eq!(code(err), "refs::git::unpeeled_tag");
     }
@@ -347,13 +345,9 @@ mod verify {
         let repo = remote.repo(&[], &[]);
         let source = env.source();
 
-        let err = source
-            .verify(at("r", &repo), &pin, VerifyOpts::default())
-            .unwrap_err();
+        let err = source.verify(at("r", &repo), &pin, false).unwrap_err();
         assert_eq!(code(err), "refs::git::unsafe_input");
-        let err = source
-            .materialise(at("r", &repo), &pin, MaterialiseOpts::default())
-            .unwrap_err();
+        let err = source.materialise(at("r", &repo), &pin, false).unwrap_err();
         assert_eq!(code(err), "refs::git::unsafe_input");
         assert!(!env.cache_repo(&remote).exists());
     }
@@ -366,7 +360,7 @@ mod verify {
 
         let err = env
             .source()
-            .verify(at("r", &repo), &pin, VerifyOpts::default())
+            .verify(at("r", &repo), &pin, false)
             .unwrap_err();
         assert_eq!(code(err), "refs::git::commit_unavailable");
     }
@@ -438,11 +432,7 @@ mod materialise {
         verify(&source, &remote, &repo, ONLINE).unwrap();
 
         let err = source
-            .materialise(
-                at("r", &repo),
-                &remote.pin(),
-                MaterialiseOpts { offline: OFFLINE },
-            )
+            .materialise(at("r", &repo), &remote.pin(), OFFLINE)
             .unwrap_err();
 
         let SourceError::ObjectMissing { repo: named, oid } = err else {
@@ -766,9 +756,7 @@ fn a_real_remote_serves_a_blobless_fetch() {
     let source = env.source();
 
     let pin = source.resolve(at("r", &repo)).unwrap();
-    source
-        .materialise(at("r", &repo), &pin, MaterialiseOpts::default())
-        .unwrap();
+    source.materialise(at("r", &repo), &pin, false).unwrap();
 
     let url = "https://github.com/octocat/Hello-World";
     let cache = env.cache().join("git").join(cache_dir_name(url));

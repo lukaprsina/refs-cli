@@ -4,11 +4,19 @@
 pub mod fake;
 pub mod git;
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Repo, RepoRef, is_full_sha};
+use crate::config::{Config, Repo, RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
 use crate::lock::Field;
+
+/// How a run gets its `Source`, once the project is loaded: it needs the project's root and
+/// config (the real one wants its `references_dir`). Tests return the fake.
+pub trait MakeSource: FnOnce(&Path, &Config) -> Result<Box<dyn Source>, SourceError> {}
+
+impl<F> MakeSource for F where F: FnOnce(&Path, &Config) -> Result<Box<dyn Source>, SourceError> {}
 
 /// A resolved identity of a Repo: a commit of a git remote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,20 +99,6 @@ pub enum Observed {
     },
 }
 
-/// Options for `materialise`: `offline` forbids network access. `force` is `plan`'s
-/// business (ADR 0006), so `Source` never sees it.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MaterialiseOpts {
-    pub offline: bool,
-}
-
-/// Options for `verify`: `offline` forbids network access, so a Commit missing from the
-/// Cache is an error instead of a fetch.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct VerifyOpts {
-    pub offline: bool,
-}
-
 /// What a remote holds at a ref: the Pin it resolved to and every path of the commit's tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outline {
@@ -116,15 +110,11 @@ pub trait Source {
     /// Ref to commit. Asks the remote; never creates a Checkout.
     fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError>;
     /// Check that `paths` and `start` exist at the pinned commit. Fetches the commit and its
-    /// trees on a Cache miss, unless `opts.offline`.
-    fn verify(&self, repo: RepoRef, pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError>;
-    /// Fetch the pinned commit and create or move the Checkout to it.
-    fn materialise(
-        &self,
-        repo: RepoRef,
-        pin: &Pin,
-        opts: MaterialiseOpts,
-    ) -> Result<(), SourceError>;
+    /// trees on a Cache miss, unless `offline`.
+    fn verify(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError>;
+    /// Fetch the pinned commit and create or move the Checkout to it. `offline` forbids network
+    /// access. `force` is `plan`'s business (ADR 0006), so `Source` never sees it.
+    fn materialise(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError>;
     /// The names of the remote's tags, sorted. Asks the remote (one round trip); never touches
     /// the Cache or a Checkout. Takes a URL, as the Repo it is for is not in the config yet.
     fn tags(&self, url: &str) -> Result<Vec<String>, SourceError>;

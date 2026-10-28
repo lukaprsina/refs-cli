@@ -1,6 +1,6 @@
 //! The command line: parsing and the entry points. What to do is decided by `sync`, `plan`, `add`
-//! and `update`; this module parses the arguments into plain values and calls one driver in
-//! `commands`, which reports through `ui`.
+//! and `update`; this module parses the arguments into plain values and, in `dispatch`, strings the steps
+//! in `commands` together for each command, which reports through `ui`.
 //!
 //! The `Source` is injected into `run` as a function of the loaded project (the real one
 //! needs its root and `references_dir`): tests return the fake in-process (the `testing`
@@ -15,13 +15,11 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::add::Asking;
 use crate::commands;
-use crate::config::Config;
-use crate::diagnostic::SourceError;
 use crate::edit::{AddRepo, Edit, Target};
 use crate::registry::{self, Registry};
 use crate::self_update::{self, Updater};
-use crate::source::Source;
-use crate::sync::SyncFlags;
+use crate::source::MakeSource;
+use crate::sync::{self, SyncFlags};
 use crate::ui::{self, Console, EXIT_ERROR, Prompter};
 use crate::update;
 
@@ -41,10 +39,9 @@ pub struct Cli {
     command: Command,
 }
 
-/// The commands, by what they need: `init` and `self` run where there may be no project
-/// (`self` is about the program, not a project), the config commands read and edit
-/// `refs.toml` and ask for a `Source` only to sync after an edit (unless `--no-sync`) or to
-/// show `list --status`, and the rest act on the project through one.
+/// The commands. `init` and `self` run where there may be no project (`self` is about the
+/// program, not a project); the ones that edit `refs.toml` ask for a `Source` only to sync
+/// afterwards (unless `--no-sync`), and `list --status` only to show the states.
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Set up a project: refs.toml, the managed block and the git exclude rule
@@ -58,14 +55,6 @@ A repo that cannot be assessed, or has uncommitted changes, is skipped and named
 are moved. A failure the remote causes after that, when the edited config is resolved and \
 verified, blocks the whole run.")]
     Update(UpdateArgs),
-    #[command(flatten)]
-    Config(ConfigCommand),
-    #[command(flatten)]
-    Source(SourceCommand),
-}
-
-#[derive(Debug, Subcommand)]
-enum ConfigCommand {
     /// List the repos in refs.toml
     List(ListArgs),
     /// Add a repo to refs.toml, lock it and sync
@@ -83,10 +72,6 @@ enum ConfigCommand {
     Disable(ToggleArgs),
     /// Track a disabled repo or group again
     Enable(ToggleArgs),
-}
-
-#[derive(Debug, Subcommand)]
-enum SourceCommand {
     /// Make the checkouts and the managed block match refs.lock
     Sync(SyncArgs),
 }
@@ -221,10 +206,10 @@ struct SyncArgs {
 /// Run `refs` with `args` (the first is the program name) from `cwd`, and return the exit
 /// code: 0 in sync, 1 error or refusal, 2 usage, 3 `--check` found drift. `make_source` is
 /// given the project root and config once they are loaded.
-pub fn run<'a>(
+pub fn run(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
-    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    make_source: impl MakeSource,
 ) -> u8 {
     use std::io::IsTerminal;
     let styled = no_color_env_unset();
@@ -261,10 +246,11 @@ pub struct Styled {
 
 /// `run` with the two output streams given, so a test can read what went to each. Neither is
 /// a terminal, so clap's messages are plain.
-pub fn run_with<'a>(
+#[cfg(any(test, feature = "testing"))]
+pub fn run_with(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
-    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    make_source: impl MakeSource,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> u8 {
@@ -275,11 +261,7 @@ pub fn run_with<'a>(
         out,
         err,
         Styled::default(),
-        Outside {
-            prompter: None,
-            updater: &self_update::Unmanaged,
-            registry: &registry::Unavailable,
-        },
+        Outside::offline(None),
     )
 }
 
@@ -293,11 +275,24 @@ pub struct Outside<'a> {
     pub registry: &'a dyn Registry,
 }
 
+impl<'a> Outside<'a> {
+    /// Nothing outside the run: no self update, no registry package. For tests that script
+    /// neither.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn offline(prompter: Option<&'a mut dyn Prompter>) -> Self {
+        Outside {
+            prompter,
+            updater: &self_update::fake::Unmanaged,
+            registry: &registry::fake::Unused,
+        }
+    }
+}
+
 /// `run_with`, told which streams are styled and given what the run reaches outside.
-pub fn run_on<'a>(
+pub fn run_on(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
-    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
+    make_source: impl MakeSource,
     out: &mut dyn Write,
     err: &mut dyn Write,
     styles: Styled,
@@ -329,12 +324,35 @@ pub fn run_on<'a>(
     let start = cli.project.as_deref().unwrap_or(cwd);
     let color = !cli.no_color && styles.out;
     let mut console = Console::new(out, err, cli.quiet);
-    match cli.command {
-        Command::Init(args) => commands::init::run(start, args.here, &mut console),
+    dispatch(
+        cli.command,
+        start,
+        make_source,
+        color,
+        outside,
+        &mut console,
+    )
+    .unwrap_or_else(|code| code)
+}
+
+/// Run one command. `Err` is the exit code of a project or a `Source` that did not load; the
+/// problems are already printed.
+fn dispatch(
+    command: Command,
+    start: &Path,
+    make_source: impl MakeSource,
+    color: bool,
+    outside: Outside,
+    console: &mut Console,
+) -> Result<u8, u8> {
+    let code = match command {
+        Command::Init(args) => commands::init(start, args.here, console),
         Command::SelfCommand(SelfCommand::Update(args)) => {
-            commands::self_update::run(outside.updater, args.check, &mut console)
+            commands::self_update(outside.updater, args.check, console)
         }
         Command::Update(args) => {
+            let project = commands::load(start, console)?;
+            let source = commands::source(make_source, &project, console)?;
             let request = update::Request {
                 ids: &args.ids,
                 git_ref: args.git_ref.as_deref(),
@@ -342,75 +360,91 @@ pub fn run_on<'a>(
                 list: args.list,
             };
             let prompter = args.input.gate(outside.prompter);
-            commands::update::run(start, make_source, &request, prompter, &mut console)
+            commands::update(&*source, &project, &request, prompter, console)
         }
-        Command::Config(ConfigCommand::List(args)) => {
-            commands::list::run(start, make_source, args.status, color, &mut console)
+        Command::List(args) => {
+            let project = commands::load(start, console)?;
+            let source = if args.status {
+                Some(commands::source(make_source, &project, console)?)
+            } else {
+                None
+            };
+            commands::list(&project, source.as_deref(), color, console)
         }
-        Command::Config(ConfigCommand::Add { repo, flags, input }) => {
+        Command::Add { repo, flags, input } => {
+            // With no `refs.toml` yet, `add` makes one (ADR 0005).
+            let project = commands::load_or_create(start, console)?;
+            let source = if flags.no_sync {
+                None
+            } else {
+                Some(commands::source(make_source, &project, console)?)
+            };
             let asking = Asking {
                 prompter: input.gate(outside.prompter),
                 registry: outside.registry,
             };
-            commands::add::run(
-                start,
-                make_source,
+            commands::add(
+                source.as_deref(),
+                &project,
                 &repo,
-                flags.no_sync,
                 &flags.sync_flags(),
                 asking,
-                &mut console,
+                console,
             )
         }
-        Command::Config(ConfigCommand::Remove(args)) => edit(
+        Command::Remove(args) => edit(
             start,
             make_source,
-            &Edit::Remove(&args.id),
+            Edit::Remove(&args.id),
             &args.flags,
-            &mut console,
-        ),
-        Command::Config(ConfigCommand::Disable(args)) => edit(
+            console,
+        )?,
+        Command::Disable(args) => edit(
             start,
             make_source,
-            &Edit::Disable(args.target()),
+            Edit::Disable(args.target()),
             &args.flags,
-            &mut console,
-        ),
-        Command::Config(ConfigCommand::Enable(args)) => edit(
+            console,
+        )?,
+        Command::Enable(args) => edit(
             start,
             make_source,
-            &Edit::Enable(args.target()),
+            Edit::Enable(args.target()),
             &args.flags,
-            &mut console,
-        ),
-        Command::Source(SourceCommand::Sync(args)) => {
+            console,
+        )?,
+        Command::Sync(args) => {
+            let project = commands::load(start, console)?;
+            let source = commands::source(make_source, &project, console)?;
             let flags = SyncFlags {
                 offline: args.offline,
                 force: args.force,
                 check: args.check,
                 ..SyncFlags::default()
             };
-            commands::sync::run(start, make_source, &flags, &mut console)
+            let report = sync::sync(&*source, &project.root, &project.config, &flags);
+            ui::print_report(&report, flags.check, console)
         }
-    }
+    };
+    Ok(code)
 }
 
-/// `remove`, `enable` and `disable`: the same drive over different edits.
-fn edit<'a>(
+/// `remove`, `enable` and `disable`: an edit of `refs.toml`, then a sync unless `--no-sync`.
+fn edit(
     start: &Path,
-    make_source: impl FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>,
-    edit: &Edit,
+    make_source: impl MakeSource,
+    edit: Edit,
     flags: &EditFlags,
     console: &mut Console,
-) -> u8 {
-    commands::edit::run(
-        start,
-        make_source,
-        edit,
-        flags.no_sync,
-        &flags.sync_flags(),
-        console,
-    )
+) -> Result<u8, u8> {
+    let project = commands::load(start, console)?;
+    let report = if flags.no_sync {
+        sync::edit_only(&project.root, &edit)
+    } else {
+        let source = commands::source(make_source, &project, console)?;
+        sync::edit(&*source, &project.root, &edit, &flags.sync_flags())
+    };
+    Ok(ui::print_report(&report, false, console))
 }
 
 fn no_color_env_unset() -> bool {

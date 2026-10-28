@@ -19,7 +19,6 @@ mod ask;
 mod assess;
 
 use crate::active::active;
-use crate::add::pin::Stop;
 use crate::config::Config;
 use crate::edit::{Edit, RepoChange};
 use crate::failure::Failure;
@@ -143,20 +142,20 @@ pub fn run(
         if !chosen.contains(&id) {
             continue;
         }
-        match assessing.settle(candidate) {
-            Ok(moved) => moves.extend(moved),
-            Err(stop) => {
-                let why = match stop {
-                    Stop::Asked(abort) => return Err(Failure::Asked(abort)),
-                    Stop::Source(e) => e.to_string(),
-                    Stop::Refused(why) => why,
-                };
-                assessing
-                    .say
-                    .shown(format!("`{id}` was not updated: {why}"));
-                skipped += 1;
+        let why = match assessing.settle(candidate) {
+            Ok(moved) => {
+                moves.extend(moved);
+                continue;
             }
-        }
+            Err(Failure::Source(e)) => e.to_string(),
+            Err(Failure::Refused(why)) => why,
+            // `Asked` ends the run; `settle` returns no other kind.
+            Err(other) => return Err(other),
+        };
+        assessing
+            .say
+            .shown(format!("`{id}` was not updated: {why}"));
+        skipped += 1;
     }
     if moves.is_empty() {
         return Ok(Done {

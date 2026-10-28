@@ -46,20 +46,6 @@ pub trait Updater {
     fn install(&self) -> Result<Option<Installed>, SelfUpdateError>;
 }
 
-/// The updater for a run with no installer behind it, such as `cli::run_with`: it never
-/// reaches the network, and finds no receipt.
-pub struct Unmanaged;
-
-impl Updater for Unmanaged {
-    fn is_update_available(&self) -> Result<bool, SelfUpdateError> {
-        Err(SelfUpdateError::NotInstalledByInstaller)
-    }
-
-    fn install(&self) -> Result<Option<Installed>, SelfUpdateError> {
-        Err(SelfUpdateError::NotInstalledByInstaller)
-    }
-}
-
 /// The real updater: axoupdater, which reads the receipt the cargo-dist installer wrote and
 /// asks GitHub Releases for the latest release.
 pub struct Axo;

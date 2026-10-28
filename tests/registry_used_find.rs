@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
-use refs_cli::registry::used::{Lookup, find};
+use refs_cli::registry::used::{Answer, answer};
 use refs_cli::registry::{Ecosystem, Package};
 use tempfile::TempDir;
 
@@ -45,16 +45,23 @@ fn canonical(path: &Path) -> PathBuf {
     dunce::canonicalize(path).unwrap()
 }
 
-fn versions(lookup: &Lookup) -> Vec<&str> {
-    match lookup {
-        Lookup::Found(found) => found.used.iter().map(|u| u.version.as_str()).collect(),
+/// The file `answer` read, as `answer` names it, and its versions.
+fn read(answer: &Answer) -> (&str, Vec<&str>) {
+    match answer {
+        Answer::Absent { file, .. } => (file, vec![]),
+        Answer::One { file, version, .. } => (file, vec![version]),
+        Answer::Several { file, versions, .. } => {
+            (file, versions.iter().map(String::as_str).collect())
+        }
         other => panic!("expected a lockfile, got {other:?}"),
     }
 }
 
-fn found_file(lookup: &Lookup) -> PathBuf {
-    match lookup {
-        Lookup::Found(found) => found.file.clone(),
+fn ignored(answer: &Answer) -> &[String] {
+    match answer {
+        Answer::Absent { ignored, .. }
+        | Answer::One { ignored, .. }
+        | Answer::Several { ignored, .. } => ignored,
         other => panic!("expected a lockfile, got {other:?}"),
     }
 }
@@ -69,14 +76,20 @@ fn worktree() -> (TempDir, PathBuf, PathBuf) {
     (repo, top, project)
 }
 
+fn ask(ecosystem: Ecosystem, name: &str, project: &Path) -> Answer {
+    answer(&Package::new(ecosystem, name), project)
+}
+
 #[test]
 fn a_lockfile_further_up_is_found_as_far_as_the_worktree_top() {
     let (_repo, top, project) = worktree();
     fs::write(top.join("Cargo.lock"), CARGO_LOCK).unwrap();
 
+    let found = ask(Ecosystem::Cargo, "serde", &project);
+
     assert_eq!(
-        found_file(&find(&Package::new(Ecosystem::Cargo, "serde"), &project)),
-        top.join("Cargo.lock")
+        read(&found),
+        (top.join("Cargo.lock").to_str().unwrap(), vec!["1.0.200"])
     );
 }
 
@@ -87,20 +100,12 @@ fn outside_a_worktree_only_the_project_directory_is_read() {
     let project = dir.path().join("sub");
     fs::create_dir_all(&project).unwrap();
 
-    assert!(matches!(
-        find(
-            &Package::new(Ecosystem::Cargo, "serde"),
-            &canonical(&project)
-        ),
-        Lookup::Missing
-    ));
     assert_eq!(
-        versions(&find(
-            &Package::new(Ecosystem::Cargo, "serde"),
-            &canonical(dir.path())
-        )),
-        ["1.0.200"]
+        ask(Ecosystem::Cargo, "serde", &canonical(&project)),
+        Answer::Missing
     );
+    let found = ask(Ecosystem::Cargo, "serde", &canonical(dir.path()));
+    assert_eq!(read(&found), ("Cargo.lock", vec!["1.0.200"]));
 }
 
 #[test]
@@ -109,10 +114,9 @@ fn the_nearest_lockfile_wins_even_when_it_lacks_the_package() {
     fs::write(top.join("Cargo.lock"), CARGO_LOCK).unwrap();
     fs::write(project.join("Cargo.lock"), "version = 4\n").unwrap();
 
-    let lookup = find(&Package::new(Ecosystem::Cargo, "serde"), &project);
+    let found = ask(Ecosystem::Cargo, "serde", &project);
 
-    assert_eq!(found_file(&lookup), project.join("Cargo.lock"));
-    assert_eq!(versions(&lookup), Vec::<&str>::new());
+    assert_eq!(read(&found), ("Cargo.lock", vec![]));
 }
 
 #[test]
@@ -120,12 +124,11 @@ fn of_uv_lock_and_poetry_lock_in_one_directory_uv_lock_is_read() {
     let (_repo, _top, project) = worktree();
     fs::write(project.join("poetry.lock"), POETRY_LOCK).unwrap();
     fs::write(project.join("uv.lock"), UV_LOCK).unwrap();
-    let Lookup::Found(found) = find(&Package::new(Ecosystem::Pypi, "requests"), &project) else {
-        panic!("expected a lockfile");
-    };
-    assert_eq!(found.file, project.join("uv.lock"));
-    assert_eq!(found.used[0].version, "2.32.0");
-    assert_eq!(found.ignored, [project.join("poetry.lock")]);
+
+    let found = ask(Ecosystem::Pypi, "requests", &project);
+
+    assert_eq!(read(&found), ("uv.lock", vec!["2.32.0"]));
+    assert_eq!(ignored(&found), ["poetry.lock"]);
 }
 
 #[test]
@@ -133,44 +136,69 @@ fn the_binary_bun_lockb_is_never_read() {
     let (_repo, _top, project) = worktree();
     fs::write(project.join("bun.lockb"), b"#!/usr/bin/env bun\n\0\0").unwrap();
 
+    assert_eq!(ask(Ecosystem::Npm, "react", &project), Answer::Missing);
+}
+
+#[test]
+fn a_lockfile_that_is_not_its_format_is_unreadable() {
+    let (_repo, _top, project) = worktree();
+    fs::write(project.join("Cargo.lock"), "{ not toml").unwrap();
+
     assert!(matches!(
-        find(&Package::new(Ecosystem::Npm, "react"), &project),
-        Lookup::Missing
+        ask(Ecosystem::Cargo, "serde", &project),
+        Answer::Unreadable { file, .. } if file == "Cargo.lock"
     ));
 }
 
 #[test]
-fn of_several_npm_lockfiles_in_one_directory_pnpm_then_yarn_then_npm_is_read() {
+fn of_several_npm_lockfiles_in_one_directory_pnpm_then_yarn_then_npm_then_bun_is_read() {
     let (_repo, _top, project) = worktree();
     fs::write(project.join("package-lock.json"), PACKAGE_LOCK).unwrap();
     fs::write(project.join("yarn.lock"), YARN_LOCK).unwrap();
-    let Lookup::Found(found) = find(&Package::new(Ecosystem::Npm, "react"), &project) else {
-        panic!("expected a lockfile");
-    };
-    assert_eq!(found.file, project.join("yarn.lock"));
-    assert_eq!(found.ignored, [project.join("package-lock.json")]);
+    let found = ask(Ecosystem::Npm, "react", &project);
+    assert_eq!(read(&found), ("yarn.lock", vec!["18.1.0"]));
+    assert_eq!(ignored(&found), ["package-lock.json"]);
 
     fs::write(project.join("pnpm-lock.yaml"), PNPM_LOCK).unwrap();
-    let Lookup::Found(found) = find(&Package::new(Ecosystem::Npm, "react"), &project) else {
-        panic!("expected a lockfile");
-    };
-    assert_eq!(found.file, project.join("pnpm-lock.yaml"));
-    assert_eq!(found.used[0].version, "18.3.1");
-    assert_eq!(
-        found.ignored,
-        [project.join("yarn.lock"), project.join("package-lock.json")]
-    );
+    let found = ask(Ecosystem::Npm, "react", &project);
+    assert_eq!(read(&found), ("pnpm-lock.yaml", vec!["18.3.1"]));
+    assert_eq!(ignored(&found), ["yarn.lock", "package-lock.json"]);
 
     fs::write(project.join("bun.lock"), BUN_LOCK).unwrap();
-    let Lookup::Found(found) = find(&Package::new(Ecosystem::Npm, "react"), &project) else {
-        panic!("expected a lockfile");
-    };
+    let found = ask(Ecosystem::Npm, "react", &project);
     assert_eq!(
-        found.ignored,
-        [
-            project.join("yarn.lock"),
-            project.join("package-lock.json"),
-            project.join("bun.lock")
-        ]
+        ignored(&found),
+        ["yarn.lock", "package-lock.json", "bun.lock"]
     );
+}
+
+#[test]
+fn of_several_versions_only_the_one_the_project_asks_for_is_picked() {
+    let (_repo, _top, project) = worktree();
+    let lock = r#"{"lockfileVersion":3,"packages":{
+      "": {"dependencies":{"ms":"^2.1"}},
+      "node_modules/ms":{"version":"2.1.3","resolved":"https://registry.npmjs.org/ms/-/ms-2.1.3.tgz"},
+      "node_modules/x/node_modules/ms":{"version":"2.0.0","resolved":"https://registry.npmjs.org/ms/-/ms-2.0.0.tgz"}}}"#;
+    fs::write(project.join("package-lock.json"), lock).unwrap();
+
+    assert_eq!(
+        read(&ask(Ecosystem::Npm, "ms", &project)),
+        ("package-lock.json", vec!["2.1.3"])
+    );
+    let lock = lock.replace(r#""dependencies":{"ms":"^2.1"}"#, r#""dependencies":{}"#);
+    fs::write(project.join("package-lock.json"), lock).unwrap();
+    assert_eq!(
+        read(&ask(Ecosystem::Npm, "ms", &project)),
+        ("package-lock.json", vec!["2.0.0", "2.1.3"])
+    );
+}
+
+#[test]
+fn poetry_lock_is_read_when_it_is_the_only_one() {
+    let (_repo, _top, project) = worktree();
+    fs::write(project.join("poetry.lock"), POETRY_LOCK).unwrap();
+
+    let found = ask(Ecosystem::Pypi, "requests", &project);
+
+    assert_eq!(read(&found), ("poetry.lock", vec!["2.31.0"]));
 }

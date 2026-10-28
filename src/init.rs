@@ -3,7 +3,6 @@
 use std::path::Path;
 
 use crate::config::{self, Config};
-use crate::diagnostic::InitError;
 use crate::exclude;
 use crate::project;
 
@@ -45,7 +44,7 @@ pub struct Initialised {
 /// Set up the Project at `root`: create `refs.toml` if absent and exclude `references_dir`
 /// from git. The Managed block is `sync`'s: with no Repo active there is none to write.
 /// Running it again changes nothing.
-pub fn init(root: &Path) -> Result<Initialised, InitError> {
+pub fn init(root: &Path) -> Result<Initialised, miette::Report> {
     let config_created = !root.join(project::CONFIG_FILE).exists();
     if config_created {
         project::write_config(root, TEMPLATE)?;

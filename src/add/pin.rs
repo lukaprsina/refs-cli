@@ -6,23 +6,12 @@
 
 use std::path::Path;
 
-use crate::diagnostic::SourceError;
+use crate::failure::Failure;
 use crate::registry::Package;
 use crate::registry::tag::tag_for;
 use crate::registry::used::{self, Answer};
 use crate::source::Source;
 use crate::ui::{Abort, Prompter, Say};
-
-/// Why `pin` could not say what to pin to.
-#[derive(Debug)]
-pub enum Stop {
-    /// The tags of the remote could not be listed.
-    Source(SourceError),
-    /// A question ended without an answer.
-    Asked(Abort),
-    /// A question had to be asked and there is no one to ask: the message says what to do.
-    Refused(String),
-}
 
 /// What `pin` settled for a registry add's Ref.
 #[derive(Debug, PartialEq, Eq)]
@@ -50,7 +39,7 @@ pub fn pin(
     source: Option<&dyn Source>,
     prompter: Option<&mut (dyn Prompter + '_)>,
     say: &mut dyn Say,
-) -> Result<Pinned, Stop> {
+) -> Result<Pinned, Failure> {
     let mut pinning = Pinning {
         package,
         url,
@@ -73,10 +62,10 @@ pub fn choose_version(
     versions: &[&str],
     file: &str,
     instead: &str,
-) -> Result<String, Stop> {
+) -> Result<String, Failure> {
     let list = versions.join(", ");
     let Some(prompter) = prompter else {
-        return Err(Stop::Refused(format!(
+        return Err(Failure::Refused(format!(
             "{file} has several versions of `{name}` ({list}), and none is the one the \
              project asks for; {instead}"
         )));
@@ -88,7 +77,7 @@ pub fn choose_version(
     let message = format!("{file} has several versions of `{name}`: {list}. Which one?");
     prompter
         .text(&message, versions.last().copied(), &one_of_them)
-        .map_err(Stop::Asked)
+        .map_err(Failure::Asked)
 }
 
 const FOLLOWS: &str = "the repo follows the remote's default branch";
@@ -106,7 +95,7 @@ struct Pinning<'a, 'p> {
 }
 
 impl Pinning<'_, '_> {
-    fn read_lockfile(&mut self) -> Result<Pinned, Stop> {
+    fn read_lockfile(&mut self) -> Result<Pinned, Failure> {
         let name = &self.package.name;
         match used::answer(self.package, self.root) {
             Answer::Missing => {
@@ -165,7 +154,7 @@ impl Pinning<'_, '_> {
 
     /// Pins `version` to the tag it was released as, if the `source` lists one; otherwise follows
     /// the default branch (asked first when there is someone to ask).
-    fn settle(&mut self, version: &str) -> Result<Pinned, Stop> {
+    fn settle(&mut self, version: &str) -> Result<Pinned, Failure> {
         let name = &self.package.name;
         let Some(source) = self.source else {
             self.say.warning(format!(
@@ -173,7 +162,7 @@ impl Pinning<'_, '_> {
             ));
             return Ok(Pinned::FollowsDefault);
         };
-        let tags = source.tags(self.url).map_err(Stop::Source)?;
+        let tags = source.tags(self.url).map_err(Failure::Source)?;
         if let Some(tag) = tag_for(name, version, &tags) {
             self.say.status(format!(
                 "pinned `{name}@{version}` to the tag `{tag}`; {HINT}"
@@ -186,12 +175,12 @@ impl Pinning<'_, '_> {
             return Ok(Pinned::FollowsDefault);
         };
         let question = format!("{untagged}. Follow the remote's default branch instead?");
-        match prompter.confirm(&question).map_err(Stop::Asked)? {
+        match prompter.confirm(&question).map_err(Failure::Asked)? {
             true => {
                 self.say.status(format!("{FOLLOWS}; {HINT}"));
                 Ok(Pinned::FollowsDefault)
             }
-            false => Err(Stop::Asked(Abort::Cancelled)),
+            false => Err(Failure::Asked(Abort::Cancelled)),
         }
     }
 }

@@ -5,8 +5,6 @@ use std::fs;
 use std::path::Path;
 
 use refs_cli::cli::{Outside, Styled, run_on};
-use refs_cli::registry::Unavailable;
-use refs_cli::self_update::Unmanaged;
 use refs_cli::source::Observed;
 use refs_cli::source::Source;
 use refs_cli::source::fake::{FakeSource, Method};
@@ -86,15 +84,11 @@ impl Project {
                 .chain(args.iter().copied())
                 .map(Into::into),
             self.path(),
-            |_, _| Ok(Box::new(&self.source)),
+            |_, _| Ok(Box::new(self.source.clone())),
             &mut out,
             &mut err,
             Styled::default(),
-            Outside {
-                prompter,
-                updater: &Unmanaged,
-                registry: &Unavailable,
-            },
+            Outside::offline(prompter),
         );
         Run {
             code,
