@@ -135,8 +135,19 @@ enum Kind {
     NoSync,
 }
 
-/// Where a run that did not get through stage 2 stopped, with what it has to say.
-type Stopped = (Stop, Report);
+/// A run that did not get through stage 2: where it stopped, with what it has to say.
+struct Stopped {
+    at: Stop,
+    report: Report,
+}
+
+/// Stop at `at` on `error`.
+fn failed_at<E>(at: Stop) -> impl FnOnce(E) -> Stopped
+where
+    E: miette::Diagnostic + Send + Sync + 'static,
+{
+    move |error| at.with(Report::failed(error))
+}
 
 #[derive(Debug, Clone, Copy)]
 enum Stop {
@@ -150,6 +161,12 @@ enum Stop {
     Refused,
     /// Stage 2 could not be observed, so an edit was not written.
     Unobserved,
+}
+
+impl Stop {
+    fn with(self, report: Report) -> Stopped {
+        Stopped { at: self, report }
+    }
 }
 
 /// The follow-up for a `kind` of run that stopped at `stop` (`None`: it got through stage 2,
@@ -171,7 +188,7 @@ fn hint(kind: Kind, stop: Option<Stop>, outcome: Outcome) -> Option<Hint> {
 fn finish(kind: Kind, run: Result<Report, Stopped>, drift: Vec<Drift>) -> Report {
     let (stop, mut report) = match run {
         Ok(report) => (None, report),
-        Err((stop, report)) => (Some(stop), report),
+        Err(Stopped { at, report }) => (Some(at), report),
     };
     report.hint = hint(kind, stop, report.outcome);
     report.changes.sort_by_key(Changed::rank);
@@ -179,30 +196,29 @@ fn finish(kind: Kind, run: Result<Report, Stopped>, drift: Vec<Drift>) -> Report
     report
 }
 
-/// What every run starts from: the active set, the Lock on disk (if any) and how it differs.
-struct Observation<'a> {
-    active: ActiveSet<'a>,
-    old: Option<Lock>,
-    drift: Vec<Drift>,
-}
-
-fn observe<'a>(root: &Path, config: &'a Config) -> Result<Observation<'a>, Stopped> {
+/// Read the Lock on disk (if any), see how it differs from the active set of `config`, run
+/// `stages` on the three, and build the Report.
+fn observe_and_run(
+    kind: Kind,
+    root: &Path,
+    config: &Config,
+    stages: impl FnOnce(&ActiveSet, Option<Lock>, &[Drift]) -> Result<Report, Stopped>,
+) -> Report {
     let active = active(config);
-    let old = Lock::read(&Lock::path(root)).map_err(|e| (Stop::Lock, Report::failed(e)))?;
+    let old = match Lock::read(&Lock::path(root)) {
+        Ok(old) => old,
+        Err(e) => return finish(kind, Err(failed_at(Stop::Lock)(e)), Vec::new()),
+    };
     let drift = lock_drift(&active, old.as_ref());
-    Ok(Observation { active, old, drift })
+    let run = stages(&active, old, &drift);
+    finish(kind, run, drift)
 }
 
 /// `refs sync`. With `check`, nothing is resolved, verified, fetched or written.
 pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
-    let (run, drift) = match observe(root, config) {
-        Ok(Observation { active, old, drift }) => {
-            let run = run_sync(source, root, config, &active, old, &drift, flags);
-            (run, drift)
-        }
-        Err(stopped) => (Err(stopped), Vec::new()),
-    };
-    finish(Kind::Sync, run, drift)
+    observe_and_run(Kind::Sync, root, config, |active, old, drift| {
+        run_sync(source, root, config, active, old, drift, flags)
+    })
 }
 
 fn run_sync(
@@ -226,7 +242,7 @@ fn run_sync(
         (old.unwrap_or_else(|| Lock::new(vec![])), None)
     } else {
         let lock =
-            resolve_all(source, active, old.as_ref(), flags).map_err(|r| (Stop::StageOne, r))?;
+            resolve_all(source, active, old.as_ref(), flags).map_err(|r| Stop::StageOne.with(r))?;
         let lock_change = write_lock(root, old.as_ref(), &lock)?;
         (lock, lock_change)
     };
@@ -263,11 +279,6 @@ fn apply_plan(
     report
 }
 
-/// A failed edit, or a failed write of `refs.toml`.
-fn rejected(error: impl miette::Diagnostic + Send + Sync + 'static) -> Stopped {
-    (Stop::Rejected, Report::failed(error))
-}
-
 /// An edit applied to the text of `<root>/refs.toml` and parsed, but not yet written: the
 /// config a sync runs against.
 struct Edited {
@@ -282,9 +293,9 @@ impl Edited {
         let created = !root.join(project::CONFIG_FILE).exists();
         let before = match created {
             true => String::new(),
-            false => project::read_config(root).map_err(rejected)?,
+            false => project::read_config(root).map_err(failed_at(Stop::Rejected))?,
         };
-        let applied = edit.apply(&before).map_err(rejected)?;
+        let applied = edit.apply(&before).map_err(failed_at(Stop::Rejected))?;
         Ok(Edited {
             created,
             before,
@@ -308,7 +319,7 @@ impl Edited {
         if self.unchanged() {
             return Ok(Vec::new());
         }
-        project::write_config(root, &self.applied.text).map_err(rejected)?;
+        project::write_config(root, &self.applied.text).map_err(failed_at(Stop::Rejected))?;
         let config = match self.created {
             true => Changed::ConfigCreated,
             false => Changed::Config,
@@ -337,37 +348,29 @@ impl Edited {
 /// removes.
 pub fn edit(source: Option<&dyn Source>, root: &Path, edit: &Edit, flags: &SyncFlags) -> Report {
     let edited = match Edited::read(root, edit) {
-        Ok(edited) => edited,
+        // A rejected edit is hinted alike whatever the kind.
         Err(stopped) => return finish(Kind::Edit, Err(stopped), Vec::new()),
+        Ok(edited) => edited,
     };
-    let Some(source) = source else {
-        return edit_only(root, &edited);
+    let kind = match (source, edited.unchanged()) {
+        (_, true) => Kind::Sync,
+        (Some(_), false) => Kind::Edit,
+        (None, false) => Kind::NoSync,
     };
-    let kind = if edited.unchanged() {
-        Kind::Sync
-    } else {
-        Kind::Edit
-    };
-    let (run, drift) = match observe(root, &edited.applied.config) {
-        Ok(Observation { active, old, drift }) => {
-            let run = edit_stages(source, root, &edited, &active, old, flags);
-            (run, drift)
+    let config = &edited.applied.config;
+    match source {
+        Some(source) => observe_and_run(kind, root, config, |active, old, _| {
+            edit_stages(source, root, &edited, active, old, flags)
+        }),
+        None => {
+            let run = edited.write(root).map(|changes| Report {
+                changes,
+                ..Report::new(Outcome::InSync, Vec::new())
+                    .with_editor_hint(edited.first_active(), config)
+            });
+            finish(kind, run, Vec::new())
         }
-        Err(stopped) => (Err(stopped), Vec::new()),
-    };
-    finish(kind, run, drift)
-}
-
-fn edit_only(root: &Path, edited: &Edited) -> Report {
-    if edited.unchanged() {
-        return Report::new(Outcome::InSync, Vec::new());
     }
-    let run = edited.write(root).map(|changes| Report {
-        changes,
-        ..Report::new(Outcome::InSync, Vec::new())
-            .with_editor_hint(edited.first_active(), &edited.applied.config)
-    });
-    finish(Kind::NoSync, run, Vec::new())
 }
 
 /// Both stages of an edit, and the write of `refs.toml` between them.
@@ -382,15 +385,19 @@ fn edit_stages(
     let config = &edited.applied.config;
     let lock = match shrunk_lock(active, old.as_ref()) {
         Some(lock) => lock,
-        None => resolve_all(source, active, old.as_ref(), flags)
-            .map_err(|report| (Stop::StageOne, report))?,
+        None => {
+            resolve_all(source, active, old.as_ref(), flags).map_err(|r| Stop::StageOne.with(r))?
+        }
     };
     let plan = stage_two_gate(source, root, config, active, &lock, flags.force)?;
     let lock_change = write_lock(root, old.as_ref(), &lock)?;
-    let written = edited.write(root).map_err(|(stop, mut report)| {
-        report.changes.extend(lock_change.clone());
-        (stop, report)
-    })?;
+    let written = match edited.write(root) {
+        Ok(written) => written,
+        Err(mut stopped) => {
+            stopped.report.changes.extend(lock_change);
+            return Err(stopped);
+        }
+    };
     let mut report = apply_plan(source, root, config, active, plan, flags)
         .with_editor_hint(edited.first_active(), config);
     report
@@ -413,14 +420,9 @@ fn stage_two_gate<'a>(
 ) -> Result<Plan<'a>, Stopped> {
     match plan_stage_two(source, root, config, active, lock, force) {
         Ok(plan) if plan.refusals.is_empty() => Ok(plan),
-        Ok(plan) => {
-            let refusals = plan.refusals.into_iter().map(miette::Report::new);
-            Err((
-                Stop::Refused,
-                Report::new(Outcome::Refused, refusals.collect()),
-            ))
-        }
-        Err(errors) => Err((Stop::Unobserved, Report::new(Outcome::Failed, errors))),
+        // What `--check` would say of it: refused, with the refusals.
+        Ok(plan) => Err(Stop::Refused.with(check(plan, false))),
+        Err(errors) => Err(Stop::Unobserved.with(Report::new(Outcome::Failed, errors))),
     }
 }
 
@@ -430,7 +432,7 @@ fn write_lock(root: &Path, old: Option<&Lock>, lock: &Lock) -> Result<Option<Cha
         return Ok(None);
     }
     lock.write(&Lock::path(root))
-        .map_err(|e| (Stop::Lock, Report::failed(e)))?;
+        .map_err(failed_at(Stop::Lock))?;
     Ok(Some(Changed::Lock))
 }
 
