@@ -209,6 +209,55 @@ fn biome_is_covered_by_the_directory_in_its_config() {
     assert_eq!(gaps(dir.path(), DIR, &[]), []);
 }
 
+/// A directory with a `biome.jsonc` of this text.
+fn biome(config: &str) -> TempDir {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("biome.jsonc"), config).unwrap();
+    dir
+}
+
+#[test]
+fn biome_is_covered_by_reading_the_vcs_ignore_files() {
+    let dir = biome(
+        r#"{
+            // Biome reads .git/info/exclude through this
+            "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true, },
+        }"#,
+    );
+
+    assert_eq!(gaps(dir.path(), DIR, &[]), []);
+}
+
+#[test]
+fn biome_vcs_needs_both_enabled_and_use_ignore_file() {
+    for vcs in [
+        r#""vcs": { "clientKind": "git", "useIgnoreFile": true }"#,
+        r#""vcs": { "enabled": true, "clientKind": "git" }"#,
+        r#""vcs": { "enabled": false, "clientKind": "git", "useIgnoreFile": true }"#,
+        r#""linter": { "enabled": true }, "vcs": { "useIgnoreFile": true }"#,
+    ] {
+        let dir = biome(&format!("{{ {vcs} }}"));
+
+        assert_eq!(tools(&gaps(dir.path(), DIR, &[])), ["biome"], "{vcs}");
+    }
+}
+
+#[test]
+fn biome_vcs_in_a_comment_or_a_broken_config_is_not_cover() {
+    for config in [
+        r#"{ // "vcs": { "enabled": true, "useIgnoreFile": true }
+        }"#,
+        r#"{ "vcs": { "enabled": true, "useIgnoreFile": true "#,
+        r#"{ // "files": { "includes": ["**", "!!.references"] }
+        }"#,
+        r#"{ "files": { "includes": ["**", "!!.references"] "#,
+    ] {
+        let dir = biome(config);
+
+        assert_eq!(tools(&gaps(dir.path(), DIR, &[])), ["biome"], "{config}");
+    }
+}
+
 #[test]
 fn markdownlint_takes_its_ignores_in_the_format_of_its_config() {
     let json = TempDir::new().unwrap();
@@ -263,6 +312,44 @@ fn zed_is_covered_by_the_directory_in_its_settings() {
     assert_eq!(gaps(dir.path(), DIR, &[]), []);
 }
 
+/// A directory with a `.zed/settings.json` of this text.
+fn zed(settings: &str) -> TempDir {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir(dir.path().join(".zed")).unwrap();
+    fs::write(dir.path().join(".zed/settings.json"), settings).unwrap();
+    dir
+}
+
+#[test]
+fn zed_is_covered_by_any_entry_naming_the_directory() {
+    for entry in [
+        r#""**/.references""#,
+        r#""/home/me/code/app/.references""#,
+        r#"".references/**""#,
+    ] {
+        let dir = zed(&format!(
+            "{{ // generated\n \"file_scan_exclusions\": [\"**/.git\", {entry}, \"...\",], }}"
+        ));
+
+        assert_eq!(gaps(dir.path(), DIR, &[]), [], "{entry}");
+    }
+}
+
+#[test]
+fn zed_is_not_covered_by_the_directory_named_in_another_setting() {
+    for settings in [
+        r#"{ "terminal": { "working_directory": { "always": { "directory": ".references" } } } }"#,
+        r#"{ "file_scan_inclusions": [".references"] }"#,
+        r#"{ // "file_scan_exclusions": ["**/.references"]
+        }"#,
+        r#"{ "file_scan_exclusions": "**/.references" }"#,
+    ] {
+        let dir = zed(settings);
+
+        assert_eq!(tools(&gaps(dir.path(), DIR, &[])), ["zed"], "{settings}");
+    }
+}
+
 #[test]
 fn a_zed_settings_file_further_up_names_the_directory_from_the_top() {
     let (_repo, top, project) = worktree();
@@ -279,7 +366,8 @@ fn a_zed_settings_file_further_up_names_the_directory_from_the_top() {
     );
 }
 
-const BLACK_FIX: &str = "[tool.black]\nextend-exclude = '^/\\.references/'";
+const BLACK_LINE: &str = "extend-exclude = '^/\\.references/'";
+const BLACK_FULL: &str = "[tool.black]\nextend-exclude = '^/\\.references/'";
 
 #[test]
 fn black_is_in_use_with_its_table_in_pyproject() {
@@ -292,7 +380,7 @@ fn black_is_in_use_with_its_table_in_pyproject() {
 
     assert_eq!(
         gaps(dir.path(), DIR, &[]),
-        [gap("black", "pyproject.toml", BLACK_FIX)]
+        [gap("black", "pyproject.toml", BLACK_LINE)]
     );
 }
 
@@ -329,6 +417,64 @@ fn black_is_covered_by_the_directory_in_pyproject() {
 }
 
 #[test]
+fn black_gets_the_table_header_only_when_pyproject_lacks_it() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join(".pre-commit-config.yaml"),
+        "repos:\n  - repo: https://github.com/psf/black\n    hooks:\n      - id: black\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("pyproject.toml"), "[tool.ruff]\n").unwrap();
+
+    assert_eq!(
+        gaps(dir.path(), DIR, &[]),
+        [gap(
+            "black",
+            "pyproject.toml",
+            "[tool.black]\nextend-exclude = '^/\\.references/'"
+        )]
+    );
+}
+
+#[test]
+fn black_is_covered_by_any_of_its_exclude_options() {
+    for option in ["exclude", "extend-exclude", "force-exclude"] {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("pyproject.toml"),
+            format!("[tool.black]\n{option} = '/(build|\\.references)/'\n"),
+        )
+        .unwrap();
+
+        assert_eq!(gaps(dir.path(), DIR, &[]), [], "{option}");
+    }
+}
+
+#[test]
+fn black_is_not_covered_by_the_directory_named_for_another_tool() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join("pyproject.toml"),
+        "[tool.black]\nline-length = 100\n[tool.pytest.ini_options]\nnorecursedirs = ['.references']\n",
+    )
+    .unwrap();
+
+    assert_eq!(tools(&gaps(dir.path(), DIR, &[])), ["black"]);
+}
+
+#[test]
+fn black_is_covered_by_the_hook_excluding_the_directory() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join(".pre-commit-config.yaml"),
+        "repos:\n  - repo: x\n    hooks:\n      - id: black\n        exclude: ^\\.references/\n",
+    )
+    .unwrap();
+
+    assert_eq!(gaps(dir.path(), DIR, &[]), []);
+}
+
+#[test]
 fn a_nested_references_directory_is_anchored_in_the_black_regex() {
     let (_repo, top, project) = worktree();
     fs::write(top.join("pyproject.toml"), "[tool.black]\n").unwrap();
@@ -338,7 +484,7 @@ fn a_nested_references_directory_is_anchored_in_the_black_regex() {
         [gap(
             "black",
             "../../pyproject.toml",
-            "[tool.black]\nextend-exclude = '^/apps/web/\\.references/'"
+            "extend-exclude = '^/apps/web/\\.references/'"
         )]
     );
 }
@@ -426,7 +572,7 @@ fn a_pre_commit_hook_puts_a_tool_in_use() {
 
     assert_eq!(
         gaps(dir.path(), DIR, &[]),
-        [to_create("black", "pyproject.toml", BLACK_FIX)]
+        [to_create("black", "pyproject.toml", BLACK_FULL)]
     );
 }
 

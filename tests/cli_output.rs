@@ -354,6 +354,8 @@ mod editor_hint {
 
         assert_eq!(ran.code, 0, "{}", ran.stderr);
         assert!(ran.stderr.contains(HINT), "{}", ran.stderr);
+        // It names no tool, and `-q` is its off switch.
+        assert!(!ran.stderr.contains("tooling_ignore"), "{}", ran.stderr);
     }
 
     #[test]
@@ -466,6 +468,39 @@ mod tooling_gap {
             ran.stderr
         );
         assert!(!ran.stderr.contains("add this to"), "{}", ran.stderr);
+    }
+
+    #[test]
+    fn the_note_says_how_to_silence_the_tool() {
+        let edit = with_eslint(ONE);
+        let create = Project::new(ONE);
+        fs::write(create.dir.path().join(".prettierrc"), "{}\n").unwrap();
+        let markdownlint = Project::new(ONE);
+        fs::write(
+            markdownlint.dir.path().join(".markdownlint-cli2.jsonc"),
+            "{}\n",
+        )
+        .unwrap();
+
+        // The help line wraps.
+        let flat = |ran: Ran| ran.stderr.split_whitespace().collect::<Vec<_>>().join(" ");
+        let edit = flat(edit.run(&["sync"]));
+        let create = flat(create.run(&["sync"]));
+        let markdownlint = flat(markdownlint.run(&["sync"]));
+
+        assert!(
+            edit.contains(r#"(or add "eslint" to tooling_ignore in refs.toml)"#),
+            "{edit}"
+        );
+        assert!(
+            create.contains(r#"(or add "prettier" to tooling_ignore in refs.toml)"#),
+            "{create}"
+        );
+        // The name `tooling_ignore` takes, not the tool's package name.
+        assert!(
+            markdownlint.contains(r#"add "markdownlint" to tooling_ignore"#),
+            "{markdownlint}"
+        );
     }
 
     #[test]

@@ -126,6 +126,7 @@ README says: "Exclude it yourself in Ruff, Biome, Stylelint and your editor."
   ```
   (derived from the documented `!!**/dist` example; not run). `node_modules` is always ignored.
 - Tested with Biome 2.6.3, `/.references/` only in `.git/info/exclude`: `biome check .` with no config reported `.references/dep/bad.ts` and `bad.js` (8 errors in total, both directories); after adding `{"vcs":{"enabled":true,"clientKind":"git","useIgnoreFile":true}}` it reported only `src/*`, so `info/exclude` is what excluded it (`.gitignore` was absent). Whether `vcs.root` matters in a monorepo: unverified.
+- Fourth pass (2026-10-28, Biome 2.6.3 again, same scratch repo, deleted afterwards): `files.includes: ["**", "!!.references"]` hides `.references/x/bad.js` (as does `"!.references"`; `"!!.references/**"` also, but Biome's `useBiomeIgnoreFolder` lint flags it, so the bare name is the snippet). `vcs` with `enabled: true`, `clientKind: "git"` and `useIgnoreFile: true` hides it. **`useIgnoreFile: true` with `enabled` unset, or alone, does not**: the directory is scanned. `enabled: true` without `clientKind` is a config error.
 - Config: `biome.json`, `biome.jsonc`, `.biome.json`, `.biome.jsonc`; no `package.json` config. https://biomejs.dev/configuration/configure-biome/
 
 ### Stylelint
@@ -272,7 +273,8 @@ Problems in the Gemini note:
 ## Unverified
 
 - Oxlint and Oxfmt: the first release honoring `info/exclude` (Oxfmt) and whether `package.json` config is read (Oxlint).
-- Biome: `vcs.root` in monorepos.
+- Biome: `vcs.root` in monorepos; a `vcs` section inherited through `extends`.
+- markdownlint-cli2: `gitignore` given as a glob string (only `true` was run); it reads `.gitignore`, so it is no cover while refs writes only `info/exclude`.
 - mypy, pyright: docs/source only, no local run.
 - Ruff `force-exclude` editor interaction (docs text truncated in my fetch).
 - rust-analyzer gitignore handling; clippy source; golangci-lint gitignore handling and config file names; markdownlint-cli2 `package.json` support; markdownlint-cli.

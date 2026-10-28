@@ -19,13 +19,14 @@ pub struct Gap {
 }
 
 impl Gap {
-    /// What to do about it, in a sentence.
+    /// What to do about it, in a sentence, and how to stop being told.
     pub fn advice(&self) -> String {
-        let (file, snippet) = (&self.file, &self.snippet);
-        match self.create {
+        let (file, snippet, tool) = (&self.file, &self.snippet, self.tool);
+        let fix = match self.create {
             true => format!("create {file} with: {snippet}"),
             false => format!("add this to {file}: {snippet}"),
-        }
+        };
+        format!(r#"{fix} (or add "{tool}" to tooling_ignore in refs.toml)"#)
     }
 }
 
@@ -111,14 +112,89 @@ impl Signal {
 /// tier that has a file in the directory and ignores the others. It is in use where one of
 /// its files exists or a signal holds, and covered when any of those files, or the manifest a
 /// signal is in, names the references directory.
-/// `fix` takes the tool's own files that are present and the references directory as seen from
-/// them, and gives the file to edit (it may not exist) and the lines to add.
+/// `fix` takes what `Ctx` holds and gives the file to edit (it may not exist) and the lines to add.
+/// `covers` says whether the text of one of those files, or of the manifest a signal is in, keeps
+/// the directory out: it gets the file's name, its text and the directory.
 /// Add a new tool as a row here.
 struct Row {
     name: &'static str,
     files: &'static [&'static [&'static str]],
     signals: &'static [Signal],
-    fix: fn(present: &[&str], dir: &str) -> Fix,
+    fix: fn(&Ctx) -> Fix,
+    covers: fn(file: &str, text: &str, dir: &str) -> bool,
+}
+
+/// What `Row::fix` is given.
+struct Ctx<'a> {
+    /// The tool's own files that are present.
+    present: &'a [&'a str],
+    /// The references directory as seen from them.
+    dir: &'a str,
+    /// The manifests of the directory they are in.
+    facts: &'a Facts,
+}
+
+/// The directory is named anywhere in the text: enough for tools with a file of their own.
+fn names_dir(_file: &str, text: &str, dir: &str) -> bool {
+    text.contains(dir)
+}
+
+/// Biome skips what its `includes` negate and reads `.git/info/exclude` when `vcs.enabled` and
+/// `vcs.useIgnoreFile` are both on (tested: `useIgnoreFile` alone does nothing). Its configs are
+/// JSONC, so a comment or a file that does not parse covers nothing.
+fn biome_covers(_file: &str, text: &str, dir: &str) -> bool {
+    let Some(config) = jsonc(text) else {
+        return false;
+    };
+    let on = |key| config.pointer(&format!("/vcs/{key}")) == Some(&serde_json::Value::Bool(true));
+    (on("enabled") && on("useIgnoreFile")) || names_dir_in_a_string(&config, dir)
+}
+
+/// Whether a string anywhere in `json` contains `dir`.
+fn names_dir_in_a_string(json: &serde_json::Value, dir: &str) -> bool {
+    match json {
+        serde_json::Value::String(text) => text.contains(dir),
+        serde_json::Value::Array(items) => {
+            items.iter().any(|item| names_dir_in_a_string(item, dir))
+        }
+        serde_json::Value::Object(map) => map.values().any(|item| names_dir_in_a_string(item, dir)),
+        _ => false,
+    }
+}
+
+/// Black skips what `exclude`, `extend-exclude` or `force-exclude` of `[tool.black]` matches.
+/// `pyproject.toml` is shared with other tools, so naming the directory elsewhere in it proves
+/// nothing. Other files (a pre-commit config) are read as text.
+fn black_covers(file: &str, text: &str, dir: &str) -> bool {
+    if file != PYPROJECT {
+        return text.contains(dir);
+    }
+    let Ok(table) = text.parse::<toml::Table>() else {
+        return false;
+    };
+    let black = table.get("tool").and_then(|tool| tool.get("black"));
+    ["exclude", "extend-exclude", "force-exclude"]
+        .iter()
+        .filter_map(|option| black?.get(option)?.as_str())
+        .any(|regex| regex.contains(dir) || regex.contains(&escape_regex(dir)))
+}
+
+/// Zed hides what an entry of `file_scan_exclusions` matches. An entry may be `**/<dir>`, a path
+/// from the project or an absolute one, so any entry that contains the directory counts.
+fn zed_covers(_file: &str, text: &str, dir: &str) -> bool {
+    jsonc(text)
+        .and_then(|json| json.get("file_scan_exclusions").cloned())
+        .and_then(|entries| entries.as_array().cloned())
+        .is_some_and(|entries| {
+            entries
+                .iter()
+                .any(|entry| entry.as_str().is_some_and(|entry| entry.contains(dir)))
+        })
+}
+
+/// `text` as JSON with comments and trailing commas, if it is.
+fn jsonc(text: &str) -> Option<serde_json::Value> {
+    jsonc_parser::parse_to_serde_value(text, &Default::default()).ok()
 }
 
 const TABLE: [Row; 6] = [
@@ -146,7 +222,8 @@ const TABLE: [Row; 6] = [
             Signal::Dependency("prettier"),
             Signal::PreCommitHook("prettier"),
         ],
-        fix: |_, dir| (".prettierignore".into(), format!("{dir}/")),
+        fix: |Ctx { dir, .. }| (".prettierignore".into(), format!("{dir}/")),
+        covers: names_dir,
     },
     Row {
         name: "eslint",
@@ -175,7 +252,10 @@ const TABLE: [Row; 6] = [
             Signal::Dependency("eslint"),
             Signal::PreCommitHook("eslint"),
         ],
-        fix: |present, dir| match present.iter().find(|file| file.starts_with(".eslint")) {
+        fix: |&Ctx { present, dir, .. }| match present
+            .iter()
+            .find(|file| file.starts_with(".eslint"))
+        {
             Some(_)
                 if !present
                     .iter()
@@ -192,6 +272,7 @@ const TABLE: [Row; 6] = [
                 (flat.into(), format!(r#"{{ ignores: ["{dir}/**"] }}"#))
             }
         },
+        covers: names_dir,
     },
     Row {
         name: "black",
@@ -200,13 +281,25 @@ const TABLE: [Row; 6] = [
             Signal::PyprojectTable("black"),
             Signal::PreCommitHook("black"),
         ],
-        // Black takes a regex, anchored at the project root with `^/`.
-        fix: |_, dir| {
-            (
-                PYPROJECT.into(),
-                format!("[tool.black]\nextend-exclude = '^/{}/'", escape_regex(dir)),
-            )
+        // Black takes a regex, anchored at the project root with `^/`. The header is only for a
+        // `pyproject.toml` that has no `[tool.black]` yet: a second one is invalid TOML.
+        fix: |&Ctx { dir, facts, .. }| {
+            let line = format!("extend-exclude = '^/{}/'", escape_regex(dir));
+            let has_table = facts.pyproject.as_ref().is_some_and(|table| {
+                table
+                    .get("tool")
+                    .is_some_and(|tool| tool.get("black").is_some())
+            });
+            let snippet = match has_table {
+                true => line,
+                false => format!(
+                    "[tool.black]
+{line}"
+                ),
+            };
+            (PYPROJECT.into(), snippet)
         },
+        covers: black_covers,
     },
     Row {
         name: "biome",
@@ -215,13 +308,14 @@ const TABLE: [Row; 6] = [
             Signal::Dependency("@biomejs/biome"),
             Signal::PreCommitHook("biome"),
         ],
-        fix: |present, dir| {
+        fix: |&Ctx { present, dir, .. }| {
             let file = present.first().copied().unwrap_or("biome.json");
             (
                 file.into(),
                 format!(r#""files": {{ "includes": ["**", "!!{dir}"] }}"#),
             )
         },
+        covers: biome_covers,
     },
     Row {
         name: "markdownlint",
@@ -235,7 +329,7 @@ const TABLE: [Row; 6] = [
             Signal::Dependency("markdownlint-cli2"),
             Signal::PreCommitHook("markdownlint-cli2"),
         ],
-        fix: |present, dir| {
+        fix: |&Ctx { present, dir, .. }| {
             let file = present
                 .first()
                 .copied()
@@ -247,17 +341,19 @@ const TABLE: [Row; 6] = [
             };
             (file.into(), snippet)
         },
+        covers: names_dir,
     },
     Row {
         name: "zed",
         files: &[&[".zed/settings.json"]],
         signals: &[],
-        fix: |_, dir| {
+        fix: |&Ctx { dir, .. }| {
             (
                 ".zed/settings.json".into(),
                 format!(r#""file_scan_exclusions": ["**/{dir}", "..."]"#),
             )
         },
+        covers: zed_covers,
     },
 ];
 
@@ -330,7 +426,12 @@ pub fn gaps(project_dir: &Path, references_dir: &str, ignored: &[&str]) -> Vec<G
         else {
             continue;
         };
-        let (file, snippet) = (row.fix)(&present, &seen_from(dir, project_dir, references_dir));
+        let facts = &dirs[up].1;
+        let (file, snippet) = (row.fix)(&Ctx {
+            present: &present,
+            dir: &seen_from(dir, project_dir, references_dir),
+            facts,
+        });
         // The file to edit may be beside the ones that showed the tool in use.
         let covered = present
             .iter()
@@ -339,7 +440,7 @@ pub fn gaps(project_dir: &Path, references_dir: &str, ignored: &[&str]) -> Vec<G
             .chain([file.as_str()])
             .any(|file| {
                 std::fs::read_to_string(dir.join(file))
-                    .is_ok_and(|text| text.contains(references_dir))
+                    .is_ok_and(|text| (row.covers)(file, &text, references_dir))
             });
         if !covered {
             found.push(Gap {
