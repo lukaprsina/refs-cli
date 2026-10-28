@@ -175,7 +175,7 @@ pub struct WriteAgentFile {
 
 /// Stage 2's decisions, by what they act on (ADR 0006). The executor runs `repos` (a
 /// failure of one does not stop the others), then reports `refusals`, then runs `writes`
-/// only if no `Materialise` action failed, each independently, then the exclude rule.
+/// only if no action but a removal failed, each independently, then the exclude rule.
 #[derive(Debug)]
 pub struct Plan<'a> {
     /// Removals of non-active names first, then the active Repos in block order.

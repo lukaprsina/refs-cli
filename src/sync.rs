@@ -535,7 +535,7 @@ fn apply(
     } else {
         Outcome::Refused
     };
-    // A removed Checkout is not listed in the block, so only a failed Materialise stales it.
+    // Only a removed Checkout is not listed in the block; a failed action of any other kind stales it.
     let mut held_back = false;
     let mut changes = Vec::new();
     for action in &plan.repos {
@@ -550,7 +550,7 @@ fn apply(
             Err(e) => {
                 diagnostics.push(e);
                 outcome = Outcome::Failed;
-                held_back |= matches!(action, RepoAction::Materialise { .. });
+                held_back |= !matches!(action, RepoAction::Remove { .. });
             }
         }
     }
