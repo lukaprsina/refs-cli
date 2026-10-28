@@ -24,7 +24,7 @@ There is no `refs lock` (ADR 0013). `sync` always runs stage 1 (with a current L
 ## The Plan is grouped by Repo
 
 ```
-Plan { repos: Vec<RepoAction>, writes: Vec<WriteAgentFile>, exclude: Option<ExcludeAction>, refusals: Vec<Refusal> }
+Plan { repos: Vec<RepoAction>, writes: Vec<WriteAgentFile>, exclude: Exclude, refusals: Vec<Refusal> }
 ```
 
 - A `RepoAction` is one unit per Repo: `Materialise { repo, pin, placement }` (`Create`, `Move`, `Recreate` or `Overwrite`, decided in `plan` from what was observed; the last two remove the Checkout first: a Dangling one, or a dirty one under `--force`) and `Remove { id }` (a Checkout of a name that is no longer active; a Checkout can outlive its config entry, so this takes an id). Actions for active Repos carry the `RepoRef`, so the executor never looks a Repo up again.

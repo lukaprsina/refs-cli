@@ -4,8 +4,8 @@ use refs_cli::config::{Config, parse};
 use refs_cli::diagnostic::Refusal;
 use refs_cli::lock::{Lock, LockedRepo};
 use refs_cli::plan::{
-    AgentFileText, Checkout, Checkouts, Exclude, ExcludeAction, Placement, Plan, ProjectObserved,
-    RepoAction, plan_checkouts,
+    AgentFileText, Checkout, Checkouts, Exclude, Placement, Plan, ProjectObserved, RepoAction,
+    plan_checkouts,
 };
 use refs_cli::render::render;
 use refs_cli::source::fake::FakeSource;
@@ -85,11 +85,11 @@ fn plan_with(
 }
 
 /// Only `exclude` is set, and to `exclude`.
-fn empty_but_for(plan: &Plan, exclude: ExcludeAction) -> bool {
+fn empty_but_for(plan: &Plan, exclude: Exclude) -> bool {
     plan.repos.is_empty()
         && plan.writes.is_empty()
         && plan.refusals.is_empty()
-        && plan.exclude == Some(exclude)
+        && plan.exclude == exclude
 }
 
 /// Nothing to do, refuse or say.
@@ -97,7 +97,7 @@ fn empty(plan: &Plan) -> bool {
     plan.repos.is_empty()
         && plan.writes.is_empty()
         && plan.refusals.is_empty()
-        && plan.exclude.is_none()
+        && plan.exclude == Exclude::Present
 }
 
 fn in_sync_source() -> FakeSource {
@@ -400,7 +400,7 @@ fn a_refusal_suppresses_the_block_write_but_not_the_exclude_rule() {
     assert!(
         matches!(plan.refusals.as_slice(), [Refusal::ForeignDir { .. }])
             && plan.writes.is_empty()
-            && plan.exclude == Some(ExcludeAction::Ensure),
+            && plan.exclude == Exclude::Missing,
         "{plan:?}"
     );
 }
@@ -415,7 +415,7 @@ fn a_missing_exclude_rule_is_ensured_alongside_the_rest() {
     assert!(
         matches!(plan.repos.as_slice(), [RepoAction::Materialise { .. }])
             && plan.writes.len() == 1
-            && plan.exclude == Some(ExcludeAction::Ensure),
+            && plan.exclude == Exclude::Missing,
         "{plan:?}"
     );
 }
@@ -427,7 +427,7 @@ fn no_git_repo_is_a_note_and_not_drift() {
     let mut project = project(&set);
     project.exclude = Exclude::NoGit;
     let plan = plan(&in_sync_source(), &project, false);
-    assert!(empty_but_for(&plan, ExcludeAction::NoGit), "{plan:?}");
+    assert!(empty_but_for(&plan, Exclude::NoGit), "{plan:?}");
     assert!(!plan.is_drift());
 }
 

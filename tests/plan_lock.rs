@@ -36,7 +36,7 @@ fn a_missing_lock_is_stale_and_every_repo_resolves() {
     let set = active(&config);
     assert_eq!(lock_drift(&set, None), vec![Drift::LockMissing]);
     let plan = plan_lock(&set, None, &[], false).unwrap();
-    assert!(matches!(plan.steps.as_slice(), [Step::Resolve(r)] if r.id == "a"));
+    assert!(matches!(plan.as_slice(), [Step::Resolve(r)] if r.id == "a"));
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn a_matching_lock_is_current_and_every_repo_is_reused() {
     let locked = lock(vec![a_entry()]);
     assert_eq!(lock_drift(&set, Some(&locked)), vec![]);
     let plan = plan_lock(&set, Some(&locked), &[], false).unwrap();
-    assert!(matches!(plan.steps.as_slice(), [Step::Reuse(e)] if *e == a_entry()));
+    assert!(matches!(plan.as_slice(), [Step::Reuse(e)] if *e == a_entry()));
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn editing_paths_leaves_the_lock_current_and_reuses_the_entry() {
     let locked = lock(vec![a_entry()]);
     assert_eq!(lock_drift(&set, Some(&locked)), vec![]);
     let plan = plan_lock(&set, Some(&locked), &[], false).unwrap();
-    assert!(matches!(plan.steps.as_slice(), [Step::Reuse(e)] if *e == a_entry()));
+    assert!(matches!(plan.as_slice(), [Step::Reuse(e)] if *e == a_entry()));
 }
 
 fn changed(field: Field) -> Vec<Drift> {
@@ -77,7 +77,7 @@ fn changing_the_url_or_the_ref_resolves_again() {
         let locked = lock(vec![a_entry()]);
         assert_eq!(lock_drift(&set, Some(&locked)), changed(field));
         let plan = plan_lock(&set, Some(&locked), &[], false).unwrap();
-        assert!(matches!(plan.steps.as_slice(), [Step::Resolve(r)] if r.id == "a"));
+        assert!(matches!(plan.as_slice(), [Step::Resolve(r)] if r.id == "a"));
     }
 }
 
@@ -96,7 +96,7 @@ fn an_active_repo_without_an_entry_is_added_and_resolves() {
     );
     let plan = plan_lock(&set, Some(&locked), &[], false).unwrap();
     assert!(matches!(
-        plan.steps.as_slice(),
+        plan.as_slice(),
         [Step::Reuse(e), Step::Resolve(r)] if e.id == "a" && r.id == "b"
     ));
 }
@@ -109,7 +109,7 @@ fn an_entry_for_a_disabled_repo_is_removed_and_gets_no_step() {
     let want = vec![Drift::Removed("a".into())];
     assert_eq!(lock_drift(&set, Some(&locked)), want);
     let plan = plan_lock(&set, Some(&locked), &[], false).unwrap();
-    assert!(plan.steps.is_empty());
+    assert!(plan.is_empty());
 }
 
 #[test]
@@ -164,8 +164,7 @@ fn resolved(reresolve: &[&str]) -> Vec<String> {
     let locked = three_locked();
     let reresolve: Vec<String> = reresolve.iter().map(ToString::to_string).collect();
     let plan = plan_lock(&set, Some(&locked), &reresolve, false).unwrap();
-    plan.steps
-        .iter()
+    plan.iter()
         .filter_map(|s| match s {
             Step::Resolve(r) => Some(r.id.to_string()),
             Step::Reuse(_) => None,
@@ -209,7 +208,7 @@ fn offline_with_a_current_lock_plans_normally() {
     let config = parse(A).unwrap();
     let set = active(&config);
     let plan = plan_lock(&set, Some(&lock(vec![a_entry()])), &[], true).unwrap();
-    assert!(matches!(plan.steps.as_slice(), [Step::Reuse(_)]));
+    assert!(matches!(plan.as_slice(), [Step::Reuse(_)]));
 }
 
 #[test]

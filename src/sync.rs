@@ -10,11 +10,11 @@ use crate::config::Config;
 use crate::diagnostic::Note;
 use crate::edit::Edit;
 use crate::exclude;
-use crate::lock::Lock;
+use crate::lock::{Lock, LockedRepo};
 pub use crate::plan::{Checkout, Hint, Outcome};
 use crate::plan::{
-    Checkouts, Drift, ExcludeAction, Plan, RepoAction, Step, check_outcome, lock_drift, locked,
-    plan_checkouts, plan_lock, shrunk_lock,
+    Checkouts, Drift, Exclude, Plan, RepoAction, Step, check_outcome, lock_drift, plan_checkouts,
+    plan_lock, shrunk_lock,
 };
 use crate::project;
 use crate::source::Source;
@@ -82,11 +82,15 @@ impl Report {
         self
     }
 
-    fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
+    fn with(outcome: Outcome, diagnostics: Vec<miette::Report>) -> Report {
         Report {
-            diagnostics: vec![miette::Report::new(error)],
-            ..Report::new(Outcome::Failed)
+            diagnostics,
+            ..Report::new(outcome)
         }
+    }
+
+    fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
+        Report::with(Outcome::Failed, vec![miette::Report::new(error)])
     }
 
     fn with_drift(mut self, drift: Vec<Drift>) -> Report {
@@ -191,10 +195,7 @@ fn plan_and_apply(
     let plan = match plan_stage_two(source, root, config, active, &stage_one.lock, flags.force) {
         Ok(plan) => plan,
         Err(errors) => {
-            let stage_two = Report {
-                diagnostics: errors,
-                ..Report::new(Outcome::Failed)
-            };
+            let stage_two = Report::with(Outcome::Failed, errors);
             return finish(stage_one, drift, stage_two);
         }
     };
@@ -396,16 +397,14 @@ fn stage_two_gate<'a>(
 ) -> Result<Plan<'a>, Report> {
     match plan_stage_two(source, root, config, active, lock, force) {
         Ok(plan) if plan.refusals.is_empty() => Ok(plan),
-        Ok(plan) => Err(Report {
-            diagnostics: plan.refusals.into_iter().map(miette::Report::new).collect(),
-            ..Report::new(Outcome::Refused)
-        }
+        Ok(plan) => Err(Report::with(
+            Outcome::Refused,
+            plan.refusals.into_iter().map(miette::Report::new).collect(),
+        )
         .with_hint(Hint::ConfigUnchanged)),
-        Err(errors) => Err(Report {
-            diagnostics: errors,
-            ..Report::new(Outcome::Failed)
+        Err(errors) => {
+            Err(Report::with(Outcome::Failed, errors).with_hint(Hint::ConfigUnchangedUnobserved))
         }
-        .with_hint(Hint::ConfigUnchangedUnobserved)),
     }
 }
 
@@ -429,18 +428,18 @@ fn resolve_all(
     old: Option<&Lock>,
     flags: &SyncFlags,
 ) -> Result<Lock, Report> {
-    let plan =
-        plan_lock(active, old, &flags.reresolve, flags.offline).map_err(|refusal| Report {
-            diagnostics: vec![miette::Report::new(refusal)],
-            ..Report::new(Outcome::Refused)
-        })?;
+    let steps = plan_lock(active, old, &flags.reresolve, flags.offline)
+        .map_err(|refusal| Report::with(Outcome::Refused, vec![refusal.into()]))?;
     let mut errors: Vec<miette::Report> = Vec::new();
     let mut entries = Vec::new();
-    for step in plan.steps {
+    for step in steps {
         match step {
             Step::Reuse(entry) => entries.push(entry),
             Step::Resolve(repo) => match source.resolve(repo) {
-                Ok(pin) => entries.push(locked(repo, pin)),
+                Ok(pin) => entries.push(LockedRepo {
+                    id: repo.id.into(),
+                    pin,
+                }),
                 Err(e) => errors.push(e.for_repo(repo.id)),
             },
         }
@@ -458,10 +457,7 @@ fn resolve_all(
     if errors.is_empty() {
         Ok(Lock::new(passed))
     } else {
-        Err(Report {
-            diagnostics: errors,
-            ..Report::new(Outcome::Failed)
-        })
+        Err(Report::with(Outcome::Failed, errors))
     }
 }
 
@@ -518,10 +514,10 @@ fn plan_stage_two<'a>(
 /// `--check`: report what applying the plan would do.
 fn check(plan: Plan, lock_drifted: bool) -> Report {
     let outcome = check_outcome(Some(&plan), lock_drifted);
-    Report {
-        diagnostics: plan.refusals.into_iter().map(miette::Report::new).collect(),
-        ..Report::new(outcome)
-    }
+    Report::with(
+        outcome,
+        plan.refusals.into_iter().map(miette::Report::new).collect(),
+    )
 }
 
 /// Apply the plan (ADR 0006). A failure does not stop the other Repos. The Agent files are
@@ -567,14 +563,14 @@ fn apply(
         }
     }
     match plan.exclude {
-        Some(ExcludeAction::Ensure) => {
+        Exclude::Missing => {
             if let Err(e) = exclude::ensure(root, references_dir) {
                 diagnostics.push(e.into());
                 outcome = Outcome::Failed;
             }
         }
-        Some(ExcludeAction::NoGit) => diagnostics.push(Note::NoGitRepo.into()),
-        None => {}
+        Exclude::NoGit => diagnostics.push(Note::NoGitRepo.into()),
+        Exclude::Present => {}
     }
     Report {
         changes,

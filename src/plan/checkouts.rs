@@ -180,14 +180,6 @@ pub struct WriteAgentFile {
     pub text: String,
 }
 
-/// What the plan does about the exclude rule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExcludeAction {
-    Ensure,
-    /// Not a git repository: say so, there is nothing to do.
-    NoGit,
-}
-
 /// Stage 2's decisions, by what they act on (ADR 0006). The executor runs `repos` (a
 /// failure of one does not stop the others), then reports `refusals`, then runs `writes`
 /// only if no `gates_writes` action failed, each independently, then the exclude rule.
@@ -196,7 +188,8 @@ pub struct Plan<'a> {
     /// Removals of non-active names first, then the active Repos in block order.
     pub repos: Vec<RepoAction<'a>>,
     pub writes: Vec<WriteAgentFile>,
-    pub exclude: Option<ExcludeAction>,
+    /// The plan acts only on `Missing` (ensure the rule) and `NoGit` (say so).
+    pub exclude: Exclude,
     pub refusals: Vec<Refusal>,
 }
 
@@ -222,7 +215,7 @@ impl Plan<'_> {
         !self.repos.is_empty()
             || !self.writes.is_empty()
             || !self.refusals.is_empty()
-            || self.exclude == Some(ExcludeAction::Ensure)
+            || self.exclude == Exclude::Missing
     }
 }
 
@@ -314,15 +307,10 @@ pub fn plan_checkouts<'a>(
     if !refusals.is_empty() {
         writes.clear();
     }
-    let exclude = match project.exclude {
-        Exclude::Present => None,
-        Exclude::Missing => Some(ExcludeAction::Ensure),
-        Exclude::NoGit => Some(ExcludeAction::NoGit),
-    };
     Plan {
         repos: stale.into_iter().chain(current).collect(),
         writes,
-        exclude,
+        exclude: project.exclude,
         refusals,
     }
 }

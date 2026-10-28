@@ -16,7 +16,7 @@ use crate::lock::{Lock, LockedRepo};
 /// takes). `references_dir` is `Settings::references_dir`. The Lock must have an entry for
 /// every active Repo: `plan` makes sure of it before it renders.
 pub fn render(active: &ActiveSet, lock: &Lock, references_dir: &str) -> String {
-    let locked = |repo: RepoRef| lock.repo.iter().find(|l| l.id == repo.id);
+    let locked = |repo: RepoRef| lock.get(repo.id);
     let repos = || active.sections.iter().flat_map(|s| &s.repos);
     let first_id = repos().next().map(|r| r.id);
     let first_package = repos()
