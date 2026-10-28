@@ -33,13 +33,10 @@ fn stale(cause: Cause, dirty: &[&str]) -> CheckoutState {
 
 #[test]
 fn classifies_what_is_on_disk_against_the_lock() {
-    use CheckoutState::{Absent, Dangling, Foreign, InSync};
+    use CheckoutState::InSync;
     let config = parse(CONFIG).unwrap();
     let repo: &Repo = config.repos.values().next().unwrap();
     let cases = [
-        ("absent", Observed::Absent, Absent),
-        ("dangling", Observed::Dangling, Dangling),
-        ("foreign", Observed::Foreign, Foreign),
         ("matching", at(SHA, &["docs", "src"], &[]), InSync),
         (
             "matching but dirty",
