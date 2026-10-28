@@ -34,7 +34,7 @@ pub(super) fn prettier(site: &Site) -> Finding {
     if site.in_use(&site.present(PRETTIER), &signals).is_none() {
         return Finding::Absent;
     }
-    match site.any_names_dir(&[".prettierignore"]) {
+    match site.lists_dir(".prettierignore") {
         true => Finding::Covered,
         false => Finding::gap(".prettierignore", format!("{}/", site.seen)),
     }

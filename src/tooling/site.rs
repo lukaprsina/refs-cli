@@ -68,6 +68,21 @@ impl Site {
         })
     }
 
+    /// Whether a line of the ignore file `file` is the references directory: `.references`,
+    /// `/.references/`, or the path to it from here. A comment, a negation or a longer path is not.
+    /// A line with no leading `/` also covers by the bare name, which matches at any depth; one
+    /// with it is anchored here.
+    pub(super) fn lists_dir(&self, file: &str) -> bool {
+        let Some(text) = self.text(file) else {
+            return false;
+        };
+        text.lines().any(|line| {
+            let line = line.trim();
+            let path = line.strip_prefix('/').unwrap_or(line).trim_end_matches('/');
+            path == self.seen || (path == self.name && !line.starts_with('/'))
+        })
+    }
+
     /// A top-level key of `package.json`.
     pub(super) fn package_key(&self, key: &str) -> bool {
         self.package

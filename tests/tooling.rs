@@ -135,6 +135,63 @@ fn prettier_is_covered_by_the_directory_in_prettierignore() {
     assert_eq!(gaps(dir.path(), DIR, &[]), []);
 }
 
+/// A directory with a `.prettierignore` of this text.
+fn prettierignore(text: &str) -> TempDir {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join(".prettierignore"), text).unwrap();
+    dir
+}
+
+#[test]
+fn a_prettierignore_line_covers_when_it_is_the_directory() {
+    for text in [
+        ".references",
+        "/.references",
+        ".references/",
+        "/.references/\n",
+        "dist\r\n.references/\r\n",
+        "  .references/  \n",
+    ] {
+        let dir = prettierignore(text);
+
+        assert_eq!(gaps(dir.path(), DIR, &[]), [], "{text:?}");
+    }
+}
+
+#[test]
+fn a_prettierignore_line_that_is_not_the_directory_does_not_cover() {
+    for text in [
+        "# .references",
+        "!.references",
+        ".references-old/",
+        "x.references",
+        "docs/.references",
+        ".references/**/*.md",
+        "foo # .references",
+    ] {
+        let dir = prettierignore(text);
+
+        assert_eq!(tools(&gaps(dir.path(), DIR, &[])), ["prettier"], "{text:?}");
+    }
+}
+
+#[test]
+fn a_prettierignore_above_the_project_covers_by_the_path_to_it_or_the_bare_name() {
+    for (text, covered) in [
+        ("apps/web/.references/", true),
+        ("/apps/web/.references", true),
+        (".references", true),
+        ("/.references", false),
+        ("apps/.references", false),
+    ] {
+        let (_repo, top, project) = worktree();
+        fs::write(top.join(".prettierignore"), text).unwrap();
+
+        let expected: &[&str] = if covered { &[] } else { &["prettier"] };
+        assert_eq!(tools(&gaps(&project, DIR, &[])), expected, "{text:?}");
+    }
+}
+
 #[test]
 fn oxlint_and_tsc_are_not_reported() {
     let dir = TempDir::new().unwrap();
