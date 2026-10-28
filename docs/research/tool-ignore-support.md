@@ -116,6 +116,19 @@ README says: "Exclude it yourself in Ruff, Biome, Stylelint and your editor."
   extend-exclude = '^/\.references/'
   ```
   `--force-exclude` also applies to explicitly passed files (editors, pre-commit).
+- **Fifth pass (2026-10-28), Black 26.10.1, scratch repo under `~/.cache` (deleted), only `/.references/` in `.git/info/exclude`, `black --check`; `src/bad.py` was reported in every case.** Whether `.references/x/bad.py` was reported:
+
+  | Setting | Reported |
+  |---|---|
+  | none | yes |
+  | `exclude`, `extend-exclude` or `force-exclude` naming the directory (`^/\.references/`, `\.references`, `.references`) | no, all nine |
+  | `extend-exclude = '^/other/\|^/\.references/'` | no |
+  | `exclude = '^/nothing/'` and `/.references/` in `.gitignore` | **yes** |
+  | `/.references/` in `.gitignore`, no options | no |
+  | `/.references/` in `.gitignore`, `extend-exclude = '^/other/'` | no |
+  | explicit file arguments | only `force-exclude` hides it |
+
+  So all three options cover; `exclude` replaces the `.gitignore` handling and `extend-exclude` keeps it; `force-exclude` is the only one that also covers files passed explicitly (editors, pre-commit). Not run: other Black versions, a nested `.references`, Windows paths, pre-commit or editor runs.
 - Config: `[tool.black]` in `pyproject.toml`.
 
 ### Biome
@@ -281,4 +294,4 @@ Problems in the Gemini note:
 - VS Code: defaults of `search.useIgnoreFiles`, `explorer.excludeGitIgnore`, `files.watcherExclude`; workspace settings path in docs; tsserver loose-file behavior.
 - Zed: why `info/exclude` had no effect in 1.25.3 on Windows (other platforms, a `.gitignore` control run, and linked worktrees not tried).
 - JetBrains: `.iml` format, scope XML file format, `file:*//*`, indexing of git-ignored files, IDEA-specific File Types page.
-- mypy: release that added `exclude_gitignore`. Black: release that added gitignore support.
+- mypy: release that added `exclude_gitignore`. Black: release that added gitignore support. Black: other versions, a nested `.references`, Windows paths and pre-commit or editor runs (fifth pass).
