@@ -287,6 +287,8 @@ Problems in the Gemini note:
 
 - Oxlint and Oxfmt: the first release honoring `info/exclude` (Oxfmt) and whether `package.json` config is read (Oxlint).
 - Prettier: reading `.gitignore` for a Project below the directory of the Prettier config (docs only; refs counts the `.gitignore` of the config's own directory).
+- ESLint 8 (legacy config): that it skips dot-folders by default is from its docs, not run; it does not when the path to lint is itself a dot-folder. refs reports no gap for the legacy files on that basis.
+- Signals from `package.json` dependencies and `.pre-commit-config.yaml` hooks (spec 7.6) go beyond what this note studied; they are refs's heuristics for "in use".
 - Biome: `vcs.root` in monorepos; a `vcs` section inherited through `extends`.
 - markdownlint-cli2: `gitignore` given as a glob string (only `true` was run); it reads `.gitignore`, so it is no cover while refs writes only `info/exclude`.
 - mypy, pyright: docs/source only, no local run.
