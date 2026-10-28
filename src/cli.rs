@@ -377,12 +377,12 @@ fn dispatch(
         }
         Command::Config(ConfigCommand::List(args)) => {
             let project = commands::load(start, console)?;
-            if args.status {
-                let source = commands::source(make_source, &project, console)?;
-                commands::list_status(&*source, &project, color, console)
+            let source = if args.status {
+                Some(commands::source(make_source, &project, console)?)
             } else {
-                commands::list(&project, color, console)
-            }
+                None
+            };
+            commands::list(&project, source.as_deref(), color, console)
         }
         Command::Config(ConfigCommand::Add { repo, flags, input }) => {
             // With no `refs.toml` yet, `add` makes one (ADR 0005).

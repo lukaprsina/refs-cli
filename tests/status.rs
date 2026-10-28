@@ -1,6 +1,6 @@
 //! `refs list --status`, through `cli::run_with` against the fake `Source`: the Lock read from
 //! the project root and the Checkouts inspected through the `Source`, as one line per Repo.
-//! `status::build` is not a seam of its own: only the CLI calls it.
+//! `list::status` is not a seam of its own: only the CLI calls it.
 
 use std::fs;
 
@@ -102,6 +102,29 @@ fn a_dirty_checkout_is_stale_and_a_matching_one_is_in_sync() {
                 "1111111|wrong paths, dirty".to_string()
             ),
             ("same".to_string(), "1111111|ok".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn a_checkout_that_is_gone_or_not_ours_is_missing_or_foreign() {
+    let sha = "1".repeat(40);
+    let source = FakeSource::new();
+    source.seed("alien", Observed::Foreign);
+    let config = "[repos.gone]
+url = \"https://github.com/o/r\"
+[repos.alien]
+url = \"https://github.com/o/r\"
+";
+
+    let (code, stdout, _) = list_status(&source, Some(locked_at(&sha, &["gone", "alien"])), config);
+
+    assert_eq!(code, 0);
+    assert_eq!(
+        states(&stdout),
+        [
+            ("gone".to_string(), "1111111|missing".to_string()),
+            ("alien".to_string(), "1111111|foreign".to_string()),
         ]
     );
 }

@@ -163,26 +163,20 @@ pub(crate) fn update(
     }
 }
 
-/// `refs list`.
-pub(crate) fn list(project: &Project, color: bool, console: &mut Console) -> u8 {
-    console.data(&crate::list::list(&project.config, color));
-    0
-}
-
-/// `refs list --status`: the config, the Lock and the Checkout state of each active repo.
-pub(crate) fn list_status(
-    source: &dyn Source,
+/// `refs list`, with the Lock and the Checkout state of each active repo when there is a
+/// `source` (`--status`).
+pub(crate) fn list(
     project: &Project,
+    source: Option<&dyn Source>,
     color: bool,
     console: &mut Console,
 ) -> u8 {
-    match crate::status::build(source, &project.root, &project.config) {
+    let status = source
+        .map(|source| crate::list::status(source, &project.root, &project.config))
+        .transpose();
+    match status {
         Ok(status) => {
-            console.data(&crate::list::list_status(
-                &project.config,
-                |laid| status.row(laid),
-                color,
-            ));
+            console.data(&crate::list::list(&project.config, status.as_ref(), color));
             0
         }
         Err(reports) => fail_all(reports, console),
