@@ -386,9 +386,12 @@ fn references_dir_defaults_and_loses_a_trailing_slash() {
 #[test]
 fn an_unknown_tool_in_tooling_ignore_is_an_error_on_its_name_that_lists_the_valid_ones() {
     use miette::Diagnostic;
-    let text = "tooling_ignore = [\"eslint\", \"biome\"]\n";
-    code_and_span(text, "refs::config::unknown_tool", "\"biome\"");
+    let text = "tooling_ignore = [\"eslint\", \"rustfmt\"]\n";
+    code_and_span(text, "refs::config::unknown_tool", "\"rustfmt\"");
     let errors = parse(text).unwrap_err();
     let help = errors.errors[0].help().unwrap().to_string();
-    assert_eq!(help, "use one of: prettier, eslint, oxlint, tsc");
+    assert_eq!(
+        help,
+        "use one of: prettier, eslint, black, biome, markdownlint, zed, oxlint, tsc, stylelint"
+    );
 }

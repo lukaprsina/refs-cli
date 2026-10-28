@@ -107,7 +107,7 @@ Without a registry package, pass a git URL or `gh:owner/repo`. In a terminal `re
 
 ## Notes
 
-- Linters, formatters and type checkers may scan `.references/`. `refs sync` says which of Prettier, ESLint, Oxlint and tsc need an exclude; refs never edits their files. Exclude it yourself in Ruff, Biome, Stylelint and your editor.
+- Some tools scan `.references/` because they don't read `.git/info/exclude`. `refs sync` says which of Prettier, ESLint, Black, Biome, markdownlint-cli2 and Zed need an exclude; refs never edits their files. Ruff, Oxlint, Oxfmt, ty, dprint, ripgrep, Helix, VS Code search and Neovim's pickers already skip it. In JetBrains, right-click the directory and Mark Directory as Excluded.
 - `rg` skips `.references/` by default; pass the path (`rg foo .references/huggingface_hub`).
 - Checkouts are read-only. `--force` discards local changes in one.
 - Claude Code ignores `AGENTS.md` if a `CLAUDE.md` exists. Add `CLAUDE.md` to `agents_files` in `refs.toml`.

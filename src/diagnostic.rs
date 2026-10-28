@@ -445,8 +445,19 @@ pub enum Note {
     Recreated { id: String },
 
     #[error("{} does not exclude the references directory", .gap.tool)]
-    #[diagnostic(code(refs::tooling::gap), help("add this to {}: {}", .gap.file, .gap.snippet))]
+    #[diagnostic(code(refs::tooling::gap), help("{}", .gap.advice()))]
     ToolingGap { gap: Gap },
+
+    #[error("editors may still list the references directory")]
+    #[diagnostic(
+        code(refs::tooling::editor_hint),
+        help(
+            "Zed: add `\"file_scan_exclusions\": [\"**/{references_dir}\", \"...\"]` to .zed/settings.json. \
+             JetBrains: right-click {references_dir}, Mark Directory as, Excluded. \
+             VS Code search, Helix and Neovim already skip it."
+        )
+    )]
+    EditorHint { references_dir: String },
 }
 
 /// Why `refs init` stopped.

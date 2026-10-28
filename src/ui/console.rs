@@ -45,6 +45,13 @@ impl<'w> Console<'w> {
         let _ = writeln!(self.err, "{line}");
     }
 
+    /// Advice nobody has to act on: a report that `-q` silences, unlike a problem.
+    pub(crate) fn advice(&mut self, report: impl std::fmt::Debug) {
+        if !self.quiet {
+            self.report(report);
+        }
+    }
+
     pub(crate) fn report(&mut self, report: impl std::fmt::Debug) {
         self.problem(format!("{report:?}"));
     }

@@ -311,6 +311,117 @@ fn the_binary_init_reports_on_stderr_without_a_sync_hint_and_a_second_run_change
     );
 }
 
+#[test]
+fn the_binary_init_prints_the_editor_hint_with_the_new_config_only() {
+    let b = Binary::new();
+    git(b.dir.path(), &["init", "-q"]);
+
+    let first = b.run(&["init", "--here"]);
+    let second = b.run(&["init", "--here"]);
+
+    assert!(
+        first.stderr.contains("refs::tooling::editor_hint"),
+        "{}",
+        first.stderr
+    );
+    assert!(
+        first.stderr.contains("file_scan_exclusions"),
+        "{}",
+        first.stderr
+    );
+    assert!(
+        first.stderr.contains("Mark Directory as"),
+        "{}",
+        first.stderr
+    );
+    assert!(!second.stderr.contains("editor_hint"), "{}", second.stderr);
+    let quiet = Binary::new();
+    git(quiet.dir.path(), &["init", "-q"]);
+    assert_eq!(quiet.run(&["-q", "init", "--here"]).stderr, "");
+}
+
+mod editor_hint {
+    use super::*;
+
+    const HINT: &str = "refs::tooling::editor_hint";
+    const REPO: &str = "https://github.com/o/b";
+
+    #[test]
+    fn the_add_that_gives_a_project_its_first_active_repo_prints_it() {
+        let p = Project::new("");
+
+        let ran = p.run(&["add", REPO]);
+
+        assert_eq!(ran.code, 0, "{}", ran.stderr);
+        assert!(ran.stderr.contains(HINT), "{}", ran.stderr);
+    }
+
+    #[test]
+    fn so_does_one_that_does_not_sync() {
+        let p = Project::new("");
+
+        let ran = p.run(&["add", "--no-sync", REPO]);
+
+        assert!(ran.stderr.contains(HINT), "{}", ran.stderr);
+    }
+
+    #[test]
+    fn a_repo_added_to_a_project_that_has_one_does_not() {
+        let p = Project::new("[repos.a]\nurl = \"https://github.com/o/a\"\n");
+
+        let ran = p.run(&["add", REPO]);
+
+        assert!(!ran.stderr.contains(HINT), "{}", ran.stderr);
+    }
+
+    #[test]
+    fn a_repo_added_beside_only_disabled_ones_counts_as_the_first() {
+        let p = Project::new("[repos.a]\nurl = \"https://github.com/o/a\"\nenabled = false\n");
+
+        let ran = p.run(&["add", REPO]);
+
+        assert!(ran.stderr.contains(HINT), "{}", ran.stderr);
+    }
+
+    #[test]
+    fn enabling_a_repo_does_not() {
+        let p = Project::new("[repos.a]\nurl = \"https://github.com/o/a\"\nenabled = false\n");
+
+        let ran = p.run(&["enable", "a"]);
+
+        assert_eq!(ran.code, 0, "{}", ran.stderr);
+        assert!(!ran.stderr.contains(HINT), "{}", ran.stderr);
+    }
+
+    #[test]
+    fn sync_never_prints_it() {
+        let p = Project::new("[repos.a]\nurl = \"https://github.com/o/a\"\n");
+
+        let ran = p.run(&["sync"]);
+
+        assert!(!ran.stderr.contains(HINT), "{}", ran.stderr);
+    }
+
+    #[test]
+    fn q_silences_it() {
+        let p = Project::new("");
+
+        let ran = p.run(&["-q", "add", REPO]);
+
+        assert_eq!(ran.code, 0);
+        assert_eq!(ran.stderr, "");
+    }
+
+    #[test]
+    fn names_the_references_directory_of_the_project() {
+        let p = Project::new("[settings]\nreferences_dir = \".refs\"\n");
+
+        let ran = p.run(&["add", REPO]);
+
+        assert!(ran.stderr.contains(r#""**/.refs""#), "{}", ran.stderr);
+    }
+}
+
 mod tooling_gap {
     use super::*;
 
@@ -340,6 +451,21 @@ mod tooling_gap {
             "{}",
             ran.stderr
         );
+    }
+
+    #[test]
+    fn a_tool_with_no_file_to_edit_is_told_to_create_one() {
+        let p = Project::new(ONE);
+        fs::write(p.dir.path().join(".prettierrc"), "{}\n").unwrap();
+
+        let ran = p.run(&["sync"]);
+
+        assert!(
+            ran.stderr.contains("create .prettierignore"),
+            "{}",
+            ran.stderr
+        );
+        assert!(!ran.stderr.contains("add this to"), "{}", ran.stderr);
     }
 
     #[test]

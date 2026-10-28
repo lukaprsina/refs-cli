@@ -7,7 +7,6 @@ use crate::project;
 use crate::ui::{Console, fail};
 
 const REMINDERS: &str = "Add a repo with `refs add`, e.g. `refs add gh:owner/repo`.
-Linters, formatters and type checkers are yours to configure: exclude the references dir from them.
 Claude Code reads AGENTS.md only when there is no CLAUDE.md; to use CLAUDE.md, list it in `agents_files`.";
 
 pub(crate) fn run(start: &Path, here: bool, console: &mut Console) -> u8 {
@@ -22,6 +21,9 @@ pub(crate) fn run(start: &Path, here: bool, console: &mut Console) -> u8 {
             if done.config_created {
                 console.status(format_args!("created {}", project::CONFIG_FILE));
                 console.status(REMINDERS);
+                console.advice(miette::Report::new(Note::EditorHint {
+                    references_dir: done.references_dir,
+                }));
             } else {
                 console.status("nothing changed");
             }

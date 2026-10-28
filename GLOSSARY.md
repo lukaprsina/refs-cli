@@ -115,7 +115,7 @@ The line that keeps the references directory out of default search, kept in the 
 _Avoid_: gitignore entry
 
 **Tooling gap**:
-A linter, formatter or type checker whose configuration does not exclude the references directory, so it would read the Checkouts: the Exclude rule does not reach tools that follow only their own config or `.gitignore`. refs only reports it, with the lines to add; it never edits the tool's files.
+A linter, formatter, type checker or editor (Zed) whose configuration does not exclude the references directory, so it would read the Checkouts: the Exclude rule does not reach tools that follow only their own config or `.gitignore`. refs only reports it, with the lines to add; it never edits the tool's files.
 _Avoid_: Warning, missing ignore
 
 **Preamble**:
