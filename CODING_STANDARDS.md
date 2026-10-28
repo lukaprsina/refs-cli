@@ -20,7 +20,7 @@ One rule decides whether a Pin or Checkout matches a Repo. Do not write a second
 
 ## Output
 
-Status lines go to stderr, lowercase, in one wording style; data goes to stdout; `-q` silences status lines but never problems or incomplete-project hints (ADR 0005).
+Status lines go to stderr, lowercase, in one wording style; data goes to stdout; `-q` silences status lines and advice (tooling gaps and the editor hint, spec §7.6) but never problems or incomplete-project hints (ADR 0005).
 
 ## Tests
 
