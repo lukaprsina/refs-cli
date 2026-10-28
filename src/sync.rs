@@ -1,6 +1,7 @@
 //! The `sync` executor (ADR 0006): reads the project, runs the typed actions of the two
-//! plans through `Source`, and collects what happened. Which names are observed, how Lock
-//! entries are built, and how a Plan becomes an outcome are decided in `plan`.
+//! plans through `Source`, and collects what happened into a `Report`. Which names are
+//! observed, how Lock entries are built, and the outcome of `--check` are decided in `plan`;
+//! the Hint is set here, from where a run stopped (`hint`).
 
 use std::path::Path;
 
@@ -11,7 +12,7 @@ use crate::diagnostic::Note;
 use crate::edit::{self, Edit};
 use crate::exclude;
 use crate::lock::{Lock, LockedRepo};
-pub use crate::plan::Checkout;
+pub use crate::plan::{Checkout, Outcome};
 use crate::plan::{
     Checkouts, Drift, Exclude, Plan, RepoAction, Step, lock_drift, plan_checkouts, plan_lock,
     shrunk_lock,
@@ -59,15 +60,6 @@ impl Changed {
             Changed::AgentFile(_) => 4,
         }
     }
-}
-
-/// How a run ended; the CLI maps it to an exit code (0, 3, 1, 1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Outcome {
-    InSync,
-    OutOfDate,
-    Refused,
-    Failed,
 }
 
 /// The follow-up the CLI gives a user whose project a run left incomplete or failed, named
@@ -525,16 +517,8 @@ fn plan_stage_two<'a>(
 }
 
 /// `--check`: report what applying the plan would do.
-/// A refusal outranks drift, since "run `refs sync`" is the wrong advice when `sync` will also
-/// refuse.
 fn check(plan: Plan, lock_drifted: bool) -> Report {
-    let outcome = if !plan.refusals.is_empty() {
-        Outcome::Refused
-    } else if plan.is_drift() || lock_drifted {
-        Outcome::OutOfDate
-    } else {
-        Outcome::InSync
-    };
+    let outcome = plan.outcome(lock_drifted);
     let refusals = plan.refusals.into_iter().map(miette::Report::new);
     Report::new(outcome, refusals.collect())
 }
