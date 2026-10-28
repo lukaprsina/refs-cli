@@ -21,8 +21,8 @@ const PRETTIER: &[&str] = &[
     "prettier.config.ts",
 ];
 
-/// Prettier skips what `.prettierignore` names: its config and `package.json` have no ignore
-/// option (research note).
+/// Prettier skips what `.prettierignore` or the `.gitignore` of its working directory names: its
+/// config and `package.json` have no ignore option (research note).
 pub(super) fn prettier(site: &Site) -> Finding {
     let signals = [
         (
@@ -34,7 +34,7 @@ pub(super) fn prettier(site: &Site) -> Finding {
     if site.in_use(&site.present(PRETTIER), &signals).is_none() {
         return Finding::Absent;
     }
-    match site.lists_dir(".prettierignore") {
+    match site.lists_dir(".prettierignore") || site.lists_dir(".gitignore") {
         true => Finding::Covered,
         false => Finding::gap(".prettierignore", format!("{}/", site.seen)),
     }

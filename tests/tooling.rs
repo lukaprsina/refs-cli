@@ -193,6 +193,84 @@ fn a_prettierignore_above_the_project_covers_by_the_path_to_it_or_the_bare_name(
 }
 
 #[test]
+fn a_gitignore_line_covers_prettier_from_the_same_directory() {
+    let covered = TempDir::new().unwrap();
+    fs::write(covered.path().join(".prettierrc"), "{}").unwrap();
+    fs::write(covered.path().join(".gitignore"), "dist\n/.references/\n").unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    fs::write(elsewhere.path().join(".prettierrc"), "{}").unwrap();
+    fs::write(elsewhere.path().join(".gitignore"), "# .references\n").unwrap();
+
+    assert_eq!(gaps(covered.path(), DIR, &[]), []);
+    assert_eq!(tools(&gaps(elsewhere.path(), DIR, &[])), ["prettier"]);
+}
+
+#[test]
+fn a_gitignore_above_the_prettier_config_is_not_read() {
+    // Prettier reads `.gitignore` of its working directory only.
+    let (_repo, top, project) = worktree();
+    fs::write(top.join(".gitignore"), "apps/web/.references/\n").unwrap();
+    fs::write(project.join(".prettierrc"), "{}").unwrap();
+
+    assert_eq!(tools(&gaps(&project, DIR, &[])), ["prettier"]);
+}
+
+#[test]
+fn a_gitignore_line_does_not_cover_markdownlint() {
+    // Its `gitignore` option is off by default.
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join(".markdownlint-cli2.jsonc"), "{}").unwrap();
+    fs::write(dir.path().join(".gitignore"), ".references/\n").unwrap();
+
+    assert_eq!(tools(&gaps(dir.path(), DIR, &[])), ["markdownlint"]);
+}
+
+/// A directory with a `pyproject.toml` of this text and a `.gitignore` naming the directory.
+fn black_with_gitignore(pyproject: &str) -> TempDir {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("pyproject.toml"), pyproject).unwrap();
+    fs::write(dir.path().join(".gitignore"), "/.references/\n").unwrap();
+    dir
+}
+
+#[test]
+fn a_gitignore_line_covers_black_unless_exclude_replaces_it() {
+    for (table, covered) in [
+        ("[tool.black]\nline-length = 100\n", true),
+        ("[tool.black]\nextend-exclude = '^/other/'\n", true),
+        ("[tool.black]\nforce-exclude = '^/other/'\n", true),
+        ("[tool.black]\nexclude = '^/nothing/'\n", false),
+    ] {
+        let dir = black_with_gitignore(table);
+
+        let expected: &[&str] = if covered { &[] } else { &["black"] };
+        assert_eq!(tools(&gaps(dir.path(), DIR, &[])), expected, "{table}");
+    }
+}
+
+#[test]
+fn a_gitignore_line_covers_black_found_only_by_its_hook() {
+    let dir = TempDir::new().unwrap();
+    fs::write(
+        dir.path().join(".pre-commit-config.yaml"),
+        "repos:\n  - repo: x\n    hooks:\n      - id: black\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join(".gitignore"), ".references\n").unwrap();
+
+    assert_eq!(gaps(dir.path(), DIR, &[]), []);
+}
+
+#[test]
+fn a_gitignore_without_the_directory_does_not_cover_black() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("pyproject.toml"), "[tool.black]\n").unwrap();
+    fs::write(dir.path().join(".gitignore"), "build/\n# .references\n").unwrap();
+
+    assert_eq!(tools(&gaps(dir.path(), DIR, &[])), ["black"]);
+}
+
+#[test]
 fn oxlint_and_tsc_are_not_reported() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join(".oxlintrc.json"), "{}").unwrap();

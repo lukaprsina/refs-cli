@@ -286,6 +286,7 @@ Problems in the Gemini note:
 ## Unverified
 
 - Oxlint and Oxfmt: the first release honoring `info/exclude` (Oxfmt) and whether `package.json` config is read (Oxlint).
+- Prettier: reading `.gitignore` for a Project below the directory of the Prettier config (docs only; refs counts the `.gitignore` of the config's own directory).
 - Biome: `vcs.root` in monorepos; a `vcs` section inherited through `extends`.
 - markdownlint-cli2: `gitignore` given as a glob string (only `true` was run); it reads `.gitignore`, so it is no cover while refs writes only `info/exclude`.
 - mypy, pyright: docs/source only, no local run.
