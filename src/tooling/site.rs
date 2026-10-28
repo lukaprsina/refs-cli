@@ -113,23 +113,6 @@ impl Site {
                 .any(|found| found.trim().trim_matches(['"', '\'']).starts_with(id))
         })
     }
-
-    /// The files that show a tool is in use here, or `None` if nothing does: its own `present`
-    /// files and the manifests whose signal holds. Besides its own files, a tool is shown by a
-    /// key or entry in a manifest, or a hook in the pre-commit config.
-    pub(super) fn in_use(
-        &self,
-        present: &[&'static str],
-        signals: &[(&'static str, bool)],
-    ) -> Option<Vec<&'static str>> {
-        let mut files = present.to_vec();
-        for &(file, holds) in signals {
-            if holds && !files.contains(&file) {
-                files.push(file);
-            }
-        }
-        (!files.is_empty()).then_some(files)
-    }
 }
 
 /// Whether a string anywhere in `json` satisfies `test`.
