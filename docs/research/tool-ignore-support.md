@@ -49,6 +49,7 @@ README says: "Exclude it yourself in Ruff, Biome, Stylelint and your editor."
 ### Prettier
 - Ignore: `.prettierignore` (gitignore syntax) and `./.gitignore`; defaults are `.git/.jj/.sl/.svn/.hg` and `node_modules`. "`--ignore-path` ... By default, Prettier looks for `./.gitignore` and `./.prettierignore`." https://prettier.io/docs/ignore , https://prettier.io/docs/cli
 - `.git/info/exclude` and `.ignore` are not read. Tested (3.9.10): with `/.references/` only in `info/exclude`, and again with it only in `.ignore`, `prettier --check .` listed `.references/dep/bad.ts` etc. With it in `.gitignore` or `.prettierignore`: 0 hits. Source: file expansion in https://github.com/prettier/prettier/blob/main/src/cli/expand-patterns.js uses fast-glob with only the VCS-dir/node_modules ignorer; ignore files are applied through `createIsIgnoredFunction(ignorePath)` in https://github.com/prettier/prettier/blob/main/src/cli/format.js .
+- **Run (2026-10-28, Prettier 3.9.10, scratch repo under `~/.cache`, deleted):** with `/.references/` only in `info/exclude`, `prettier --check .` listed `.references/x/bad.js`. A `.gitignore` line of `/.references/`, `.references` or `.references/**` hid it; `.references` followed by `!.references` did not; `.prettierignore` hid it. A Project in `apps/web` with the line in the top `.gitignore` (`apps/web/.references/`), run from `apps/web`: listed (the parent `.gitignore` is not read); the line in `apps/web/.gitignore`: hidden.
 - Exclude: `.prettierignore`, gitignore syntax, relative to the ignore file's directory.
   ```
   # .prettierignore
@@ -286,7 +287,6 @@ Problems in the Gemini note:
 ## Unverified
 
 - Oxlint and Oxfmt: the first release honoring `info/exclude` (Oxfmt) and whether `package.json` config is read (Oxlint).
-- Prettier: reading `.gitignore` for a Project below the directory of the Prettier config (docs only; refs counts the `.gitignore` of the config's own directory).
 - ESLint 8 (legacy config): that it skips dot-folders by default is from its docs, not run; it does not when the path to lint is itself a dot-folder. refs reports no gap for the legacy files on that basis.
 - Signals from `package.json` dependencies and `.pre-commit-config.yaml` hooks (spec 7.6) go beyond what this note studied; they are refs's heuristics for "in use".
 - Biome: `vcs.root` in monorepos; a `vcs` section inherited through `extends`.
