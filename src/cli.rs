@@ -1,6 +1,7 @@
-//! The command line: parsing and the entry points. What to do is decided by `sync`, `plan`, `add`
-//! and `update`; this module parses the arguments into plain values and, in `dispatch`, strings the steps
-//! in `commands` together for each command, which reports through `ui`.
+//! The command line: parsing and the entry points. What to do is decided by `sync`, `plan`, `add`,
+//! `update`, `init` and `self_update`; this module parses the arguments into plain values and, in
+//! `dispatch`, strings the steps together for each command: load the project, build the `Source`
+//! when the command syncs, run and print the report, give the exit code. It reports through `ui`.
 //!
 //! The `Source` is injected into `run` as a function of the loaded project (the real one
 //! needs its root and `references_dir`): tests return the fake in-process (the `testing`
@@ -13,15 +14,17 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::add::Asking;
-use crate::commands;
+use crate::add;
 use crate::edit::{AddRepo, Edit, Target};
+use crate::init;
+use crate::list;
+use crate::project::{self, Project};
 use crate::registry::{self, Registry};
 use crate::self_update::{self, Updater};
-use crate::source::MakeSource;
+use crate::source::{MakeSource, Source};
 use crate::sync::{self, SyncFlags};
-use crate::ui::{self, Console, EXIT_ERROR, Prompter};
-use crate::update;
+use crate::ui::{self, Console, EXIT_ERROR, Prompter, fail, fail_all, failed, skipped};
+use crate::update::{self, Done};
 
 #[derive(Debug, Parser)]
 #[command(name = "refs", version, about)]
@@ -346,13 +349,13 @@ fn dispatch(
     console: &mut Console,
 ) -> Result<u8, u8> {
     let code = match command {
-        Command::Init(args) => commands::init(start, args.here, console),
+        Command::Init(args) => init::run(start, args.here, console),
         Command::SelfCommand(SelfCommand::Update(args)) => {
-            commands::self_update(outside.updater, args.check, console)
+            self_update::run(outside.updater, args.check, console)
         }
         Command::Update(args) => {
-            let project = commands::load(start, console)?;
-            let source = commands::source(make_source, &project, console)?;
+            let project = load(start, console)?;
+            let source = build_source(make_source, &project, console)?;
             let request = update::Request {
                 ids: &args.ids,
                 git_ref: args.git_ref.as_deref(),
@@ -360,35 +363,34 @@ fn dispatch(
                 list: args.list,
             };
             let prompter = args.input.gate(outside.prompter);
-            commands::update(&*source, &project, &request, prompter, console)
+            run_update(&*source, &project, &request, prompter, console)
         }
         Command::List(args) => {
-            let project = commands::load(start, console)?;
+            let project = load(start, console)?;
             let source = if args.status {
-                Some(commands::source(make_source, &project, console)?)
+                Some(build_source(make_source, &project, console)?)
             } else {
                 None
             };
-            commands::list(&project, source.as_deref(), color, console)
+            run_list(&project, source.as_deref(), color, console)
         }
         Command::Add { repo, flags, input } => {
             // With no `refs.toml` yet, `add` makes one (ADR 0005).
-            let project = commands::load_or_create(start, console)?;
+            let project =
+                project::load_or_create(start).map_err(|reports| fail_all(reports, console))?;
             let source = if flags.no_sync {
                 None
             } else {
-                Some(commands::source(make_source, &project, console)?)
+                Some(build_source(make_source, &project, console)?)
             };
-            let asking = Asking {
-                prompter: input.gate(outside.prompter),
-                registry: outside.registry,
-            };
-            commands::add(
+            let prompter = input.gate(outside.prompter);
+            run_add(
                 source.as_deref(),
                 &project,
                 &repo,
                 &flags.sync_flags(),
-                asking,
+                prompter,
+                outside.registry,
                 console,
             )
         }
@@ -414,8 +416,8 @@ fn dispatch(
             console,
         )?,
         Command::Sync(args) => {
-            let project = commands::load(start, console)?;
-            let source = commands::source(make_source, &project, console)?;
+            let project = load(start, console)?;
+            let source = build_source(make_source, &project, console)?;
             let flags = SyncFlags {
                 offline: args.offline,
                 force: args.force,
@@ -429,6 +431,82 @@ fn dispatch(
     Ok(code)
 }
 
+/// The project at or above `start`; on failure the problems are printed and the exit code
+/// returned.
+fn load(start: &Path, console: &mut Console) -> Result<Project, u8> {
+    project::load(start).map_err(|reports| fail_all(reports, console))
+}
+
+/// Build the `Source`; on failure the problem is printed and the exit code returned. Only the
+/// commands that sync ask for one, so the others do not need a cache directory.
+fn build_source(
+    make_source: impl MakeSource,
+    project: &Project,
+    console: &mut Console,
+) -> Result<Box<dyn Source>, u8> {
+    make_source(&project.root, &project.config).map_err(|e| fail(e, console))
+}
+
+/// `refs add`, then its report. `source` is `None` for `--no-sync`.
+fn run_add(
+    source: Option<&dyn Source>,
+    project: &Project,
+    repo: &AddRepo,
+    flags: &SyncFlags,
+    prompter: Option<&mut dyn Prompter>,
+    registry: &dyn Registry,
+    console: &mut Console,
+) -> u8 {
+    match add::run(source, project, repo, flags, prompter, registry, console) {
+        Ok(report) => ui::print_report(&report, false, console),
+        Err(failure) => failed(failure, console),
+    }
+}
+
+/// `refs update`, then its report and the count of the Repos it skipped.
+fn run_update(
+    source: &dyn Source,
+    project: &Project,
+    request: &update::Request,
+    prompter: Option<&mut dyn Prompter>,
+    console: &mut Console,
+) -> u8 {
+    match update::run(source, project, request, prompter, console) {
+        Ok(Done::Listed(listing)) => {
+            console.data(&listing);
+            0
+        }
+        Ok(Done::Ran {
+            report,
+            skipped: skipped_count,
+        }) => {
+            let code = report.map_or(0, |report| ui::print_report(&report, false, console));
+            skipped(skipped_count, code, console)
+        }
+        Err(failure) => failed(failure, console),
+    }
+}
+
+/// `refs list`, with the Lock and the Checkout state of each active repo when there is a
+/// `source` (`--status`).
+fn run_list(
+    project: &Project,
+    source: Option<&dyn Source>,
+    color: bool,
+    console: &mut Console,
+) -> u8 {
+    match source
+        .map(|source| list::status(source, project))
+        .transpose()
+    {
+        Ok(status) => {
+            console.data(&list::list(&project.config, status.as_ref(), color));
+            0
+        }
+        Err(reports) => fail_all(reports, console),
+    }
+}
+
 /// `remove`, `enable` and `disable`: an edit of `refs.toml`, then a sync unless `--no-sync`.
 fn edit(
     start: &Path,
@@ -437,11 +515,11 @@ fn edit(
     flags: &EditFlags,
     console: &mut Console,
 ) -> Result<u8, u8> {
-    let project = commands::load(start, console)?;
+    let project = load(start, console)?;
     let report = if flags.no_sync {
         sync::edit_only(&project.root, &edit)
     } else {
-        let source = commands::source(make_source, &project, console)?;
+        let source = build_source(make_source, &project, console)?;
         sync::edit(&*source, &project.root, &edit, &flags.sync_flags())
     };
     Ok(ui::print_report(&report, false, console))

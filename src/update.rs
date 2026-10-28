@@ -19,10 +19,10 @@ mod ask;
 mod assess;
 
 use crate::active::active;
-use crate::config::Config;
 use crate::edit::{Edit, RepoChange};
 use crate::failure::Failure;
 use crate::lock::Lock;
+use crate::project::Project;
 use crate::source::Source;
 use crate::sync::{self, Report, SyncFlags};
 use crate::ui::{Prompter, Say};
@@ -79,8 +79,7 @@ impl Mode {
 /// as status, skips as problems, and one `id  old → new` line per Repo once the edit was written.
 pub fn run(
     source: &dyn Source,
-    root: &Path,
-    config: &Config,
+    project: &Project,
     request: &Request,
     prompter: Option<&mut dyn Prompter>,
     say: &mut dyn Say,
@@ -88,7 +87,8 @@ pub fn run(
     if request.git_ref.is_some() && request.ids.len() != 1 {
         return Err(Failure::Usage("`--ref` sets the Ref of one repo".into()));
     }
-    let active = active(config);
+    let root = &project.root;
+    let active = active(&project.config);
     let unknown: Vec<String> = request
         .ids
         .iter()

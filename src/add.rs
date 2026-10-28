@@ -16,6 +16,7 @@ use crate::config::Config;
 use crate::edit::{AddRepo, Edit};
 use crate::failure::Failure;
 use crate::manifests::Manifests;
+use crate::project::Project;
 use crate::registry::Registry;
 use crate::source::{Outline, Source};
 use crate::sync::{self, Report, SyncFlags};
@@ -23,22 +24,7 @@ use crate::ui::{Prompter, Say};
 use expand::{Expanded, Requested, expand};
 use pin::{Pinned, pin};
 
-/// Who `add` can ask and what it can ask about.
-pub struct Asking<'a> {
-    /// The person to ask, when stdin and stderr are terminals; `add` drops it under `--no-input`.
-    pub prompter: Option<&'a mut dyn Prompter>,
-    pub registry: &'a dyn Registry,
-}
-
-impl Asking<'_> {
-    pub fn prompter(&mut self) -> Option<&mut dyn Prompter> {
-        self.prompter
-            .as_mut()
-            .map(|p| &mut **p as &mut dyn Prompter)
-    }
-}
-
-/// Add `repo`, as the command line gave it, to the project at `root` and sync it: one edit of
+/// Add `repo`, as the command line gave it, to `project` and sync it: one edit of
 /// `refs.toml` and one sync. It is first made ready (see `prepare`), and when there is someone
 /// to ask, the equivalent command line is said before the edit, so a failed sync does not lose
 /// it. `flags` are for the sync. Without a `source` (`--no-sync`) the repo is only added: there
@@ -46,39 +32,43 @@ impl Asking<'_> {
 /// stay as given.
 pub fn run(
     source: Option<&dyn Source>,
-    root: &Path,
-    config: &Config,
+    project: &Project,
     repo: &AddRepo,
     flags: &SyncFlags,
-    asking: &mut Asking,
+    prompter: Option<&mut dyn Prompter>,
+    registry: &dyn Registry,
     say: &mut dyn Say,
 ) -> Result<Report, Failure> {
     let mut cx = Context {
         source,
-        root,
+        root: &project.root,
         offline: flags.offline,
-        asking,
+        // Unsizing shortens the trait object's lifetime, which `&mut` would keep invariant.
+        prompter: prompter.map(|p| p as &mut dyn Prompter),
+        registry,
         say,
     };
-    let repo = prepare(repo, config, &mut cx)?;
-    if cx.asking.prompter.is_some() {
+    let repo = prepare(repo, &project.config, &mut cx)?;
+    if cx.prompter.is_some() {
         cx.say
             .status(format!("equivalent: {}", ask::equivalent_command(&repo)));
     }
     let edit = Edit::Add(&repo);
     Ok(match source {
-        Some(source) => sync::edit(source, root, &edit, flags),
-        None => sync::edit_only(root, &edit),
+        Some(source) => sync::edit(source, &project.root, &edit, flags),
+        None => sync::edit_only(&project.root, &edit),
     })
 }
 
 /// What the steps of `add` work with besides the repo: where it can look, who it can ask and
 /// how it says what it did.
-struct Context<'a, 'b> {
+struct Context<'a> {
     source: Option<&'a dyn Source>,
     root: &'a Path,
     offline: bool,
-    asking: &'a mut Asking<'b>,
+    /// The person to ask, when stdin and stderr are terminals; `add` drops it under `--no-input`.
+    prompter: Option<&'a mut dyn Prompter>,
+    registry: &'a dyn Registry,
     say: &'a mut dyn Say,
 }
 
@@ -90,7 +80,7 @@ struct Context<'a, 'b> {
 fn prepare(repo: &AddRepo, config: &Config, cx: &mut Context) -> Result<AddRepo, Failure> {
     let mut repo = repo.clone();
     if repo.url.is_empty()
-        && let Some(prompter) = cx.asking.prompter()
+        && let Some(prompter) = cx.prompter.as_deref_mut()
     {
         repo.url = ask::ask_url(prompter).map_err(Failure::Asked)?;
     }
@@ -100,13 +90,13 @@ fn prepare(repo: &AddRepo, config: &Config, cx: &mut Context) -> Result<AddRepo,
         requested,
         description,
         ..
-    } = expand(&repo, cx.asking.registry, cx.offline, &mut *cx.say).map_err(Failure::Registry)?;
+    } = expand(&repo, cx.registry, cx.offline, &mut *cx.say).map_err(Failure::Registry)?;
     // A registry add has chosen its Ref (a tag, or the default branch) unless nothing was pinned.
     let registry_add = requested.is_some();
     cx.settle_ref(&mut repo, requested.as_ref())?;
     let looked = cx.look(&repo, description)?;
     // Only the Manifests a Checkout of `paths` will hold count. None is fetched again.
-    let Some(prompter) = cx.asking.prompter() else {
+    let Some(prompter) = cx.prompter.as_deref_mut() else {
         if repo.packages.is_empty() {
             repo.packages = looked.manifests.packages_for(&repo.paths);
         }
@@ -140,7 +130,7 @@ struct Looked {
     outline: Option<Outline>,
 }
 
-impl Context<'_, '_> {
+impl Context<'_> {
     /// The `ref` of `repo`. A registry add pins its package's version to a tag (`pin`), unless a
     /// `ref` was given with it: `expand` refused that when a version was too, and otherwise the
     /// `ref` is kept as it is. When nothing was pinned, or there was no registry package, the
@@ -155,7 +145,7 @@ impl Context<'_, '_> {
             let version = requested.version.as_deref();
             let package = &requested.package;
             let url = &repo.url;
-            let prompter = self.asking.prompter();
+            let prompter = self.prompter.as_deref_mut();
             let pinned = pin(
                 package,
                 version,
@@ -176,7 +166,7 @@ impl Context<'_, '_> {
         }
         if repo.git_ref.is_none()
             && ask_ref
-            && let Some(prompter) = self.asking.prompter()
+            && let Some(prompter) = self.prompter.as_deref_mut()
         {
             repo.git_ref = ask::ask_ref(prompter).map_err(Failure::Asked)?;
         }
@@ -199,7 +189,7 @@ impl Context<'_, '_> {
         let source = self.source.filter(|_| {
             !repo.url.is_empty()
                 && !self.offline
-                && (self.asking.prompter.is_some() || repo.packages.is_empty())
+                && (self.prompter.is_some() || repo.packages.is_empty())
         });
         let Some(source) = source else {
             return Ok(looked);

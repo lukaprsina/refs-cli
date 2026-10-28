@@ -2,15 +2,31 @@ mod common;
 
 use std::fs;
 
-use refs_cli::init::init;
+use refs_cli::cli::run_with;
+use refs_cli::source::fake::FakeSource;
 use tempfile::TempDir;
+
+/// `refs init` in `dir`: the exit code and everything it printed.
+fn init(dir: &std::path::Path) -> (u8, String) {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = run_with(
+        ["refs", "init", "--no-color"].map(Into::into),
+        dir,
+        |_, _| Ok(Box::new(FakeSource::new())),
+        &mut out,
+        &mut err,
+    );
+    out.extend(err);
+    (code, String::from_utf8(out).unwrap())
+}
 
 #[test]
 fn init_creates_the_config_and_no_block_while_no_repo_is_active() {
     let dir = TempDir::new().unwrap();
-    let done = init(dir.path()).unwrap();
+    let (code, said) = init(dir.path());
 
-    assert!(done.config_created);
+    assert_eq!(code, 0);
+    assert!(said.contains("created refs.toml"), "{said}");
     let config = fs::read_to_string(dir.path().join("refs.toml")).unwrap();
     let parsed = refs_cli::config::parse(&config).unwrap();
     assert!(parsed.repos.is_empty() && parsed.groups.is_empty());
@@ -36,10 +52,11 @@ fn snapshot(dir: &TempDir) -> Vec<(String, String)> {
 #[test]
 fn a_second_init_changes_nothing() {
     let dir = TempDir::new().unwrap();
-    init(dir.path()).unwrap();
+    init(dir.path());
     let first = snapshot(&dir);
-    let done = init(dir.path()).unwrap();
-    assert!(!done.config_created);
+    let (code, said) = init(dir.path());
+    assert_eq!(code, 0);
+    assert!(said.contains("nothing changed"), "{said}");
     assert_eq!(snapshot(&dir), first);
 }
 
@@ -50,7 +67,7 @@ fn init_keeps_an_existing_config_and_leaves_agent_files_alone() {
     fs::write(dir.path().join("refs.toml"), config).unwrap();
     fs::write(dir.path().join("AGENTS.md"), "# Rules\n\nBe kind.\n").unwrap();
 
-    init(dir.path()).unwrap();
+    init(dir.path());
 
     assert_eq!(
         fs::read_to_string(dir.path().join("refs.toml")).unwrap(),
@@ -66,8 +83,8 @@ fn init_keeps_an_existing_config_and_leaves_agent_files_alone() {
 fn init_excludes_the_references_dir_in_a_git_repo() {
     let dir = TempDir::new().unwrap();
     common::git(dir.path(), &["init", "-q"]);
-    init(dir.path()).unwrap();
-    init(dir.path()).unwrap();
+    init(dir.path());
+    init(dir.path());
     let exclude = fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap();
     assert_eq!(
         exclude.lines().filter(|l| *l == "/.references/").count(),
