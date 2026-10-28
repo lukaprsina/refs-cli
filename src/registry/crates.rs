@@ -4,7 +4,6 @@
 use serde::Deserialize;
 
 use super::url::{clean, on_forge};
-use super::used::cargo;
 use super::{Answer, Found, Spec, non_blank, parse};
 
 pub(super) const SPEC: Spec = Spec {
@@ -12,7 +11,7 @@ pub(super) const SPEC: Spec = Spec {
     registry: "crates.io",
     url: "https://crates.io/api/v1/crates/{name}?include=",
     found,
-    lockfiles: &[("Cargo.lock", cargo::used)],
+    lockfiles: &["Cargo.lock"],
 };
 
 #[derive(Deserialize)]

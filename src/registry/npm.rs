@@ -4,7 +4,6 @@
 use serde::Deserialize;
 
 use super::url::{bare_github, clean};
-use super::used::{bun, package_lock, pnpm, yarn};
 use super::{Answer, Found, Spec, non_blank, parse};
 
 pub(super) const SPEC: Spec = Spec {
@@ -13,10 +12,10 @@ pub(super) const SPEC: Spec = Spec {
     url: "https://registry.npmjs.org/{name}/latest",
     found,
     lockfiles: &[
-        ("pnpm-lock.yaml", pnpm::used),
-        ("yarn.lock", yarn::used),
-        ("package-lock.json", package_lock::used),
-        ("bun.lock", bun::used),
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "package-lock.json",
+        "bun.lock",
     ],
 };
 

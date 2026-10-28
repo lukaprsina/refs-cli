@@ -34,9 +34,9 @@ struct Spec {
     url: &'static str,
     /// Reads that document.
     found: fn(&str) -> Answer,
-    /// The ecosystem's Package lockfiles, as file name and format, in the order they are
-    /// preferred when a directory holds more than one.
-    lockfiles: &'static [(&'static str, used::Parser)],
+    /// The file names of the ecosystem's Package lockfiles, in the order they are preferred when
+    /// a directory holds more than one. `used` reads each.
+    lockfiles: &'static [&'static str],
 }
 
 impl Ecosystem {
