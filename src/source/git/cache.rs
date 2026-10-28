@@ -341,8 +341,15 @@ impl Repo {
             ])
             .args(["--filter=blob:none", "origin", "--stdin"])
             .stdin(missing.join("\n") + "\n")
-            .run()?;
-        Ok(())
+            .run()
+            .map(drop)
+            .map_err(|failure| {
+                if commit_unavailable(&failure.stderr) {
+                    SourceError::ObjectsUnavailable
+                } else {
+                    failure.into()
+                }
+            })
     }
 
     /// Every path in the tree of `sha`, in git's order.

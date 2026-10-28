@@ -264,10 +264,19 @@ pub enum SourceError {
     #[diagnostic(
         code(refs::git::commit_unavailable),
         help(
-            "the commit may not exist, or the server may refuse to send a commit by its id (see spec 7.4)"
+            "the commit may not exist, or the server refuses to send a commit by its id. Fetching by id needs git protocol v2 (the default since git 2.26) or `uploadpack.allowReachableSHA1InWant` on the server; a proxy that drops the `Git-Protocol` header forces v0"
         )
     )]
     CommitUnavailable { url: String, sha: String },
+
+    #[error("the remote will not send some of the files this checkout reads")]
+    #[diagnostic(
+        code(refs::git::objects_unavailable),
+        help(
+            "the server may refuse to send an object by its id, or may not have it. Fetching by id needs git protocol v2 (the default since git 2.26) or `uploadpack.allowReachableSHA1InWant` on the server; a proxy that drops the `Git-Protocol` header forces v0"
+        )
+    )]
+    ObjectsUnavailable,
 
     #[error("{url} at {sha} is not in the cache, and `--offline` forbids fetching it")]
     #[diagnostic(

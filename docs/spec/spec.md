@@ -303,7 +303,7 @@ Also:
 
 ### 7.4 Server prerequisites
 
-`--filter=blob:none` needs `uploadpack.allowFilter` on the server; fetch-by-SHA needs protocol v2 (default since git 2.26) or `uploadpack.allowReachableSHA1InWant`. GitHub and GitLab satisfy both; a self-hosted `git-http-backend` may not.
+`--filter=blob:none` needs `uploadpack.allowFilter` on the server; fetch-by-SHA needs protocol v2 (default since git 2.26) or `uploadpack.allowReachableSHA1InWant`. GitHub and GitLab satisfy both; a self-hosted `git-http-backend` may not. A server that refuses a commit by its id fails with `refs::git::commit_unavailable`, and one that refuses the blobs of step 1b with `refs::git::objects_unavailable`; both helps name the remedy (protocol v2, or `uploadpack.allowReachableSHA1InWant`; a proxy that drops the `Git-Protocol` header forces v0).
 
 ### 7.5 Minimum git version: 2.36.0
 

@@ -680,6 +680,29 @@ mod checkout {
     }
 
     #[test]
+    fn a_server_that_refuses_blobs_by_id_is_named_and_the_old_checkout_stays() {
+        let (mut remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        let old = source.inspect("r").unwrap();
+        remote.advance();
+        verify(&source, &remote, &repo, ONLINE).unwrap();
+        // Protocol v0 over a plain server: no fetching an object by its id.
+        git(
+            &env.cache_repo(&remote),
+            &["config", "protocol.version", "0"],
+        );
+
+        assert_eq!(
+            materialise(&source, "r", &remote, &repo, ONLINE),
+            Err("refs::git::objects_unavailable".into())
+        );
+
+        assert_eq!(source.inspect("r").unwrap(), old);
+    }
+
+    #[test]
     fn a_failed_switch_to_another_remote_keeps_the_old_checkout() {
         let (first, second, env) = (Remote::new(), Remote::new(), Env::new());
         let source = env.source();
