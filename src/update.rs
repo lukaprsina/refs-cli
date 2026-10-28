@@ -106,7 +106,7 @@ pub fn run(
         [] => active.repos().map(|repo| repo.id).collect(),
         named => named.iter().map(String::as_str).collect(),
     };
-    let lock = Lock::read(&Lock::path(root)).map_err(Failure::Lock)?;
+    let lock = Lock::read(&Lock::path(root))?;
     let mut assessing = Assessing::new(source, root, lock, prompter, &mut *say, request.force);
     let mut seen = Vec::<&str>::new();
     let mut found = Vec::new();

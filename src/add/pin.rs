@@ -162,7 +162,7 @@ impl Pinning<'_, '_> {
             ));
             return Ok(Pinned::FollowsDefault);
         };
-        let tags = source.tags(self.url).map_err(Failure::Source)?;
+        let tags = source.tags(self.url)?;
         if let Some(tag) = tag_for(name, version, &tags) {
             self.say.status(format!(
                 "pinned `{name}@{version}` to the tag `{tag}`; {HINT}"

@@ -294,7 +294,7 @@ fn another_lockfile_of_the_ecosystem_in_the_same_directory_is_named_as_not_read(
 fn failing_to_list_tags_still_names_what_was_read_first() {
     let dir = project(Some(ONE_SERDE));
     let (pinned, said) = run(None, &dir, Some(&unreachable()));
-    assert!(matches!(pinned, Err(Failure::Source(_))));
+    assert_eq!(code(pinned), "refs::git::failed");
     assert_eq!(said, ["status: `serde` is 1.0.200 in Cargo.lock"]);
 }
 
@@ -302,6 +302,14 @@ fn failing_to_list_tags_still_names_what_was_read_first() {
 fn failing_to_list_tags_for_a_given_version_read_nothing() {
     let dir = project(Some(ONE_SERDE));
     let (pinned, said) = run(Some("1.0.1"), &dir, Some(&unreachable()));
-    assert!(matches!(pinned, Err(Failure::Source(_))));
+    assert_eq!(code(pinned), "refs::git::failed");
     assert!(said.is_empty());
+}
+
+/// The code of the diagnostic a pin failed with.
+fn code(pinned: Result<Pinned, Failure>) -> String {
+    let Err(Failure::Error(report)) = pinned else {
+        panic!("expected a diagnostic");
+    };
+    report.code().unwrap().to_string()
 }

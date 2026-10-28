@@ -90,7 +90,7 @@ fn prepare(repo: &AddRepo, config: &Config, cx: &mut Context) -> Result<AddRepo,
         requested,
         description,
         ..
-    } = expand(&repo, cx.registry, cx.offline, &mut *cx.say).map_err(Failure::Registry)?;
+    } = expand(&repo, cx.registry, cx.offline, &mut *cx.say)?;
     // A registry add has chosen its Ref (a tag, or the default branch) unless nothing was pinned.
     let registry_add = requested.is_some();
     cx.settle_ref(&mut repo, requested.as_ref())?;
@@ -195,16 +195,13 @@ impl Context<'_> {
             return Ok(looked);
         };
         let git_ref = repo.git_ref.as_deref().unwrap_or("HEAD");
-        let outline = source
-            .outline(&repo.url, git_ref)
-            .map_err(Failure::Source)?;
+        let outline = source.outline(&repo.url, git_ref)?;
         // A registry add that names its package and describes it has no use for the Manifests.
         let nameless = repo.packages.is_empty();
         let undescribed = looked.described.is_none() && repo.description.is_none();
         if nameless || undescribed {
             looked.manifests =
-                Manifests::read(source, &repo.url, &outline, &repo.paths, &mut *self.say)
-                    .map_err(Failure::Source)?;
+                Manifests::read(source, &repo.url, &outline, &repo.paths, &mut *self.say)?;
             looked.described = looked.described.or(looked.manifests.description());
         }
         looked.outline = Some(outline);
