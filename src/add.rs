@@ -54,10 +54,7 @@ pub fn run(
             .status(format!("equivalent: {}", ask::equivalent_command(&repo)));
     }
     let edit = Edit::Add(&repo);
-    Ok(match source {
-        Some(source) => sync::edit(source, &project.root, &edit, flags),
-        None => sync::edit_only(&project.root, &edit),
-    })
+    Ok(sync::edit(source, &project.root, &edit, flags))
 }
 
 /// What the steps of `add` work with besides the repo: where it can look, who it can ask and

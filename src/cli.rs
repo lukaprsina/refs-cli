@@ -440,12 +440,11 @@ fn edit(
     console: &mut Console,
 ) -> Result<u8, u8> {
     let project = run::load(start, console)?;
-    let report = if flags.no_sync {
-        sync::edit_only(&project.root, &edit)
-    } else {
-        let source = run::build_source(make_source, &project, console)?;
-        sync::edit(&*source, &project.root, &edit, &flags.sync_flags())
+    let source = match flags.no_sync {
+        true => None,
+        false => Some(run::build_source(make_source, &project, console)?),
     };
+    let report = sync::edit(source.as_deref(), &project.root, &edit, &flags.sync_flags());
     Ok(ui::print_report(&report, false, console))
 }
 

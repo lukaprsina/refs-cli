@@ -6,7 +6,7 @@ use std::fs;
 use refs_cli::config::parse;
 use refs_cli::edit::{AddRepo, Edit, Target};
 use refs_cli::source::fake::{Call, FakeSource, Method};
-use refs_cli::sync::{Changed, Hint, Outcome, Report, SyncFlags, edit, edit_only};
+use refs_cli::sync::{Changed, Hint, Outcome, Report, SyncFlags, edit};
 use tempfile::TempDir;
 
 const BEFORE: &str = "[repos.a]\nurl = \"https://github.com/o/a\"\n";
@@ -19,7 +19,7 @@ fn add(dir: &TempDir, source: &FakeSource, name: &str, flags: &SyncFlags) -> Rep
         url: format!("https://github.com/o/{name}"),
         ..AddRepo::default()
     };
-    edit(source, dir.path(), &Edit::Add(&req), flags)
+    edit(Some(source), dir.path(), &Edit::Add(&req), flags)
 }
 
 fn project() -> TempDir {
@@ -162,7 +162,7 @@ fn an_edit_that_cannot_resolve_offline_is_rejected_and_writes_nothing() {
 /// `refs enable <id>`, synced.
 fn enable(dir: &TempDir, source: &FakeSource, id: &str) -> Report {
     edit(
-        source,
+        Some(source),
         dir.path(),
         &Edit::Enable(Target::Repo(id)),
         &SyncFlags::default(),
@@ -181,7 +181,7 @@ fn with_broken_b() -> (TempDir, FakeSource) {
 }
 
 fn run_edit(dir: &TempDir, source: &FakeSource, the_edit: &Edit) -> Report {
-    edit(source, dir.path(), the_edit, &SyncFlags::default())
+    edit(Some(source), dir.path(), the_edit, &SyncFlags::default())
 }
 
 fn messages(edited: &Report) -> String {
@@ -297,7 +297,7 @@ fn no_sync_add(dir: &TempDir, name: &str) -> Report {
         url: format!("https://github.com/o/{name}"),
         ..AddRepo::default()
     };
-    edit_only(dir.path(), &Edit::Add(&req))
+    edit(None, dir.path(), &Edit::Add(&req), &SyncFlags::default())
 }
 
 #[test]
@@ -309,7 +309,12 @@ fn an_edit_carries_the_hint_for_what_it_left_behind() {
     assert_eq!(edited.hint, Some(Hint::RunSync));
 
     // Nothing to write and nothing to sync.
-    let edited = edit_only(dir.path(), &Edit::Enable(Target::Repo("a")));
+    let edited = edit(
+        None,
+        dir.path(),
+        &Edit::Enable(Target::Repo("a")),
+        &SyncFlags::default(),
+    );
     assert!(!edited.changes.contains(&Changed::Config));
     assert_eq!(edited.hint, None);
 
@@ -444,7 +449,12 @@ fn an_edit_says_what_it_did_to_refs_toml_first_then_the_lock_then_the_rest() {
         ..AddRepo::default()
     };
 
-    let report = edit(&source, dir.path(), &Edit::Add(&req), &SyncFlags::default());
+    let report = edit(
+        Some(&source),
+        dir.path(),
+        &Edit::Add(&req),
+        &SyncFlags::default(),
+    );
 
     assert_eq!(
         report.changes,
@@ -537,7 +547,7 @@ fn force_discards_the_changes_an_edit_would_have_been_refused_for() {
     for the_edit in [Edit::Remove("a"), Edit::Disable(Target::Repo("a"))] {
         let (dir, source) = synced_then_a_is_dirty();
 
-        let edited = edit(&source, dir.path(), &the_edit, &forced());
+        let edited = edit(Some(&source), dir.path(), &the_edit, &forced());
 
         assert_eq!(edited.outcome, Outcome::InSync, "{the_edit:?}");
         assert!(edited.changes.contains(&Changed::Config), "{the_edit:?}");
@@ -566,7 +576,7 @@ fn an_edit_that_changes_nothing_still_upgrades_the_ids_it_is_given() {
     let config = read(&dir, "refs.toml");
 
     let edited = edit(
-        &source,
+        Some(&source),
         dir.path(),
         &Edit::Enable(Target::Repo("a")),
         &upgrading_a(),
@@ -586,7 +596,7 @@ fn an_edit_that_changes_nothing_but_stage_two_refuses_writes_nothing() {
     let before = on_disk(&dir);
 
     let edited = edit(
-        &source,
+        Some(&source),
         dir.path(),
         &Edit::Enable(Target::Repo("a")),
         &upgrading_a(),

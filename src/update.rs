@@ -191,7 +191,7 @@ fn apply(
         reresolve,
         ..SyncFlags::default()
     };
-    let mut report = sync::edit(source, root, &Edit::Change(&changes), &flags);
+    let mut report = sync::edit(Some(source), root, &Edit::Change(&changes), &flags);
     if skipped > 0 {
         // The run ends with the count of skipped Repos, not the hint to fix a broken one.
         report.hint = None;

@@ -11,10 +11,10 @@ use crate::diagnostic::Note;
 use crate::edit::{self, Edit};
 use crate::exclude;
 use crate::lock::{Lock, LockedRepo};
-pub use crate::plan::{Checkout, Hint, Outcome};
+pub use crate::plan::Checkout;
 use crate::plan::{
-    Checkouts, Drift, Exclude, Plan, RepoAction, Step, check_outcome, lock_drift, plan_checkouts,
-    plan_lock, shrunk_lock,
+    Checkouts, Drift, Exclude, Plan, RepoAction, Step, lock_drift, plan_checkouts, plan_lock,
+    shrunk_lock,
 };
 use crate::project;
 use crate::source::Source;
@@ -47,6 +47,50 @@ pub enum Changed {
     AgentFile(String),
 }
 
+impl Changed {
+    /// Where it comes in what the CLI says (ADR 0005): `refs.toml`, its Groups, the Lock, the
+    /// Checkouts, the Agent files. Not the order of the writes: the Lock is written first.
+    fn rank(&self) -> u8 {
+        match self {
+            Changed::Config | Changed::ConfigCreated => 0,
+            Changed::Group(_) => 1,
+            Changed::Lock => 2,
+            Changed::Checkout { .. } => 3,
+            Changed::AgentFile(_) => 4,
+        }
+    }
+}
+
+/// How a run ended; the CLI maps it to an exit code (0, 3, 1, 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    InSync,
+    OutOfDate,
+    Refused,
+    Failed,
+}
+
+/// The follow-up the CLI gives a user whose project a run left incomplete or failed, named
+/// for why it is given. `hint` picks it from where the run stopped; `cli` only gives each its
+/// words (ADR 0005).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hint {
+    /// `refs.toml` was written without a sync (`--no-sync`): the project is incomplete.
+    RunSync,
+    /// A `sync` failed or was refused, or an edit that changed nothing did.
+    RunSyncOnceFixed,
+    /// `refs.toml` was written, then the sync failed or was refused.
+    FixOrRemoveThenSync,
+    /// The edit was rejected, or a write failed, so `refs.toml` is as it was and `--no-sync`
+    /// would not help.
+    ConfigUnchanged,
+    /// Stage 1 blocked the edit, so `refs.toml` is as it was; `--no-sync` writes it anyway.
+    ConfigUnchangedTryNoSync,
+    /// Stage 2 could not be observed (the references directory or an Agent file could not
+    /// be read), so `refs.toml` is as it was; `--no-sync` writes it anyway.
+    ConfigUnchangedUnobserved,
+}
+
 /// How a run went, for the CLI to print: the one result of `sync` and every edit.
 #[derive(Debug)]
 pub struct Report {
@@ -57,19 +101,23 @@ pub struct Report {
     pub drift: Vec<Drift>,
     /// Refusals, failures and notes, in the order they happened.
     pub diagnostics: Vec<miette::Report>,
-    /// What to tell the user to do next, if anything. Set where `sync` knows why.
+    /// What to tell the user to do next, if anything.
     pub hint: Option<Hint>,
 }
 
 impl Report {
-    fn new(outcome: Outcome) -> Report {
+    fn new(outcome: Outcome, diagnostics: Vec<miette::Report>) -> Report {
         Report {
             outcome,
             changes: Vec::new(),
             drift: Vec::new(),
-            diagnostics: Vec::new(),
+            diagnostics,
             hint: None,
         }
+    }
+
+    fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
+        Report::new(Outcome::Failed, vec![miette::Report::new(error)])
     }
 
     /// The editor hint (spec 7.6), when `first` and the run got through.
@@ -81,56 +129,62 @@ impl Report {
         }
         self
     }
+}
 
-    fn of(outcome: Outcome, diagnostics: Vec<miette::Report>) -> Report {
-        Report {
-            diagnostics,
-            ..Report::new(outcome)
-        }
-    }
+/// Which run it was, for its Hint.
+#[derive(Debug, Clone, Copy)]
+enum Kind {
+    /// `refs sync`, or an edit that changes nothing: once it is applied, `refs.toml` is as it
+    /// was whatever happens next.
+    Sync,
+    /// An edit that changes `refs.toml`, then a sync.
+    Edit,
+    /// An edit written without a sync (`--no-sync`).
+    NoSync,
+}
 
-    fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
-        Report::of(Outcome::Failed, vec![miette::Report::new(error)])
-    }
+/// Where a run that did not get through stage 2 stopped, with what it has to say.
+type Stopped = (Stop, Report);
 
-    fn with_drift(mut self, drift: Vec<Drift>) -> Report {
-        self.drift = drift;
-        self
-    }
+#[derive(Debug, Clone, Copy)]
+enum Stop {
+    /// The edit could not be read or applied, or `refs.toml` could not be written.
+    Rejected,
+    /// `refs.lock` could not be read or written.
+    Lock,
+    /// Stage 1 failed or was refused.
+    StageOne,
+    /// Stage 2 would refuse, so an edit was not written.
+    Refused,
+    /// Stage 2 could not be observed, so an edit was not written.
+    Unobserved,
+}
 
-    fn with_hint(mut self, hint: Hint) -> Report {
-        self.hint = Some(hint);
-        self
-    }
-
-    /// Give `hint` if the run failed or was refused, so left the project incomplete.
-    fn hint_if_incomplete(self, hint: Hint) -> Report {
-        match self.outcome {
-            Outcome::Failed | Outcome::Refused => self.with_hint(hint),
-            Outcome::InSync | Outcome::OutOfDate => self,
-        }
+/// The follow-up for a `kind` of run that stopped at `stop` (`None`: it got through stage 2,
+/// to `outcome`).
+fn hint(kind: Kind, stop: Option<Stop>, outcome: Outcome) -> Option<Hint> {
+    let incomplete = matches!(outcome, Outcome::Failed | Outcome::Refused);
+    match (kind, stop) {
+        (_, Some(Stop::Rejected)) => Some(Hint::ConfigUnchanged),
+        (Kind::Sync, _) => incomplete.then_some(Hint::RunSyncOnceFixed),
+        (Kind::Edit, Some(Stop::Lock | Stop::Refused)) => Some(Hint::ConfigUnchanged),
+        (Kind::Edit, Some(Stop::StageOne)) => Some(Hint::ConfigUnchangedTryNoSync),
+        (Kind::Edit, Some(Stop::Unobserved)) => Some(Hint::ConfigUnchangedUnobserved),
+        (Kind::Edit, None) => incomplete.then_some(Hint::FixOrRemoveThenSync),
+        (Kind::NoSync, _) => Some(Hint::RunSync),
     }
 }
 
-/// Stage 1 as it left things: the Lock stage 2 plans against (with `--check`, the one on
-/// disk) and whether it was written.
-struct StageOne {
-    lock: Lock,
-    wrote_lock: bool,
-}
-
-/// The Report of a run that got through stage 1: `stage_two` is what stage 2 found or did,
-/// and the Lock write came before everything stage 2 did.
-fn finish(stage_one: StageOne, drift: Vec<Drift>, stage_two: Report) -> Report {
-    with_lock_change(stage_one, stage_two).with_drift(drift)
-}
-
-/// `stage_two`, with the Lock write that came before everything in it said first.
-fn with_lock_change(stage_one: StageOne, mut stage_two: Report) -> Report {
-    if stage_one.wrote_lock {
-        stage_two.changes.insert(0, Changed::Lock);
-    }
-    stage_two
+/// The Report of a run: its Hint, and its changes in the order the CLI says them.
+fn finish(kind: Kind, run: Result<Report, Stopped>, drift: Vec<Drift>) -> Report {
+    let (stop, mut report) = match run {
+        Ok(report) => (None, report),
+        Err((stop, report)) => (Some(stop), report),
+    };
+    report.hint = hint(kind, stop, report.outcome);
+    report.changes.sort_by_key(Changed::rank);
+    report.drift = drift;
+    report
 }
 
 /// What every run starts from: the active set, the Lock on disk (if any) and how it differs.
@@ -140,71 +194,57 @@ struct Observation<'a> {
     drift: Vec<Drift>,
 }
 
-fn observe<'a>(root: &Path, config: &'a Config) -> Result<Observation<'a>, Report> {
+fn observe<'a>(root: &Path, config: &'a Config) -> Result<Observation<'a>, Stopped> {
     let active = active(config);
-    let old = Lock::read(&Lock::path(root)).map_err(Report::failed)?;
+    let old = Lock::read(&Lock::path(root)).map_err(|e| (Stop::Lock, Report::failed(e)))?;
     let drift = lock_drift(&active, old.as_ref());
     Ok(Observation { active, old, drift })
 }
 
 /// `refs sync`. With `check`, nothing is resolved, verified, fetched or written.
 pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
-    run_sync(source, root, config, flags).hint_if_incomplete(Hint::RunSyncOnceFixed)
+    let (run, drift) = match observe(root, config) {
+        Ok(Observation { active, old, drift }) => {
+            let run = run_sync(source, root, config, &active, old, &drift, flags);
+            (run, drift)
+        }
+        Err(stopped) => (Err(stopped), Vec::new()),
+    };
+    finish(Kind::Sync, run, drift)
 }
 
-fn run_sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
-    let Observation { active, old, drift } = match observe(root, config) {
-        Ok(observation) => observation,
-        Err(report) => return report,
-    };
-    let stage_one = if flags.check {
-        // With no Lock on disk the drift says so, and `plan_and_apply` reports it.
-        StageOne {
-            lock: old.unwrap_or_else(|| Lock::new(vec![])),
-            wrote_lock: false,
-        }
-    } else {
-        match stage_one(source, &active, old, flags, root) {
-            Ok(stage_one) => stage_one,
-            Err(report) => return report.with_drift(drift),
-        }
-    };
-    plan_and_apply(source, root, config, &active, stage_one, drift, flags)
-}
-
-/// Stage 2 against a Lock that stage 1 has just produced (or, with `--check`, the one on
-/// disk): plan the checkouts, then report on the plan or apply it.
-fn plan_and_apply(
+fn run_sync(
     source: &dyn Source,
     root: &Path,
     config: &Config,
     active: &ActiveSet,
-    stage_one: StageOne,
-    drift: Vec<Drift>,
+    old: Option<Lock>,
+    drift: &[Drift],
     flags: &SyncFlags,
-) -> Report {
-    // Only `--check` can meet a Lock that does not cover the active set, and it does not
-    // repair it: the Lock is what is out of date, and there is nothing to plan against.
-    let uncovered = drift
-        .iter()
-        .any(|d| matches!(d, Drift::LockMissing | Drift::Added(_)));
-    if flags.check && uncovered {
-        let stage_two = Report::new(Outcome::OutOfDate);
-        return finish(stage_one, drift, stage_two);
-    }
-    let plan = match plan_stage_two(source, root, config, active, &stage_one.lock, flags.force) {
-        Ok(plan) => plan,
-        Err(errors) => {
-            let stage_two = Report::of(Outcome::Failed, errors);
-            return finish(stage_one, drift, stage_two);
+) -> Result<Report, Stopped> {
+    let (lock, lock_change) = if flags.check {
+        // Only `--check` can meet a Lock that does not cover the active set, and it does not
+        // repair it: the Lock is what is out of date, and there is nothing to plan against.
+        let uncovered = drift
+            .iter()
+            .any(|d| matches!(d, Drift::LockMissing | Drift::Added(_)));
+        if uncovered {
+            return Ok(Report::new(Outcome::OutOfDate, Vec::new()));
         }
-    };
-    let stage_two = if flags.check {
-        check(plan, !drift.is_empty())
+        (old.unwrap_or_else(|| Lock::new(vec![])), None)
     } else {
-        apply_plan(source, root, config, active, plan, flags)
+        let lock =
+            resolve_all(source, active, old.as_ref(), flags).map_err(|r| (Stop::StageOne, r))?;
+        let lock_change = write_lock(root, old.as_ref(), &lock)?;
+        (lock, lock_change)
     };
-    finish(stage_one, drift, stage_two)
+    let mut report = match plan_stage_two(source, root, config, active, &lock, flags.force) {
+        Ok(plan) if flags.check => check(plan, !drift.is_empty()),
+        Ok(plan) => apply_plan(source, root, config, active, plan, flags),
+        Err(errors) => Report::new(Outcome::Failed, errors),
+    };
+    report.changes.extend(lock_change);
+    Ok(report)
 }
 
 /// Apply the stage 2 plan and, for a run that got through, add the notes about tooling.
@@ -231,9 +271,9 @@ fn apply_plan(
     report
 }
 
-/// A failed edit: `refs.toml` is as it was, and `--no-sync` would not help.
-fn rejected(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
-    Report::failed(error).with_hint(Hint::ConfigUnchanged)
+/// A failed edit, or a failed write of `refs.toml`.
+fn rejected(error: impl miette::Diagnostic + Send + Sync + 'static) -> Stopped {
+    (Stop::Rejected, Report::failed(error))
 }
 
 /// An edit applied to the text of `<root>/refs.toml` and parsed, but not yet written: the
@@ -246,7 +286,7 @@ struct Edited {
 }
 
 impl Edited {
-    fn read(root: &Path, edit: &Edit) -> Result<Edited, Report> {
+    fn read(root: &Path, edit: &Edit) -> Result<Edited, Stopped> {
         let created = !root.join(project::CONFIG_FILE).exists();
         let before = match created {
             true => String::new(),
@@ -271,90 +311,74 @@ impl Edited {
         self.applied.text == self.before
     }
 
-    /// `report` of a run that came after the edit was written: what the edit did is said
-    /// first.
-    fn written(self, mut report: Report) -> Report {
+    /// Write `refs.toml` if the edit changes it, and say what was written.
+    fn write(&self, root: &Path) -> Result<Vec<Changed>, Stopped> {
         if self.unchanged() {
-            return report;
+            return Ok(Vec::new());
         }
-        let mut edit = vec![if self.created {
-            Changed::ConfigCreated
-        } else {
-            Changed::Config
-        }];
-        edit.extend(self.applied.group_created.map(Changed::Group));
-        report.changes.splice(0..0, edit);
-        report
+        project::write_config(root, &self.applied.text).map_err(rejected)?;
+        let config = match self.created {
+            true => Changed::ConfigCreated,
+            false => Changed::Config,
+        };
+        let group = self.applied.group_created.clone().map(Changed::Group);
+        Ok([config].into_iter().chain(group).collect())
     }
 }
 
-/// Apply `edit` to `<root>/refs.toml` and write it, without syncing (`--no-sync`): no Source
-/// is needed, and nothing is resolved or verified. An edit that changes nothing writes
-/// nothing.
-pub fn edit_only(root: &Path, edit: &Edit) -> Report {
-    let edited = match Edited::read(root, edit) {
-        Ok(edited) => edited,
-        Err(report) => return report,
-    };
-    if edited.unchanged() {
-        return Report::new(Outcome::InSync);
-    }
-    match project::write_config(root, &edited.applied.text) {
-        Ok(()) => {
-            let report = Report::new(Outcome::InSync)
-                .with_editor_hint(edited.first_active(), &edited.applied.config);
-            edited.written(report).with_hint(Hint::RunSync)
-        }
-        Err(e) => rejected(e),
-    }
-}
-
-/// Apply `edit` to `<root>/refs.toml` and sync the project to it.
+/// Apply `edit` to `<root>/refs.toml` and sync the project to it; with no `source`
+/// (`--no-sync`), only write it, with nothing resolved or verified. An edit that changes
+/// nothing writes nothing.
 ///
 /// Stage 1 runs against the edited config, and `refs.toml` is written only if it passes
 /// (stage 1 writes the Lock), then stage 2 runs on the Lock stage 1 produced, so each Repo
 /// is verified once. A Repo that cannot be locked blocks the edit: nothing is written and the
-/// error names it. A stage 2 refusal blocks it the same way (`plan_stage_two` is planned on
-/// the Lock before anything is written). The one exception is an edit that only shrinks the active set (`remove`,
-/// `disable`) while the Lock covers every remaining Repo: the Lock is pruned, with nothing
-/// resolved or verified, so a Repo the edit did not touch cannot block it. A stage 2 failure
-/// keeps the edit and the Lock; `refs sync` retries it.
-/// The report says the write of `refs.toml` first (`Changed::Config`, then any `Group`), and
-/// has a `Hint` for an edit that was not written: a write that fails says only that
-/// `refs.toml` is as it was. An edit that changes nothing goes the same way and writes no
-/// `refs.toml`, so `flags.reresolve` can move a Lock entry alone and a refusal still blocks it;
-/// its failures are hinted as a failed `sync` is. `flags.check` is not for this function: it
-/// writes. The Lock is written before `refs.toml`, so a failed write of `refs.toml` leaves a
-/// Lock with an entry the config does not have, which the next `sync` removes.
-pub fn edit(source: &dyn Source, root: &Path, edit: &Edit, flags: &SyncFlags) -> Report {
+/// error names it. A stage 2 refusal blocks it the same way (`stage_two_gate` plans on the
+/// Lock before anything is written). The one exception is an edit that only shrinks the
+/// active set (`remove`, `disable`) while the Lock covers every remaining Repo: the Lock is
+/// pruned, with nothing resolved or verified, so a Repo the edit did not touch cannot block
+/// it. A stage 2 failure keeps the edit and the Lock; `refs sync` retries it.
+/// An edit that changes nothing still syncs, so `flags.reresolve` can move a Lock entry alone
+/// and a refusal still blocks it; it is hinted as a `sync` is. `flags.check` is not for this
+/// function: it writes. The Lock is written before `refs.toml`, so a failed write of
+/// `refs.toml` leaves a Lock with an entry the config does not have, which the next `sync`
+/// removes.
+pub fn edit(source: Option<&dyn Source>, root: &Path, edit: &Edit, flags: &SyncFlags) -> Report {
     let edited = match Edited::read(root, edit) {
         Ok(edited) => edited,
-        Err(report) => return report,
+        Err(stopped) => return finish(Kind::Edit, Err(stopped), Vec::new()),
     };
-    let unchanged = edited.unchanged();
-    let report = apply_edit(source, root, edited, flags);
-    if unchanged {
-        // "refs.toml is as it was" says nothing about an edit that had nothing to write.
-        report.hint_if_incomplete(Hint::RunSyncOnceFixed)
+    let Some(source) = source else {
+        return edit_only(root, &edited);
+    };
+    let kind = if edited.unchanged() {
+        Kind::Sync
     } else {
-        report
+        Kind::Edit
+    };
+    let (run, drift) = match observe(root, &edited.applied.config) {
+        Ok(Observation { active, old, drift }) => {
+            let run = edit_stages(source, root, &edited, &active, old, flags);
+            (run, drift)
+        }
+        Err(stopped) => (Err(stopped), Vec::new()),
+    };
+    finish(kind, run, drift)
+}
+
+fn edit_only(root: &Path, edited: &Edited) -> Report {
+    if edited.unchanged() {
+        return Report::new(Outcome::InSync, Vec::new());
     }
+    let run = edited.write(root).map(|changes| Report {
+        changes,
+        ..Report::new(Outcome::InSync, Vec::new())
+            .with_editor_hint(edited.first_active(), &edited.applied.config)
+    });
+    finish(Kind::NoSync, run, Vec::new())
 }
 
-fn apply_edit(source: &dyn Source, root: &Path, edited: Edited, flags: &SyncFlags) -> Report {
-    let Observation { active, old, drift } = match observe(root, &edited.applied.config) {
-        Ok(observation) => observation,
-        Err(report) => return report.with_hint(Hint::ConfigUnchanged),
-    };
-    let report = match edit_stages(source, root, &edited, &active, old, flags) {
-        Ok(report) => edited.written(report),
-        Err(report) => report,
-    };
-    report.with_drift(drift)
-}
-
-/// Both stages of an edit. `Ok` is a run that wrote `refs.toml` (what stage 2 found or did);
-/// `Err` is one that stopped before, or failed to write it.
+/// Both stages of an edit, and the write of `refs.toml` between them.
 fn edit_stages(
     source: &dyn Source,
     root: &Path,
@@ -362,25 +386,25 @@ fn edit_stages(
     active: &ActiveSet,
     old: Option<Lock>,
     flags: &SyncFlags,
-) -> Result<Report, Report> {
+) -> Result<Report, Stopped> {
     let config = &edited.applied.config;
     let lock = match shrunk_lock(active, old.as_ref()) {
         Some(lock) => lock,
         None => resolve_all(source, active, old.as_ref(), flags)
-            .map_err(|report| report.with_hint(Hint::ConfigUnchangedTryNoSync))?,
+            .map_err(|report| (Stop::StageOne, report))?,
     };
     let plan = stage_two_gate(source, root, config, active, &lock, flags.force)?;
-    let stage_one = commit(root, old.as_ref(), lock)
-        .map_err(|report| report.with_hint(Hint::ConfigUnchanged))?;
-    if !edited.unchanged()
-        && let Err(e) = project::write_config(root, &edited.applied.text)
-    {
-        return Err(with_lock_change(stage_one, rejected(e)));
-    }
-    let stage_two = apply_plan(source, root, config, active, plan, flags)
-        .with_editor_hint(edited.first_active(), config)
-        .hint_if_incomplete(Hint::FixOrRemoveThenSync);
-    Ok(with_lock_change(stage_one, stage_two))
+    let lock_change = write_lock(root, old.as_ref(), &lock)?;
+    let written = edited.write(root).map_err(|(stop, mut report)| {
+        report.changes.extend(lock_change.clone());
+        (stop, report)
+    })?;
+    let mut report = apply_plan(source, root, config, active, plan, flags)
+        .with_editor_hint(edited.first_active(), config);
+    report
+        .changes
+        .extend(written.into_iter().chain(lock_change));
+    Ok(report)
 }
 
 /// The stage 2 plan an edit may apply. Stage 2's refusals are predictable, so they are found
@@ -394,30 +418,28 @@ fn stage_two_gate<'a>(
     active: &ActiveSet<'a>,
     lock: &Lock,
     force: bool,
-) -> Result<Plan<'a>, Report> {
+) -> Result<Plan<'a>, Stopped> {
     match plan_stage_two(source, root, config, active, lock, force) {
         Ok(plan) if plan.refusals.is_empty() => Ok(plan),
-        Ok(plan) => Err(Report::of(
-            Outcome::Refused,
-            plan.refusals.into_iter().map(miette::Report::new).collect(),
-        )
-        .with_hint(Hint::ConfigUnchanged)),
-        Err(errors) => {
-            Err(Report::of(Outcome::Failed, errors).with_hint(Hint::ConfigUnchangedUnobserved))
+        Ok(plan) => {
+            let refusals = plan.refusals.into_iter().map(miette::Report::new);
+            Err((
+                Stop::Refused,
+                Report::new(Outcome::Refused, refusals.collect()),
+            ))
         }
+        Err(errors) => Err((Stop::Unobserved, Report::new(Outcome::Failed, errors))),
     }
 }
 
-/// Stage 1 as `sync` and an edit run it: resolve and verify, then write the Lock.
-fn stage_one(
-    source: &dyn Source,
-    active: &ActiveSet,
-    old: Option<Lock>,
-    flags: &SyncFlags,
-    root: &Path,
-) -> Result<StageOne, Report> {
-    let lock = resolve_all(source, active, old.as_ref(), flags)?;
-    commit(root, old.as_ref(), lock)
+/// Write `lock` if it differs from the one on disk, and say so.
+fn write_lock(root: &Path, old: Option<&Lock>, lock: &Lock) -> Result<Option<Changed>, Stopped> {
+    if old == Some(lock) {
+        return Ok(None);
+    }
+    lock.write(&Lock::path(root))
+        .map_err(|e| (Stop::Lock, Report::failed(e)))?;
+    Ok(Some(Changed::Lock))
 }
 
 /// Resolve or reuse every Repo and verify them all, collecting every error. All or nothing:
@@ -429,7 +451,7 @@ fn resolve_all(
     flags: &SyncFlags,
 ) -> Result<Lock, Report> {
     let steps = plan_lock(active, old, &flags.reresolve, flags.offline)
-        .map_err(|refusal| Report::of(Outcome::Refused, vec![refusal.into()]))?;
+        .map_err(|refusal| Report::new(Outcome::Refused, vec![refusal.into()]))?;
     let mut errors: Vec<miette::Report> = Vec::new();
     let mut entries = Vec::new();
     for step in steps {
@@ -457,17 +479,8 @@ fn resolve_all(
     if errors.is_empty() {
         Ok(Lock::new(passed))
     } else {
-        Err(Report::of(Outcome::Failed, errors))
+        Err(Report::new(Outcome::Failed, errors))
     }
-}
-
-/// Write `lock` if it differs from the one on disk.
-fn commit(root: &Path, old: Option<&Lock>, lock: Lock) -> Result<StageOne, Report> {
-    let wrote_lock = old != Some(&lock);
-    if wrote_lock && let Err(e) = lock.write(&Lock::path(root)) {
-        return Err(Report::failed(e));
-    }
-    Ok(StageOne { lock, wrote_lock })
 }
 
 /// Read the project and what is on disk, then plan the checkouts. Reading can fail in
@@ -512,12 +525,18 @@ fn plan_stage_two<'a>(
 }
 
 /// `--check`: report what applying the plan would do.
+/// A refusal outranks drift, since "run `refs sync`" is the wrong advice when `sync` will also
+/// refuse.
 fn check(plan: Plan, lock_drifted: bool) -> Report {
-    let outcome = check_outcome(&plan, lock_drifted);
-    Report::of(
-        outcome,
-        plan.refusals.into_iter().map(miette::Report::new).collect(),
-    )
+    let outcome = if !plan.refusals.is_empty() {
+        Outcome::Refused
+    } else if plan.is_drift() || lock_drifted {
+        Outcome::OutOfDate
+    } else {
+        Outcome::InSync
+    };
+    let refusals = plan.refusals.into_iter().map(miette::Report::new);
+    Report::new(outcome, refusals.collect())
 }
 
 /// Apply the plan (ADR 0006). A failure does not stop the other Repos. The Agent files are
@@ -578,8 +597,7 @@ fn apply(
     }
     Report {
         changes,
-        diagnostics,
-        ..Report::new(outcome)
+        ..Report::new(outcome, diagnostics)
     }
 }
 
