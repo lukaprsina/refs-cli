@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
-use crate::source::{MaterialiseOpts, Observed, Outline, Pin, Source, VerifyOpts};
+use crate::source::{Observed, Outline, Pin, Source};
 use cache::{Cache, Repo};
 use checkout::{Layout, Record};
 use command::Cmd;
@@ -92,11 +92,11 @@ impl Source for GitSource {
         Ok(remote::select_tags(&out))
     }
 
-    fn verify(&self, repo: RepoRef, pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError> {
+    fn verify(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError> {
         let (url, sha) = (pin.url(), pin.sha());
         remote::check_sha(sha)?;
-        self.cache.with_repo(url, sha, opts.offline, |cache| {
-            cache.ensure_commit(url, sha, opts.offline)?;
+        self.cache.with_repo(url, sha, offline, |cache| {
+            cache.ensure_commit(url, sha, offline)?;
             for path in &repo.repo.paths {
                 let path = path.get_ref();
                 match cache.entry_kind(sha, path)? {
@@ -143,12 +143,7 @@ impl Source for GitSource {
         })
     }
 
-    fn materialise(
-        &self,
-        repo: RepoRef,
-        pin: &Pin,
-        opts: MaterialiseOpts,
-    ) -> Result<(), SourceError> {
+    fn materialise(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError> {
         let (url, sha) = (pin.url(), pin.sha());
         remote::check_sha(sha)?;
         let dest = self.checkouts.join(repo.id);
@@ -156,9 +151,9 @@ impl Source for GitSource {
         let paths = repo.repo.path_strings();
         // Everything that can fail for want of an object comes first, so that a failure leaves
         // an existing Checkout alone: past here every object the Checkout reads is in the Cache.
-        self.cache.with_repo(url, sha, opts.offline, |cache| {
-            cache.ensure_commit(url, sha, opts.offline)?;
-            cache.prefetch(repo.id, sha, &paths, opts.offline)
+        self.cache.with_repo(url, sha, offline, |cache| {
+            cache.ensure_commit(url, sha, offline)?;
+            cache.prefetch(repo.id, sha, &paths, offline)
         })?;
         // A Checkout of another remote cannot move here: its objects are in another Cache.
         if let Layout::Linked(link) = checkout::layout(&dest, self.cache.root())?
@@ -168,7 +163,7 @@ impl Source for GitSource {
         }
         // The Cache lock is let go between the two steps on purpose: removing a Checkout of
         // another remote takes that remote's lock, and holding two could deadlock.
-        self.cache.with_repo(url, sha, opts.offline, |cache| {
+        self.cache.with_repo(url, sha, offline, |cache| {
             // Checked under the lock, so what is discarded on failure is only what this call made.
             let moving = match checkout::layout(&dest, self.cache.root())? {
                 Layout::Absent => false,

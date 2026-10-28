@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use super::{MaterialiseOpts, Observed, Outline, Pin, Source, VerifyOpts};
+use super::{Observed, Outline, Pin, Source};
 use crate::config::RepoRef;
 use crate::diagnostic::SourceError;
 
@@ -148,23 +148,18 @@ impl Source for FakeSource {
         ))
     }
 
-    fn verify(&self, repo: RepoRef, _pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError> {
+    fn verify(&self, repo: RepoRef, _pin: &Pin, offline: bool) -> Result<(), SourceError> {
         self.record(Call::Verify {
             id: repo.id.into(),
-            offline: opts.offline,
+            offline,
         });
         self.check(repo.id, Method::Verify)
     }
 
-    fn materialise(
-        &self,
-        repo: RepoRef,
-        pin: &Pin,
-        opts: MaterialiseOpts,
-    ) -> Result<(), SourceError> {
+    fn materialise(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError> {
         self.record(Call::Materialise {
             id: repo.id.into(),
-            offline: opts.offline,
+            offline,
         });
         self.check(repo.id, Method::Materialise)?;
         if let Some(Observed::Foreign | Observed::Dangling) = self.disk.borrow().get(repo.id) {
@@ -274,16 +269,11 @@ impl Source for &FakeSource {
     fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError> {
         (**self).resolve(repo)
     }
-    fn verify(&self, repo: RepoRef, pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError> {
-        (**self).verify(repo, pin, opts)
+    fn verify(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError> {
+        (**self).verify(repo, pin, offline)
     }
-    fn materialise(
-        &self,
-        repo: RepoRef,
-        pin: &Pin,
-        opts: MaterialiseOpts,
-    ) -> Result<(), SourceError> {
-        (**self).materialise(repo, pin, opts)
+    fn materialise(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError> {
+        (**self).materialise(repo, pin, offline)
     }
     fn tags(&self, url: &str) -> Result<Vec<String>, SourceError> {
         (**self).tags(url)

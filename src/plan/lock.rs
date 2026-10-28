@@ -38,13 +38,6 @@ pub fn locked(repo: RepoRef, pin: crate::source::Pin) -> LockedRepo {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct LockFlags {
-    /// Floating Repos to re-resolve even though their Pin is current.
-    pub reresolve: Vec<String>,
-    pub offline: bool,
-}
-
 /// How the Lock differs from the active set; empty when it is current. `sync --check` uses
 /// this alone, since it never resolves.
 pub fn lock_drift(active: &ActiveSet, lock: Option<&Lock>) -> Vec<Drift> {
@@ -99,10 +92,11 @@ pub fn shrunk_lock(active: &ActiveSet, lock: Option<&Lock>) -> Option<Lock> {
 pub fn plan_lock<'a>(
     active: &ActiveSet<'a>,
     lock: Option<&Lock>,
-    flags: &LockFlags,
+    reresolve: &[String],
+    offline: bool,
 ) -> Result<LockPlan<'a>, LockRefusal> {
     let drift = lock_drift(active, lock);
-    if flags.offline && !drift.is_empty() {
+    if offline && !drift.is_empty() {
         return Err(LockRefusal::OfflineStale { drift });
     }
     Ok(LockPlan {
@@ -110,7 +104,8 @@ pub fn plan_lock<'a>(
             .repos()
             .map(|repo| match lock.and_then(|l| l.get(repo.id)) {
                 Some(entry)
-                    if entry.pin.drift_from(repo.repo).is_empty() && !flags.reresolves(repo) =>
+                    if entry.pin.drift_from(repo.repo).is_empty()
+                        && !reresolves(reresolve, repo) =>
                 {
                     Step::Reuse(entry.clone())
                 }
@@ -120,10 +115,9 @@ pub fn plan_lock<'a>(
     })
 }
 
-impl LockFlags {
-    fn reresolves(&self, repo: RepoRef) -> bool {
-        repo.repo.is_floating() && self.reresolve.iter().any(|id| id == repo.id)
-    }
+/// Whether `reresolve` names this Repo and it floats, so its Pin is not current however it looks.
+fn reresolves(reresolve: &[String], repo: RepoRef) -> bool {
+    repo.repo.is_floating() && reresolve.iter().any(|id| id == repo.id)
 }
 
 impl std::fmt::Display for Drift {

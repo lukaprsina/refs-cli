@@ -10,5 +10,5 @@ pub use checkouts::{
     RepoAction, WriteAgentFile, plan_checkouts,
 };
 pub use classify::{Cause, CheckoutState, classify};
-pub use lock::{Drift, LockFlags, LockPlan, Step, lock_drift, locked, plan_lock, shrunk_lock};
+pub use lock::{Drift, LockPlan, Step, lock_drift, locked, plan_lock, shrunk_lock};
 pub use outcome::{Hint, Outcome, check_outcome};

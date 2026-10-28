@@ -105,20 +105,6 @@ pub enum Observed {
     },
 }
 
-/// Options for `materialise`: `offline` forbids network access. `force` is `plan`'s
-/// business (ADR 0006), so `Source` never sees it.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MaterialiseOpts {
-    pub offline: bool,
-}
-
-/// Options for `verify`: `offline` forbids network access, so a Commit missing from the
-/// Cache is an error instead of a fetch.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct VerifyOpts {
-    pub offline: bool,
-}
-
 /// What a remote holds at a ref: the Pin it resolved to and every path of the commit's tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outline {
@@ -130,15 +116,11 @@ pub trait Source {
     /// Ref to commit. Asks the remote; never creates a Checkout.
     fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError>;
     /// Check that `paths` and `start` exist at the pinned commit. Fetches the commit and its
-    /// trees on a Cache miss, unless `opts.offline`.
-    fn verify(&self, repo: RepoRef, pin: &Pin, opts: VerifyOpts) -> Result<(), SourceError>;
-    /// Fetch the pinned commit and create or move the Checkout to it.
-    fn materialise(
-        &self,
-        repo: RepoRef,
-        pin: &Pin,
-        opts: MaterialiseOpts,
-    ) -> Result<(), SourceError>;
+    /// trees on a Cache miss, unless `offline`.
+    fn verify(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError>;
+    /// Fetch the pinned commit and create or move the Checkout to it. `offline` forbids network
+    /// access. `force` is `plan`'s business (ADR 0006), so `Source` never sees it.
+    fn materialise(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError>;
     /// The names of the remote's tags, sorted. Asks the remote (one round trip); never touches
     /// the Cache or a Checkout. Takes a URL, as the Repo it is for is not in the config yet.
     fn tags(&self, url: &str) -> Result<Vec<String>, SourceError>;

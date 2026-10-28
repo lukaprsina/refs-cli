@@ -13,11 +13,11 @@ use crate::exclude;
 use crate::lock::Lock;
 pub use crate::plan::{Checkout, Hint, Outcome};
 use crate::plan::{
-    Checkouts, Drift, ExcludeAction, LockFlags, Plan, RepoAction, Step, check_outcome, lock_drift,
-    locked, plan_checkouts, plan_lock, shrunk_lock,
+    Checkouts, Drift, ExcludeAction, Plan, RepoAction, Step, check_outcome, lock_drift, locked,
+    plan_checkouts, plan_lock, shrunk_lock,
 };
 use crate::project;
-use crate::source::{MaterialiseOpts, Source, VerifyOpts};
+use crate::source::Source;
 use crate::tooling;
 
 #[derive(Debug, Default)]
@@ -26,7 +26,7 @@ pub struct SyncFlags {
     pub force: bool,
     pub check: bool,
     /// Floating Repos to re-resolve in the Lock. `update` sets it; `sync` has no such flag, but
-    /// reads it all the same (through `lock_flags`).
+    /// reads it all the same (through `resolve_all`).
     pub reresolve: Vec<String>,
 }
 
@@ -160,20 +160,12 @@ fn run_sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags
             wrote_lock: false,
         }
     } else {
-        match stage_one(source, &active, old, &lock_flags(flags), root) {
+        match stage_one(source, &active, old, flags, root) {
             Ok(stage_one) => stage_one,
             Err(report) => return report.with_drift(drift),
         }
     };
     plan_and_apply(source, root, config, &active, stage_one, drift, flags)
-}
-
-/// Stage 1 as `sync` and an edit run it.
-fn lock_flags(flags: &SyncFlags) -> LockFlags {
-    LockFlags {
-        reresolve: flags.reresolve.clone(),
-        offline: flags.offline,
-    }
 }
 
 /// Stage 2 against a Lock that stage 1 has just produced (or, with `--check`, the one on
@@ -373,7 +365,7 @@ fn edit_stages(
     let config = &applied.config;
     let lock = match shrunk_lock(active, old.as_ref()) {
         Some(lock) => lock,
-        None => resolve_all(source, active, old.as_ref(), &lock_flags(flags))
+        None => resolve_all(source, active, old.as_ref(), flags)
             .map_err(|report| report.with_hint(Hint::ConfigUnchangedTryNoSync))?,
     };
     let plan = stage_two_gate(source, root, config, active, &lock, flags.force)?;
@@ -422,7 +414,7 @@ fn stage_one(
     source: &dyn Source,
     active: &ActiveSet,
     old: Option<Lock>,
-    flags: &LockFlags,
+    flags: &SyncFlags,
     root: &Path,
 ) -> Result<StageOne, Report> {
     let lock = resolve_all(source, active, old.as_ref(), flags)?;
@@ -435,12 +427,13 @@ fn resolve_all(
     source: &dyn Source,
     active: &ActiveSet,
     old: Option<&Lock>,
-    flags: &LockFlags,
+    flags: &SyncFlags,
 ) -> Result<Lock, Report> {
-    let plan = plan_lock(active, old, flags).map_err(|refusal| Report {
-        diagnostics: vec![miette::Report::new(refusal)],
-        ..Report::new(Outcome::Refused)
-    })?;
+    let plan =
+        plan_lock(active, old, &flags.reresolve, flags.offline).map_err(|refusal| Report {
+            diagnostics: vec![miette::Report::new(refusal)],
+            ..Report::new(Outcome::Refused)
+        })?;
     let mut errors: Vec<miette::Report> = Vec::new();
     let mut entries = Vec::new();
     for step in plan.steps {
@@ -452,15 +445,12 @@ fn resolve_all(
             },
         }
     }
-    let verify_opts = VerifyOpts {
-        offline: flags.offline,
-    };
     let mut passed = Vec::new();
     for entry in entries {
         let repo = active
             .get(&entry.id)
             .expect("a step is made per active Repo");
-        match source.verify(repo, &entry.pin, verify_opts) {
+        match source.verify(repo, &entry.pin, flags.offline) {
             Ok(()) => passed.push(entry),
             Err(e) => errors.push(e.for_repo(repo.id)),
         }
@@ -543,15 +533,12 @@ fn apply(
     plan: Plan,
     flags: &SyncFlags,
 ) -> Report {
-    let opts = MaterialiseOpts {
-        offline: flags.offline,
-    };
     let mut diagnostics: Vec<miette::Report> = Vec::new();
     let mut outcome = plan.applied_outcome();
     let mut failed_actions = Vec::new();
     let mut changes = Vec::new();
     for (i, action) in plan.repos.iter().enumerate() {
-        match run(source, action, opts) {
+        match run(source, action, flags.offline) {
             Ok(note) => {
                 diagnostics.extend(note.map(miette::Report::new));
                 changes.push(Changed::Checkout {
@@ -600,7 +587,7 @@ fn apply(
 fn run(
     source: &dyn Source,
     action: &RepoAction,
-    opts: MaterialiseOpts,
+    offline: bool,
 ) -> Result<Option<Note>, miette::Report> {
     match action {
         RepoAction::Materialise {
@@ -612,7 +599,7 @@ fn run(
                 source.remove(repo.id).map_err(|e| e.for_repo(repo.id))?;
             }
             source
-                .materialise(*repo, pin, opts)
+                .materialise(*repo, pin, offline)
                 .map_err(|e| e.for_repo(repo.id))?;
             Ok(action.note())
         }
