@@ -1,7 +1,7 @@
 //! The editors: Zed.
 
 use super::Finding;
-use super::site::{Site, mentions};
+use super::site::{Site, any_string};
 
 const SETTINGS: &str = ".zed/settings.json";
 
@@ -14,7 +14,9 @@ pub(super) fn zed(site: &Site) -> Finding {
     let covered = site
         .jsonc(SETTINGS)
         .and_then(|json| json.get("file_scan_exclusions").cloned())
-        .is_some_and(|entries| entries.is_array() && mentions(&entries, &site.name));
+        .is_some_and(|entries| {
+            entries.is_array() && any_string(&entries, &|entry| entry.contains(&site.name))
+        });
     match covered {
         true => Finding::Covered,
         false => Finding::gap(

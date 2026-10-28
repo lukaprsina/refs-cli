@@ -46,23 +46,49 @@ fn tools(found: &[Gap]) -> Vec<&'static str> {
 }
 
 #[test]
-fn legacy_eslint_is_fixed_in_eslintignore() {
+fn legacy_eslint_is_covered_whatever_its_files_say() {
+    // ESLint 8 ignores dot-folders by default.
+    for files in [
+        &[".eslintrc.json"][..],
+        &[".eslintrc.json", ".eslintignore"],
+        &[".eslintignore"],
+    ] {
+        let dir = TempDir::new().unwrap();
+        for file in files {
+            fs::write(dir.path().join(file), "dist\n").unwrap();
+        }
+
+        assert_eq!(gaps(dir.path(), DIR, &[]), [], "{files:?}");
+    }
+}
+
+#[test]
+fn legacy_eslint_with_a_dependency_is_still_covered() {
     let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join(".eslintrc.json"), "{}").unwrap();
+    fs::write(
+        dir.path().join("package.json"),
+        r#"{"devDependencies": {"eslint": "^8"}}"#,
+    )
+    .unwrap();
+
+    assert_eq!(gaps(dir.path(), DIR, &[]), []);
+}
+
+#[test]
+fn a_flat_config_wins_over_the_legacy_files() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("eslint.config.mjs"), "export default [];").unwrap();
     fs::write(dir.path().join(".eslintrc.json"), "{}").unwrap();
 
     assert_eq!(
         gaps(dir.path(), DIR, &[]),
-        [to_create("eslint", ".eslintignore", ".references/")]
+        [gap(
+            "eslint",
+            "eslint.config.mjs",
+            r#"{ ignores: [".references/**"] }"#
+        )]
     );
-}
-
-#[test]
-fn legacy_eslint_is_covered_by_the_directory_in_eslintignore() {
-    let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join(".eslintrc.json"), "{}").unwrap();
-    fs::write(dir.path().join(".eslintignore"), "dist\n.references/\n").unwrap();
-
-    assert_eq!(gaps(dir.path(), DIR, &[]), []);
 }
 
 #[test]
@@ -239,6 +265,22 @@ fn biome_vcs_needs_both_enabled_and_use_ignore_file() {
         let dir = biome(&format!("{{ {vcs} }}"));
 
         assert_eq!(tools(&gaps(dir.path(), DIR, &[])), ["biome"], "{vcs}");
+    }
+}
+
+#[test]
+fn biome_is_covered_only_by_a_negated_entry() {
+    for (includes, covered) in [
+        (r#"["**", "!.references"]"#, true),
+        (r#"["**", "!!.references"]"#, true),
+        (r#"["**", "!**/.references"]"#, true),
+        (r#"["src", ".references"]"#, false),
+        (r#"[".references/**"]"#, false),
+    ] {
+        let dir = biome(&format!(r#"{{ "files": {{ "includes": {includes} }} }}"#));
+
+        let expected: &[&str] = if covered { &[] } else { &["biome"] };
+        assert_eq!(tools(&gaps(dir.path(), DIR, &[])), expected, "{includes}");
     }
 }
 
@@ -535,15 +577,25 @@ fn a_tool_in_package_json_only_is_told_to_create_its_file() {
 }
 
 #[test]
-fn the_directory_in_package_json_covers_the_tool_it_configures() {
-    let dir = TempDir::new().unwrap();
+fn only_prettierignore_covers_prettier() {
+    // Prettier ignores what its config or `package.json` says only through `.prettierignore`.
+    let in_package = TempDir::new().unwrap();
     fs::write(
-        dir.path().join("package.json"),
+        in_package.path().join("package.json"),
         r#"{"prettier": {"ignore": [".references"]}}"#,
     )
     .unwrap();
+    let in_rc = TempDir::new().unwrap();
+    fs::write(in_rc.path().join(".prettierrc"), "# .references\n").unwrap();
 
-    assert_eq!(gaps(dir.path(), DIR, &[]), []);
+    assert_eq!(
+        gaps(in_package.path(), DIR, &[]),
+        [to_create("prettier", ".prettierignore", ".references/")]
+    );
+    assert_eq!(
+        gaps(in_rc.path(), DIR, &[]),
+        [to_create("prettier", ".prettierignore", ".references/")]
+    );
 }
 
 #[test]

@@ -1,7 +1,7 @@
 //! The JavaScript tools: Prettier, ESLint, Biome and markdownlint-cli2.
 
 use super::Finding;
-use super::site::{PACKAGE_JSON, PRE_COMMIT, Site, mentions};
+use super::site::{PACKAGE_JSON, PRE_COMMIT, Site, any_string};
 
 const PRETTIER: &[&str] = &[
     ".prettierignore",
@@ -21,6 +21,8 @@ const PRETTIER: &[&str] = &[
     "prettier.config.ts",
 ];
 
+/// Prettier skips what `.prettierignore` names: its config and `package.json` have no ignore
+/// option (research note).
 pub(super) fn prettier(site: &Site) -> Finding {
     let signals = [
         (
@@ -29,11 +31,10 @@ pub(super) fn prettier(site: &Site) -> Finding {
         ),
         (PRE_COMMIT, site.hook("prettier")),
     ];
-    let Some(mut files) = site.in_use(&site.present(PRETTIER), &signals) else {
+    if site.in_use(&site.present(PRETTIER), &signals).is_none() {
         return Finding::Absent;
-    };
-    files.push(".prettierignore");
-    match site.any_names_dir(&files) {
+    }
+    match site.any_names_dir(&[".prettierignore"]) {
         true => Finding::Covered,
         false => Finding::gap(".prettierignore", format!("{}/", site.seen)),
     }
@@ -59,6 +60,9 @@ const ESLINT_LEGACY: &[&str] = &[
     ".eslintignore",
 ];
 
+/// With a flat config ESLint skips what an `ignores` entry of it names. With only the legacy
+/// files it skips dot-folders by itself (ESLint 8 docs, not run), so those are covered whatever
+/// they say.
 pub(super) fn eslint(site: &Site) -> Finding {
     let flat = site.present(ESLINT_FLAT);
     let legacy = site.present(ESLINT_LEGACY);
@@ -67,26 +71,23 @@ pub(super) fn eslint(site: &Site) -> Finding {
         (PACKAGE_JSON, site.dependency("eslint")),
         (PRE_COMMIT, site.hook("eslint")),
     ];
-    let Some(mut files) = site.in_use(own, &signals) else {
+    if site.in_use(own, &signals).is_none() {
         return Finding::Absent;
-    };
-    let (file, snippet) = match (flat.first(), legacy.is_empty()) {
-        (None, false) => (".eslintignore", format!("{}/", site.seen)),
-        (flat, _) => (
-            flat.copied().unwrap_or("eslint.config.js"),
-            format!(r#"{{ ignores: ["{}/**"] }}"#, site.seen),
-        ),
-    };
-    files.push(file);
-    match site.any_names_dir(&files) {
+    }
+    if flat.is_empty() && !legacy.is_empty() {
+        return Finding::Covered;
+    }
+    let file = flat.first().copied().unwrap_or("eslint.config.js");
+    match site.any_names_dir(&[file]) {
         true => Finding::Covered,
-        false => Finding::gap(file, snippet),
+        false => Finding::gap(file, format!(r#"{{ ignores: ["{}/**"] }}"#, site.seen)),
     }
 }
 
 const BIOME: &[&str] = &["biome.json", "biome.jsonc", ".biome.json", ".biome.jsonc"];
 
-/// Biome skips what its `includes` negate and reads `.git/info/exclude` when `vcs.enabled` and
+/// Biome skips what its `includes` negate (`!` or `!!`; a positive entry only narrows the files it
+/// takes) and reads `.git/info/exclude` when `vcs.enabled` and
 /// `vcs.useIgnoreFile` are both on (tested: `useIgnoreFile` alone does nothing). Its configs are
 /// JSONC, so a comment or a file that does not parse covers nothing.
 pub(super) fn biome(site: &Site) -> Finding {
@@ -102,7 +103,8 @@ pub(super) fn biome(site: &Site) -> Finding {
     let covers = |config: serde_json::Value| {
         let on =
             |key| config.pointer(&format!("/vcs/{key}")) == Some(&serde_json::Value::Bool(true));
-        (on("enabled") && on("useIgnoreFile")) || mentions(&config, &site.name)
+        (on("enabled") && on("useIgnoreFile"))
+            || any_string(&config, &|text| negates(text, &site.name))
     };
     // Only the config says what Biome skips: not `package.json` or the hook, whatever shows
     // Biome is in use.
@@ -113,6 +115,11 @@ pub(super) fn biome(site: &Site) -> Finding {
             format!(r#""files": {{ "includes": ["**", "!!{}"] }}"#, site.seen),
         ),
     }
+}
+
+/// Whether `entry` of `includes` negates a path that contains `dir`.
+fn negates(entry: &str, dir: &str) -> bool {
+    entry.starts_with('!') && entry.contains(dir)
 }
 
 const MARKDOWNLINT: &[&str] = &[

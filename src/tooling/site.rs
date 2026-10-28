@@ -117,12 +117,12 @@ impl Site {
     }
 }
 
-/// Whether a string anywhere in `json` contains `dir`.
-pub(super) fn mentions(json: &serde_json::Value, dir: &str) -> bool {
+/// Whether a string anywhere in `json` satisfies `test`.
+pub(super) fn any_string(json: &serde_json::Value, test: &dyn Fn(&str) -> bool) -> bool {
     match json {
-        serde_json::Value::String(text) => text.contains(dir),
-        serde_json::Value::Array(items) => items.iter().any(|item| mentions(item, dir)),
-        serde_json::Value::Object(map) => map.values().any(|item| mentions(item, dir)),
+        serde_json::Value::String(text) => test(text),
+        serde_json::Value::Array(items) => items.iter().any(|item| any_string(item, test)),
+        serde_json::Value::Object(map) => map.values().any(|item| any_string(item, test)),
         _ => false,
     }
 }
