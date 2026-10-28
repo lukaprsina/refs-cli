@@ -62,10 +62,9 @@ impl Source for GitSource {
         let pin = resolve_ref(url, git_ref)?;
         let sha = pin.sha();
         remote::check_sha(sha)?;
-        let paths = self.cache.with_repo(url, sha, false, |cache| {
-            cache.ensure_commit(url, sha, false)?;
-            cache.paths(sha)
-        })?;
+        let paths = self
+            .cache
+            .with_repo(url, sha, false, |cache| cache.paths(sha))?;
         Ok(Outline { pin, paths })
     }
 
@@ -77,10 +76,8 @@ impl Source for GitSource {
     ) -> Result<Vec<(String, String)>, SourceError> {
         let sha = pin.sha();
         remote::check_sha(sha)?;
-        self.cache.with_repo(url, sha, false, |cache| {
-            cache.ensure_commit(url, sha, false)?;
-            cache.read(sha, paths)
-        })
+        self.cache
+            .with_repo(url, sha, false, |cache| cache.read(sha, paths))
     }
 
     fn tags(&self, url: &str) -> Result<Vec<String>, SourceError> {
@@ -96,7 +93,6 @@ impl Source for GitSource {
         let (url, sha) = (pin.url(), pin.sha());
         remote::check_sha(sha)?;
         self.cache.with_repo(url, sha, offline, |cache| {
-            cache.ensure_commit(url, sha, offline)?;
             for path in &repo.repo.paths {
                 let path = path.get_ref();
                 match cache.entry_kind(sha, path)? {
@@ -152,7 +148,6 @@ impl Source for GitSource {
         // Everything that can fail for want of an object comes first, so that a failure leaves
         // an existing Checkout alone: past here every object the Checkout reads is in the Cache.
         self.cache.with_repo(url, sha, offline, |cache| {
-            cache.ensure_commit(url, sha, offline)?;
             cache.prefetch(repo.id, sha, &paths, offline)
         })?;
         // A Checkout of another remote cannot move here: its objects are in another Cache.
@@ -162,7 +157,8 @@ impl Source for GitSource {
             self.remove(repo.id)?;
         }
         // The Cache lock is let go between the two steps on purpose: removing a Checkout of
-        // another remote takes that remote's lock, and holding two could deadlock.
+        // another remote takes that remote's lock, and holding two could deadlock. The commit is
+        // ensured again, so a Cache wiped in between is `NotCached`, not a git error.
         self.cache.with_repo(url, sha, offline, |cache| {
             // Checked under the lock, so what is discarded on failure is only what this call made.
             let moving = match checkout::layout(&dest, self.cache.root())? {
