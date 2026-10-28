@@ -14,7 +14,7 @@ The Cache was created with `git clone --bare --filter=blob:none`, which still do
 
 ## Decision
 
-- No ref-based fallback. A server that refuses a commit want fails with `refs::git::commit_unavailable`, which already matches both refusal messages. Every host tested is on protocol v2, and a Pin is a commit `ls-remote` just advertised. Add a fallback when a real host needs one.
+- No ref-based fallback. A server that refuses a commit want fails with `refs::git::commit_unavailable` (the blobs of the prefetch, `refs::git::objects_unavailable`), which already matches both refusal messages. Every host tested is on protocol v2, and a Pin is a commit `ls-remote` just advertised. Add a fallback when a real host needs one.
 - Keep the `<name>.tmp` then rename step when creating an entry, so a crash leaves no half-made one. The entry still has no fetch refspec (ADR 0001).
 - `tree:0` and `--shallow-since` are not options: at depth 1 `tree:0` saves nothing and `ls-tree -r` fails without lazy fetch, which the no-lazy-fetch rule forbids.
 

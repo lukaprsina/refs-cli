@@ -38,7 +38,8 @@ impl GitSource {
             std::env::var("HOME").ok().as_deref(),
         )
         .ok_or_else(|| SourceError::Failed {
-            message: "cannot find the cache directory: set XDG_CACHE_HOME (or LOCALAPPDATA on \n                      Windows, or HOME)"
+            message: "cannot find the cache directory: set XDG_CACHE_HOME (or LOCALAPPDATA on \
+                      Windows, or HOME)"
                 .into(),
         })?;
         Ok(GitSource::new(cache, checkouts))
@@ -153,14 +154,11 @@ impl Source for GitSource {
         let dest = self.checkouts.join(repo.id);
         let cache_name = cache_dir_name(url);
         let paths = repo.repo.path_strings();
-        // Everything that can fail on the network comes first, so that a failure leaves an
-        // existing Checkout alone.
+        // Everything that can fail for want of an object comes first, so that a failure leaves
+        // an existing Checkout alone: past here every object the Checkout reads is in the Cache.
         self.cache.with_repo(url, sha, opts.offline, |cache| {
             cache.ensure_commit(url, sha, opts.offline)?;
-            if opts.offline {
-                return Ok(());
-            }
-            cache.prefetch(sha, &paths)
+            cache.prefetch(repo.id, sha, &paths, opts.offline)
         })?;
         // A Checkout of another remote cannot move here: its objects are in another Cache.
         if let Layout::Linked(link) = checkout::layout(&dest, self.cache.root())?
@@ -168,6 +166,8 @@ impl Source for GitSource {
         {
             self.remove(repo.id)?;
         }
+        // The Cache lock is let go between the two steps on purpose: removing a Checkout of
+        // another remote takes that remote's lock, and holding two could deadlock.
         self.cache.with_repo(url, sha, opts.offline, |cache| {
             // Checked under the lock, so what is discarded on failure is only what this call made.
             let moving = match checkout::layout(&dest, self.cache.root())? {

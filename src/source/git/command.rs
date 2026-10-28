@@ -59,7 +59,10 @@ impl Cmd {
         }
         command
             .env("GIT_ALLOW_PROTOCOL", ALLOWED_PROTOCOLS)
-            .env("GIT_TERMINAL_PROMPT", "0");
+            .env("GIT_TERMINAL_PROMPT", "0")
+            // Failures are told apart by git's wording (`remote::object_unavailable`,
+            // `missing_object`), which a translation would change.
+            .env("LC_ALL", "C");
         Cmd {
             command,
             shown: Vec::new(),

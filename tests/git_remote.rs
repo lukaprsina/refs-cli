@@ -61,6 +61,7 @@ mod check_version {
             "git version 3.0.1\n",
             "git version 2.39.5 (Apple Git-154)\n",
             "git version 2.43.0.windows.1\n",
+            "git version 2.45.GIT\n",
         ] {
             assert!(check_version(out).is_ok(), "{out}");
         }
@@ -72,6 +73,7 @@ mod check_version {
             "git version 2.35.9\n",
             "git version 2.34.1\n",
             "git version 1.9.0\n",
+            "git version 2.35.GIT\n",
         ] {
             assert_eq!(
                 code(check_version(out).unwrap_err()),

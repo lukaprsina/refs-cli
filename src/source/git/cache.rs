@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use super::command::Cmd;
 use super::remote::{
-    EntryKind, ancestor_dirs, cache_dir_name, commit_unavailable, entry_kind, missing_oids,
-    normalise_url, tree_blobs,
+    EntryKind, ancestor_dirs, cache_dir_name, entry_kind, missing_oids, normalise_url,
+    object_unavailable, tree_blobs,
 };
 use crate::diagnostic::SourceError;
 
@@ -249,7 +249,7 @@ impl Repo {
             .run()
             .map(drop)
             .map_err(|failure| {
-                if commit_unavailable(&failure.stderr) {
+                if object_unavailable(&failure.stderr) {
                     SourceError::CommitUnavailable {
                         url: url.into(),
                         sha: sha.into(),
@@ -273,8 +273,15 @@ impl Repo {
     /// Fetch every blob a checkout of `sha` with `paths` reads, in one round trip, so that
     /// `checkout` never has to fetch lazily (spec §7.3 step 1b). Cone mode checks out the
     /// files directly in the root and in every ancestor directory of a path, as well as
-    /// everything under the paths.
-    pub fn prefetch(&self, sha: &str, paths: &[String]) -> Result<(), SourceError> {
+    /// everything under the paths. With `offline` nothing is fetched: a blob that is not here
+    /// is an error naming it and `repo`, before anything is replaced.
+    pub fn prefetch(
+        &self,
+        repo: &str,
+        sha: &str,
+        paths: &[String],
+        offline: bool,
+    ) -> Result<(), SourceError> {
         let tree = |args: &[&str], paths: &[String]| -> Result<Vec<String>, SourceError> {
             let mut cmd = self
                 .git()
@@ -297,19 +304,29 @@ impl Repo {
             }
             wanted.extend(tree(&["-r"], paths)?);
         }
-        self.fetch_missing(&wanted)
+        let missing = self.missing(&wanted)?;
+        match missing.first() {
+            Some(oid) if offline => Err(SourceError::ObjectMissing {
+                repo: repo.into(),
+                oid: oid.clone(),
+            }),
+            _ => self.fetch(&missing),
+        }
     }
 
-    /// Fetch the blobs of `wanted` (object ids) that the repository does not have, in one
-    /// round trip.
-    fn fetch_missing(&self, wanted: &[String]) -> Result<(), SourceError> {
+    /// The ids of `wanted` that the repository does not have.
+    fn missing(&self, wanted: &[String]) -> Result<Vec<String>, SourceError> {
         let present = self
             .git()
             .no_lazy_fetch()
             .args(["cat-file", "--batch-check"])
             .stdin(wanted.join("\n") + "\n")
             .run()?;
-        let missing = missing_oids(&present);
+        Ok(missing_oids(&present))
+    }
+
+    /// Fetch the blobs `missing` (object ids), in one round trip.
+    fn fetch(&self, missing: &[String]) -> Result<(), SourceError> {
         if missing.is_empty() {
             return Ok(());
         }
@@ -324,8 +341,15 @@ impl Repo {
             ])
             .args(["--filter=blob:none", "origin", "--stdin"])
             .stdin(missing.join("\n") + "\n")
-            .run()?;
-        Ok(())
+            .run()
+            .map(drop)
+            .map_err(|failure| {
+                if object_unavailable(&failure.stderr) {
+                    SourceError::ObjectsUnavailable
+                } else {
+                    failure.into()
+                }
+            })
     }
 
     /// Every path in the tree of `sha`, in git's order.
@@ -368,7 +392,7 @@ impl Repo {
                 _ => return Err(failed(format!("{path} is not a file in {sha}"))),
             }
         }
-        self.fetch_missing(&oids)?;
+        self.fetch(&self.missing(&oids)?)?;
         let out = self
             .git()
             .no_lazy_fetch()
