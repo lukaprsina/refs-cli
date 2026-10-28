@@ -117,14 +117,17 @@ fn prepare(repo: &AddRepo, config: &Config, cx: &mut Context) -> Result<AddRepo,
             false => Ok(repo),
         };
     };
-    let known = ask::Known {
-        described: looked.described.as_deref(),
-        looked_at: looked.outline.as_ref(),
-        // The directory the registry gave is where the picker starts, unlike one from `--paths`.
-        paths_from_registry: registry_add && !paths_given && looked.outline.is_some(),
-        manifests: looked.outline.is_some().then_some(&looked.manifests),
-    };
-    ask::fill_add(&mut repo, config, prompter, &known, &mut *cx.say).map_err(Failure::Asked)?;
+    // The directory the registry gave is where the picker starts, unlike one from `--paths`.
+    let paths_from_registry = registry_add && !paths_given && looked.outline.is_some();
+    ask::fill_add(
+        &mut repo,
+        config,
+        prompter,
+        &looked,
+        paths_from_registry,
+        &mut *cx.say,
+    )
+    .map_err(Failure::Asked)?;
     Ok(repo)
 }
 
