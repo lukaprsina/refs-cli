@@ -13,7 +13,6 @@ pub(super) const SPEC: Spec = Spec {
     registry: "PyPI",
     url: "https://pypi.org/pypi/{name}/json",
     found,
-    lockfiles: &["uv.lock", "poetry.lock"],
 };
 
 #[derive(Deserialize)]

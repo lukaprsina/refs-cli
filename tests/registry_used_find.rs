@@ -192,3 +192,13 @@ fn of_several_versions_only_the_one_the_project_asks_for_is_picked() {
         ("package-lock.json", vec!["2.0.0", "2.1.3"])
     );
 }
+
+#[test]
+fn poetry_lock_is_read_when_it_is_the_only_one() {
+    let (_repo, _top, project) = worktree();
+    fs::write(project.join("poetry.lock"), POETRY_LOCK).unwrap();
+
+    let found = ask(Ecosystem::Pypi, "requests", &project);
+
+    assert_eq!(read(&found), ("poetry.lock", vec!["2.31.0"]));
+}

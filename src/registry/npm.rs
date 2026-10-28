@@ -11,12 +11,6 @@ pub(super) const SPEC: Spec = Spec {
     registry: "npm",
     url: "https://registry.npmjs.org/{name}/latest",
     found,
-    lockfiles: &[
-        "pnpm-lock.yaml",
-        "yarn.lock",
-        "package-lock.json",
-        "bun.lock",
-    ],
 };
 
 #[derive(Deserialize)]

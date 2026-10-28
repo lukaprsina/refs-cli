@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use super::Package;
+use super::{Ecosystem, Package};
 use crate::worktree::candidate_dirs;
 
 mod bun;
@@ -25,6 +25,21 @@ const DEPENDENCY_GROUPS: [&str; 4] = [
     "peerDependencies",
 ];
 
+/// Reads one Package lockfile format: the versions of a package in the file's text.
+type Parser = fn(name: &str, text: &str) -> Result<Vec<Used>, String>;
+
+/// Every Package lockfile refs reads: its ecosystem, file name and format. Within an ecosystem
+/// the order is the one in which they are preferred when a directory holds more than one.
+const LOCKFILES: [(Ecosystem, &str, Parser); 7] = [
+    (Ecosystem::Npm, "pnpm-lock.yaml", pnpm::used),
+    (Ecosystem::Npm, "yarn.lock", yarn::used),
+    (Ecosystem::Npm, "package-lock.json", package_lock::used),
+    (Ecosystem::Npm, "bun.lock", bun::used),
+    (Ecosystem::Cargo, "Cargo.lock", cargo::used),
+    (Ecosystem::Pypi, "uv.lock", uv::used),
+    (Ecosystem::Pypi, "poetry.lock", poetry::used),
+];
+
 /// A version of a package that a Package lockfile resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Used {
@@ -35,21 +50,15 @@ pub struct Used {
 }
 
 /// Every distinct registry version of `name` in `text`, the document of the Package lockfile
-/// called `file` (a file name, not a path), lowest first. A version the project asks for itself is `direct` even if
-/// another entry of that version is not. Packages from git, a path or a workspace are not
-/// registry versions and are left out. Errors when `file` is not a Package lockfile refs reads,
-/// or `text` is not its document.
+/// called `file` (a file name, not a path), lowest first. A version the project asks for itself
+/// is `direct` even if another entry of that version is not. Packages from git, a path or a
+/// workspace are not registry versions and are left out. Errors when `file` is not a Package
+/// lockfile refs reads, or `text` is not its document.
 pub fn used_versions(file: &str, name: &str, text: &str) -> Result<Vec<Used>, String> {
-    let parser = match file {
-        "Cargo.lock" => cargo::used,
-        "package-lock.json" => package_lock::used,
-        "bun.lock" => bun::used,
-        "pnpm-lock.yaml" => pnpm::used,
-        "yarn.lock" => yarn::used,
-        "uv.lock" => uv::used,
-        "poetry.lock" => poetry::used,
-        _ => return Err(format!("refs does not read {file}")),
-    };
+    let (_, _, parser) = LOCKFILES
+        .iter()
+        .find(|(_, known, _)| *known == file)
+        .ok_or(format!("refs does not read {file}"))?;
     Ok(distinct(parser(name, text)?))
 }
 
@@ -100,38 +109,45 @@ pub enum Answer {
 /// read, whether or not it has the package; in it, the first of the ecosystem's Package lockfiles
 /// that exists.
 pub fn answer(package: &Package, root: &Path) -> Answer {
-    let lockfiles = package.ecosystem.spec().lockfiles;
     let name = |file: &Path| {
         let file = file.strip_prefix(root).unwrap_or(file);
         file.display().to_string()
     };
     for dir in candidate_dirs(root) {
-        let mut present = lockfiles
+        let mut present = LOCKFILES
             .iter()
-            .map(|&file| (file, dir.join(file)))
+            .filter(|(ecosystem, ..)| *ecosystem == package.ecosystem)
+            .map(|&(_, lockfile, _)| (lockfile, dir.join(lockfile)))
             .filter(|(_, path)| path.is_file());
-        let Some((kind, path)) = present.next() else {
+        let Some((lockfile, path)) = present.next() else {
             continue;
         };
-        let (file, ignored) = (name(&path), present.map(|(_, path)| name(&path)).collect());
-        let read = std::fs::read_to_string(&path)
+        let file = name(&path);
+        let ignored = present.map(|(_, path)| name(&path)).collect();
+        let used = std::fs::read_to_string(&path)
             .map_err(|e| e.to_string())
-            .and_then(|text| used_versions(kind, &package.name, &text));
-        let used = match read {
+            .and_then(|text| used_versions(lockfile, &package.name, &text));
+        let used = match used {
             Ok(used) => used,
             Err(why) => return Answer::Unreadable { file, why },
         };
-        let mut direct = used.iter().filter(|used| used.direct);
-        return match (&used[..], direct.next(), direct.next()) {
-            ([], ..) => Answer::Absent { file, ignored },
-            ([only], ..) | (_, Some(only), None) => Answer::One {
+        // The one version the project asks for, if exactly one is; otherwise all of them.
+        let direct: Vec<&Used> = used.iter().filter(|used| used.direct).collect();
+        let choices = if direct.len() == 1 {
+            direct
+        } else {
+            used.iter().collect()
+        };
+        return match choices[..] {
+            [] => Answer::Absent { file, ignored },
+            [only] => Answer::One {
                 file,
                 version: only.version.clone(),
                 ignored,
             },
-            (all, ..) => Answer::Several {
+            _ => Answer::Several {
                 file,
-                versions: all.iter().map(|used| used.version.clone()).collect(),
+                versions: choices.iter().map(|used| used.version.clone()).collect(),
                 ignored,
             },
         };

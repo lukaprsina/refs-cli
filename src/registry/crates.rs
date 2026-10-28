@@ -11,7 +11,6 @@ pub(super) const SPEC: Spec = Spec {
     registry: "crates.io",
     url: "https://crates.io/api/v1/crates/{name}?include=",
     found,
-    lockfiles: &["Cargo.lock"],
 };
 
 #[derive(Deserialize)]
