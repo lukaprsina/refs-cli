@@ -72,6 +72,16 @@ impl Report {
         }
     }
 
+    /// The editor hint (spec 7.6), when `first` and the run got through.
+    fn with_editor_hint(mut self, first: bool, config: &Config) -> Report {
+        if first && self.outcome == Outcome::InSync {
+            let references_dir = config.settings.references_dir().to_owned();
+            self.diagnostics
+                .push(miette::Report::new(Note::EditorHint { references_dir }));
+        }
+        self
+    }
+
     fn failed(error: impl miette::Diagnostic + Send + Sync + 'static) -> Report {
         Report {
             diagnostics: vec![miette::Report::new(error)],
@@ -242,6 +252,8 @@ struct Applied {
     after: String,
     config: Config,
     group_created: Option<String>,
+    /// Whether the edit is an `add` that takes the Project from no active Repo to one.
+    first_active: bool,
 }
 
 impl Applied {
@@ -253,6 +265,7 @@ impl Applied {
         };
         let applied = edit.apply(&before).map_err(rejected)?;
         Ok(Applied {
+            first_active: applied.first_active,
             created,
             before,
             after: applied.text,
@@ -294,9 +307,11 @@ pub fn edit_only(root: &Path, edit: &Edit) -> Report {
         return Report::new(Outcome::InSync);
     }
     match project::write_config(root, &applied.after) {
-        Ok(()) => applied
-            .written(Report::new(Outcome::InSync))
-            .with_hint(Hint::RunSync),
+        Ok(()) => {
+            let report = Report::new(Outcome::InSync)
+                .with_editor_hint(applied.first_active, &applied.config);
+            applied.written(report).with_hint(Hint::RunSync)
+        }
         Err(e) => rejected(e),
     }
 }
@@ -370,6 +385,7 @@ fn edit_stages(
         return Err(with_lock_change(stage_one, rejected(e)));
     }
     let stage_two = apply_plan(source, root, config, active, plan, flags)
+        .with_editor_hint(applied.first_active, config)
         .hint_if_incomplete(Hint::FixOrRemoveThenSync);
     Ok(with_lock_change(stage_one, stage_two))
 }

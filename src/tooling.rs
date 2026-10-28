@@ -5,6 +5,13 @@ use std::path::Path;
 
 use crate::worktree::candidate_dirs;
 
+mod editors;
+mod js;
+mod python;
+mod site;
+
+use site::Site;
+
 /// A detected tool whose files do not exclude the references directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Gap {
@@ -14,140 +21,90 @@ pub struct Gap {
     pub file: String,
     /// The lines to add to it.
     pub snippet: String,
+    /// Whether `file` does not exist yet, so the note says to create it.
+    pub create: bool,
 }
 
-/// What `Row::fix` gives: the file to edit and the lines to add.
-type Fix = (String, String);
-
-/// One tool: its name in `tooling_ignore`, the files that show it is in use in a directory, and
-/// how to say what to add. The files come in tiers, the preferred first: the tool reads the first
-/// tier that has a file in the directory and ignores the others, and is covered when any file
-/// of that tier names the references directory.
-/// `fix` takes the files that are present and the references directory as seen from them.
-/// Add a new tool as a row here.
-struct Row {
-    name: &'static str,
-    files: &'static [&'static [&'static str]],
-    fix: fn(present: &[&str], dir: &str) -> Fix,
+impl Gap {
+    /// What to do about it, in a sentence, and how to stop being told.
+    pub fn advice(&self) -> String {
+        let (file, snippet, tool) = (&self.file, &self.snippet, self.tool);
+        let fix = match self.create {
+            true => format!("create {file} with: {snippet}"),
+            false => format!("add this to {file}: {snippet}"),
+        };
+        format!(r#"{fix} (or add "{tool}" to tooling_ignore in refs.toml)"#)
+    }
 }
 
-const TABLE: [Row; 4] = [
-    Row {
-        name: "prettier",
-        files: &[&[
-            ".prettierignore",
-            ".prettierrc",
-            ".prettierrc.json",
-            ".prettierrc.yaml",
-            ".prettierrc.yml",
-            ".prettierrc.json5",
-            ".prettierrc.toml",
-            ".prettierrc.js",
-            ".prettierrc.cjs",
-            ".prettierrc.mjs",
-            ".prettierrc.ts",
-            "prettier.config.js",
-            "prettier.config.cjs",
-            "prettier.config.mjs",
-            "prettier.config.ts",
-        ]],
-        fix: |_, dir| (".prettierignore".into(), format!("{dir}/")),
-    },
-    Row {
-        name: "eslint",
-        // ESLint reads the flat config alone when there is one: it ignores `.eslintignore` and
-        // the legacy `.eslintrc*` files then.
-        files: &[
-            &[
-                "eslint.config.js",
-                "eslint.config.mjs",
-                "eslint.config.cjs",
-                "eslint.config.ts",
-                "eslint.config.mts",
-                "eslint.config.cts",
-            ],
-            &[
-                ".eslintrc",
-                ".eslintrc.js",
-                ".eslintrc.cjs",
-                ".eslintrc.json",
-                ".eslintrc.yaml",
-                ".eslintrc.yml",
-                ".eslintignore",
-            ],
-        ],
-        fix: |present, dir| match present
-            .iter()
-            .find(|file| file.starts_with("eslint.config."))
-        {
-            Some(flat) => (flat.to_string(), format!(r#"{{ ignores: ["{dir}/**"] }}"#)),
-            None => (".eslintignore".into(), format!("{dir}/")),
-        },
-    },
-    Row {
-        name: "oxlint",
-        files: &[&[".oxlintrc.json"]],
-        fix: |_, dir| {
-            (
-                ".oxlintrc.json".into(),
-                format!(r#""ignorePatterns": ["{dir}/"]"#),
-            )
-        },
-    },
-    Row {
-        name: "tsc",
-        files: &[&["tsconfig.json"]],
-        fix: |_, dir| ("tsconfig.json".into(), format!(r#""exclude": ["{dir}"]"#)),
-    },
+/// What one tool finds in one directory.
+enum Finding {
+    /// The tool is not in use here.
+    Absent,
+    /// It is, and its files keep the references directory out.
+    Covered,
+    /// It is, and they do not: `file` (from the directory, it may not exist) needs `snippet`.
+    Gap { file: String, snippet: String },
+}
+
+impl Finding {
+    fn gap(file: &str, snippet: String) -> Finding {
+        Finding::Gap {
+            file: file.into(),
+            snippet,
+        }
+    }
+}
+
+/// One tool's function.
+type Check = fn(&Site) -> Finding;
+
+/// The tools, by their name in `tooling_ignore`. Each says whether it is in use in a directory,
+/// whether its files cover the references directory, and what to add if not. Add a new tool as
+/// a function and a line here.
+const TOOLS: &[(&str, Check)] = &[
+    ("prettier", js::prettier),
+    ("eslint", js::eslint),
+    ("black", python::black),
+    ("biome", js::biome),
+    ("markdownlint", js::markdownlint),
+    ("zed", editors::zed),
 ];
+
+/// Names earlier versions reported. `tooling_ignore` still accepts them and they do nothing: the
+/// tools skip the references directory by themselves (spec 7.6).
+const RETIRED: [&str; 3] = ["oxlint", "tsc", "stylelint"];
 
 /// The names `tooling_ignore` accepts.
 pub fn names() -> Vec<&'static str> {
-    TABLE.iter().map(|row| row.name).collect()
+    TOOLS.iter().map(|&(name, _)| name).chain(RETIRED).collect()
 }
 
 /// The tools in use for the project at `project_dir` whose files do not name `references_dir`,
-/// except `ignored`. Each tool is read in the nearest directory that has a file of it, from
+/// except `ignored`. Each tool is read in the nearest directory that shows it in use, from
 /// `project_dir` up to the top of its git worktree (`candidate_dirs`).
 pub fn gaps(project_dir: &Path, references_dir: &str, ignored: &[&str]) -> Vec<Gap> {
-    let dirs = candidate_dirs(project_dir);
+    let sites: Vec<Site> = candidate_dirs(project_dir)
+        .into_iter()
+        .map(|dir| Site::read(dir, project_dir, references_dir))
+        .collect();
     let mut found = Vec::new();
-    for row in TABLE.iter().filter(|row| !ignored.contains(&row.name)) {
-        let Some((up, dir, present)) = dirs.iter().enumerate().find_map(|(up, dir)| {
-            row.files.iter().find_map(|tier| {
-                let present: Vec<&str> = tier
-                    .iter()
-                    .copied()
-                    .filter(|file| dir.join(file).is_file())
-                    .collect();
-                (!present.is_empty()).then_some((up, dir, present))
-            })
-        }) else {
-            continue;
-        };
-        let covered = present.iter().any(|file| {
-            std::fs::read_to_string(dir.join(file)).is_ok_and(|text| text.contains(references_dir))
-        });
-        if !covered {
-            let (file, snippet) = (row.fix)(&present, &seen_from(dir, project_dir, references_dir));
+    for &(tool, check) in TOOLS.iter().filter(|(name, _)| !ignored.contains(name)) {
+        let nearest = sites
+            .iter()
+            .enumerate()
+            .find_map(|(up, site)| match check(site) {
+                Finding::Absent => None,
+                finding => Some((up, site, finding)),
+            });
+        if let Some((up, site, Finding::Gap { file, snippet })) = nearest {
             found.push(Gap {
-                tool: row.name,
+                tool,
+                create: !site.dir.join(&file).is_file(),
                 file: format!("{}{file}", "../".repeat(up)),
                 snippet,
             });
         }
     }
     found
-}
-
-/// `references_dir` of the project at `project_dir`, as a `/`-separated path from `dir`, an
-/// ancestor of it.
-fn seen_from(dir: &Path, project_dir: &Path, references_dir: &str) -> String {
-    let below = project_dir.strip_prefix(dir).unwrap_or(Path::new(""));
-    let mut parts: Vec<String> = below
-        .components()
-        .map(|part| part.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    parts.push(references_dir.to_owned());
-    parts.join("/")
 }
