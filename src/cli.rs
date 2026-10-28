@@ -39,10 +39,9 @@ pub struct Cli {
     command: Command,
 }
 
-/// The commands, by what they need: `init` and `self` run where there may be no project
-/// (`self` is about the program, not a project), the config commands read and edit
-/// `refs.toml` and ask for a `Source` only to sync after an edit (unless `--no-sync`) or to
-/// show `list --status`, and the rest act on the project through one.
+/// The commands. `init` and `self` run where there may be no project (`self` is about the
+/// program, not a project); the ones that edit `refs.toml` ask for a `Source` only to sync
+/// afterwards (unless `--no-sync`), and `list --status` only to show the states.
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Set up a project: refs.toml, the managed block and the git exclude rule
@@ -56,14 +55,6 @@ A repo that cannot be assessed, or has uncommitted changes, is skipped and named
 are moved. A failure the remote causes after that, when the edited config is resolved and \
 verified, blocks the whole run.")]
     Update(UpdateArgs),
-    #[command(flatten)]
-    Config(ConfigCommand),
-    #[command(flatten)]
-    Source(SourceCommand),
-}
-
-#[derive(Debug, Subcommand)]
-enum ConfigCommand {
     /// List the repos in refs.toml
     List(ListArgs),
     /// Add a repo to refs.toml, lock it and sync
@@ -81,10 +72,6 @@ enum ConfigCommand {
     Disable(ToggleArgs),
     /// Track a disabled repo or group again
     Enable(ToggleArgs),
-}
-
-#[derive(Debug, Subcommand)]
-enum SourceCommand {
     /// Make the checkouts and the managed block match refs.lock
     Sync(SyncArgs),
 }
@@ -375,7 +362,7 @@ fn dispatch(
             let prompter = args.input.gate(outside.prompter);
             commands::update(&*source, &project, &request, prompter, console)
         }
-        Command::Config(ConfigCommand::List(args)) => {
+        Command::List(args) => {
             let project = commands::load(start, console)?;
             let source = if args.status {
                 Some(commands::source(make_source, &project, console)?)
@@ -384,7 +371,7 @@ fn dispatch(
             };
             commands::list(&project, source.as_deref(), color, console)
         }
-        Command::Config(ConfigCommand::Add { repo, flags, input }) => {
+        Command::Add { repo, flags, input } => {
             // With no `refs.toml` yet, `add` makes one (ADR 0005).
             let project = commands::load_or_create(start, console)?;
             let source = if flags.no_sync {
@@ -405,28 +392,28 @@ fn dispatch(
                 console,
             )
         }
-        Command::Config(ConfigCommand::Remove(args)) => edit(
+        Command::Remove(args) => edit(
             start,
             make_source,
             Edit::Remove(&args.id),
             &args.flags,
             console,
         )?,
-        Command::Config(ConfigCommand::Disable(args)) => edit(
+        Command::Disable(args) => edit(
             start,
             make_source,
             Edit::Disable(args.target()),
             &args.flags,
             console,
         )?,
-        Command::Config(ConfigCommand::Enable(args)) => edit(
+        Command::Enable(args) => edit(
             start,
             make_source,
             Edit::Enable(args.target()),
             &args.flags,
             console,
         )?,
-        Command::Source(SourceCommand::Sync(args)) => {
+        Command::Sync(args) => {
             let project = commands::load(start, console)?;
             let source = commands::source(make_source, &project, console)?;
             let flags = SyncFlags {
