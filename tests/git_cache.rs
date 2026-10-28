@@ -659,6 +659,27 @@ mod checkout {
     }
 
     #[test]
+    fn a_failed_move_offline_keeps_the_old_checkout_when_the_blobs_are_missing() {
+        let (mut remote, env) = (Remote::new(), Env::new());
+        let source = env.source();
+        let repo = remote.repo(&["docs/guide"], &[]);
+        materialise(&source, "r", &remote, &repo, ONLINE).unwrap();
+        let old = source.inspect("r").unwrap();
+        let files = env.files("r");
+        remote.advance();
+        // Verifying caches the new commit and its trees, but no blobs.
+        verify(&source, &remote, &repo, ONLINE).unwrap();
+
+        assert_eq!(
+            materialise(&source, "r", &remote, &repo, OFFLINE),
+            Err("refs::git::object_missing".into())
+        );
+
+        assert_eq!(source.inspect("r").unwrap(), old);
+        assert_eq!(env.files("r"), files);
+    }
+
+    #[test]
     fn a_failed_switch_to_another_remote_keeps_the_old_checkout() {
         let (first, second, env) = (Remote::new(), Remote::new(), Env::new());
         let source = env.source();
