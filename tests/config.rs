@@ -162,6 +162,18 @@ fn paths_and_start_are_relative_without_dot_dot() {
 }
 
 #[test]
+fn start_is_spelled_as_a_file() {
+    // git would list what is in `src/` or `.`, so `verify` could not tell it is a directory
+    for bad in ["src/", ".", "./README.md", "docs//a.md"] {
+        code_and_span(
+            &repo(&format!("start = [\"{bad}\"]\n")),
+            "refs::config::bad_start",
+            &format!("\"{bad}\""),
+        );
+    }
+}
+
+#[test]
 fn url_must_not_look_like_an_option_or_carry_a_password() {
     let with = |url: &str| format!("[repos.a]\nurl = \"{url}\"\n");
     for bad in [

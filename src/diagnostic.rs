@@ -85,6 +85,10 @@ pub enum ConfigProblem {
     #[diagnostic(code(refs::config::bad_path))]
     BadPath { path: String },
 
+    #[error("`start` file `{path}` must be spelled as a file: no trailing `/`, `.` or empty part")]
+    #[diagnostic(code(refs::config::bad_start))]
+    BadStart { path: String },
+
     #[error(
         "`{path}` must be a path inside the project: relative, without `..`, backticks or control characters"
     )]
@@ -134,7 +138,9 @@ impl ConfigProblem {
             ConfigProblem::BadId { .. } => "not a valid directory name",
             ConfigProblem::DanglingGroup { .. } => "no such group",
             ConfigProblem::StartOutsidePaths { .. } => "not checked out",
-            ConfigProblem::BadPath { .. } | ConfigProblem::BadSettingsPath { .. } => "not allowed",
+            ConfigProblem::BadPath { .. }
+            | ConfigProblem::BadStart { .. }
+            | ConfigProblem::BadSettingsPath { .. } => "not allowed",
             ConfigProblem::BadUrl { .. } => "rejected",
             ConfigProblem::BadRef => "git would read this as an option",
             ConfigProblem::BadOrigin { .. } => "rejected",
@@ -233,12 +239,10 @@ pub enum SourceError {
         sha: String,
     },
 
-    #[error("`start` file `{path}` in `{repo}` at {sha} is a directory that is not checked out")]
+    #[error("`start` file `{path}` in `{repo}` at {sha} is a directory")]
     #[diagnostic(
         code(refs::git::start_not_file),
-        help(
-            "with `paths` set, only files directly in the repo root are checked out besides them"
-        )
+        help("`start` names files; a directory can be listed in `paths`")
     )]
     StartNotFile {
         repo: String,

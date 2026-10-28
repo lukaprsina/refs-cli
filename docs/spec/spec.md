@@ -187,7 +187,7 @@ enabled = true                          # optional, default true; false = treate
 
 `<id>` for repos is the directory name under `.references/`; validate `[a-z0-9][a-z0-9._-]*`, not `.` or `..`, unique within the config.
 
-Validation: `paths` entries are relative and `/`-separated (no `\` or `:`), no `..`; when `paths` is present, every `start` is inside a `paths` entry or a direct child of the repo root (cone mode checks root files out too). With `paths = ["docs/guide"]`, `README.md` and `docs/guide/a.md` are valid `start` values; `docs/README.md`, `src/x.rs` and `docs/guide/../x.md` are not. A direct child of the root must be a file: `sync` rejects a root directory with `refs::git::start_not_file`, since cone mode does not check it out.
+Validation: `paths` entries are relative and `/`-separated (no `\` or `:`), no `..`; when `paths` is present, every `start` is inside a `paths` entry or a direct child of the repo root (cone mode checks root files out too). With `paths = ["docs/guide"]`, `README.md` and `docs/guide/a.md` are valid `start` values; `docs/README.md`, `src/x.rs` and `docs/guide/../x.md` are not. A `start` is always a file: it is spelled as one when the config loads (no trailing `/`, `.` or empty part: `refs::config::bad_start`), and `sync` rejects a directory with `refs::git::start_not_file` (a directory belongs in `paths`).
 
 `settings.references_dir` and each `settings.agents_files` entry are project-relative output paths. Reject absolute paths, paths containing `..`, empty paths, and paths that resolve to the project root. These lexical checks run at config time. Resolving symlinks (the destination, or its nearest existing ancestor, must stay inside the canonical project root; broken symlinks are rejected) and checking that an existing `references_dir` is a directory and each `agents_files` target a regular file belong to `project` and run at `sync` time; they are not race-resistant against a symlink changed between validation and writing.
 
@@ -279,7 +279,7 @@ Shell out to the system `git` binary: it handles auth (credential helpers, SSH a
 - **No fallback in the MVP:** if the server omits `^{}` for an annotated tag, `sync` fails with `refs::git::unpeeled_tag` (never store the tag object SHA). Peeling locally is deferred (§3.2).
 - A 40-hex ref is taken as-is and verified on fetch. Abbreviated SHAs are rejected. Only 40-hex (SHA-1) object ids are supported; SHA-256 repositories (64 hex) are out of scope for the MVP.
 - For each configured path, verify it exists at the resolved SHA and is a tree (`git ls-tree`). A missing path, or a path that is a file, is an error naming repo, path and SHA.
-- For each `start` path, verify it exists at the SHA and will be in the checkout (inside `paths`, or a direct child of the root; §4). A missing one is an error (`refs::git::start_missing`). With `paths` set, a slash-free `start` must be a file: cone mode checks out the root's files, not its directories (`refs::git::start_not_file`).
+- For each `start` path, verify it exists at the SHA and will be in the checkout (inside `paths`, or a direct child of the root; §4). A missing one is an error (`refs::git::start_missing`), and so is a directory (`refs::git::start_not_file`).
 
 ### 7.3 Checkouts (`sync`)
 
@@ -458,7 +458,7 @@ There is no `refs doctor` (#5 is `wontfix`). A check on this list that is wanted
 
 - git present and at least 2.36.0 (§7.5).
 - Project config parse and validate: unknown keys, bad ids, dangling group refs.
-- `start` path missing, or not in the checkout (§4, including a root directory when `paths` is set): error.
+- `start` path missing, a directory, or not in the checkout (§4): error.
 - A package listed under more than one active repo: info.
 - Number of disabled repos and groups: info.
 - Lock present and not stale (§10.2).
@@ -500,7 +500,7 @@ The lock is **stale** when its entries differ from the active set: an id added o
 
 - **Crates (suggested):** `clap` (derive), `serde` + `toml` with the `preserve_order` feature (read; keeps config order, §6.1), `indexmap` with `serde` (ordered `groups`/`repos` maps), `toml_edit` (write), `thiserror` + `miette` (diagnostics, ADR 0002; no `anyhow`), `fd-lock`, `sha2`, `etcetera` or `directories` (XDG paths).
 - **Git:** shell out via `std::process::Command`; no libgit2 or gix in the MVP. One module with a thin, testable wrapper. Set `GIT_TERMINAL_PROMPT=0` for non-interactive commands so CI fails fast. Set `LC_ALL=C` for every git command: some failures are told apart by git's English wording (`not our ref`, `could not fetch … from promisor remote`), which a translation changes.
-- **Diagnostics:** library errors are `thiserror` enums deriving `miette::Diagnostic` with codes named `refs::<area>::<name>` (e.g. `refs::config::bad_id`; areas `config`, `lock`, `git`, `sync`, `block`, `io`; a file that cannot be read or written is `refs::io::read_failed` or `refs::io::write_failed`, whichever file it is). Only `refs.toml` validation errors carry spans, and all of them are collected and reported together (`#[related]` on a wrapper error, one `NamedSource` per child). Config checks for untrusted input get codes too (`refs::config::bad_url` for option-like values and passwords in URLs, `refs::config::bad_ref`, `refs::config::path_not_dir`). Git failures the spec treats specially get their own code (ref not found, ambiguous ref, path missing at SHA, `start` missing or a root directory that is not checked out, foreign directory in `.references/`, dirty checkout, generator mismatch under `--check`, git too old, server refuses fetch-by-SHA); everything else is `refs::git::failed` with the trimmed stderr. Don't parse stderr to detect auth failures. Only the binary enables miette's `fancy` feature.
+- **Diagnostics:** library errors are `thiserror` enums deriving `miette::Diagnostic` with codes named `refs::<area>::<name>` (e.g. `refs::config::bad_id`; areas `config`, `lock`, `git`, `sync`, `block`, `io`; a file that cannot be read or written is `refs::io::read_failed` or `refs::io::write_failed`, whichever file it is). Only `refs.toml` validation errors carry spans, and all of them are collected and reported together (`#[related]` on a wrapper error, one `NamedSource` per child). Config checks for untrusted input get codes too (`refs::config::bad_url` for option-like values and passwords in URLs, `refs::config::bad_ref`, `refs::config::path_not_dir`). Git failures the spec treats specially get their own code (ref not found, ambiguous ref, path missing at SHA, `start` missing or a directory, foreign directory in `.references/`, dirty checkout, generator mismatch under `--check`, git too old, server refuses fetch-by-SHA); everything else is `refs::git::failed` with the trimmed stderr. Don't parse stderr to detect auth failures. Only the binary enables miette's `fancy` feature.
 - **Atomic writes** for `refs.lock` and AGENTS.md: temp file in the same directory, then rename.
 - **Paths:** `camino` or careful `Path` handling; forward slashes in rendered output.
 - **Windows:** supported, and CI runs on it. Atomic writes retry a rename Windows refuses while another process holds the file; avoid Unix-only assumptions.
@@ -531,7 +531,7 @@ The lock is **stale** when its entries differ from the active set: an id added o
 - **Dirty checkout:** an untracked file blocks `sync`, and an edit that would move or remove the checkout, with `refs::sync::dirty_checkout`; `--force` clears it. A refused edit writes nothing.
 - **Reproducibility:** the committed project config and lock fully determine the generated block; no machine-local config is read.
 - **Block safety:** content outside markers untouched; malformed markers refuse to write.
-- **`start` validation:** missing path and not-in-checkout errors (including a root directory when `paths` is set); a root-level file is accepted (cone mode) and an ancestor-directory file is rejected; rendered strings with newlines, ```` ``` ```` or marker text are rejected.
+- **`start` validation:** missing path, directory and not-in-checkout errors; a root-level file is accepted (cone mode) and an ancestor-directory file is rejected; rendered strings with newlines, ```` ``` ```` or marker text are rejected.
 - **Enabled flag:** disabling a repo drops its lock entry, checkout and Entry; disabling a group cascades; a group with no active repos has no heading; `disable` then `enable` round-trips `refs.toml` byte-identical; disabled entries still fail validation on bad ids and dangling groups.
 
 ---

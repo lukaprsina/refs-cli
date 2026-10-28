@@ -272,6 +272,14 @@ impl Validator<'_> {
             }
         }
         // a start that is not a relative path was already reported as `bad_path`
+        for start in &repo.start {
+            let path = start.get_ref();
+            // git lists what is in `src/` or `.`, so `verify` could not tell them from a file
+            if is_relative_path(path) && path.split('/').any(|part| matches!(part, "" | ".")) {
+                let bad = path.clone();
+                self.report(start, ConfigProblem::BadStart { path: bad });
+            }
+        }
         if !repo.paths.is_empty() {
             for start in &repo.start {
                 if is_relative_path(start.get_ref())

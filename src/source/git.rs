@@ -124,15 +124,14 @@ impl Source for GitSource {
                             sha,
                         });
                     }
-                    // cone mode checks out the root's files, not its directories
-                    EntryKind::Tree if !repo.repo.paths.is_empty() && !path.contains('/') => {
+                    EntryKind::Tree => {
                         return Err(SourceError::StartNotFile {
                             repo: id,
                             path,
                             sha,
                         });
                     }
-                    _ => {}
+                    EntryKind::Other => {}
                 }
             }
             Ok(())
