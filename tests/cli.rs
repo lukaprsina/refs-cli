@@ -321,6 +321,35 @@ fn the_binary_exits_2_on_a_usage_error_and_0_on_help() {
     assert_eq!(binary(&dir, &["--help"]).status.code(), Some(0));
 }
 
+/// `refs` recognises some git failures by their wording, so git must speak English to it
+/// whatever the user's locale (a no-op where the translation is not installed).
+#[test]
+fn the_binary_reads_git_in_english_under_a_translated_locale() {
+    let project = TempDir::new().unwrap();
+    let gone = TempDir::new().unwrap();
+    fs::write(
+        project.path().join("refs.toml"),
+        format!(
+            "[repos.r]\nurl = \"{}\"\nref = \"main\"\n",
+            common::file_url(&gone.path().join("no-such-remote"))
+        ),
+    )
+    .unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_refs"))
+        .args(["--no-color", "sync"])
+        .current_dir(project.path())
+        .env("XDG_CACHE_HOME", project.path().join("cache"))
+        .env("LC_ALL", "de_DE.UTF-8")
+        .env("LANGUAGE", "de")
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("fatal:"), "{stderr}");
+}
+
 #[test]
 fn the_binary_syncs_with_git_and_reports_an_unknown_ref() {
     let remote = TempDir::new().unwrap();
