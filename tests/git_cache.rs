@@ -311,16 +311,18 @@ mod verify {
     }
 
     #[test]
-    fn a_root_directory_as_start_is_an_error_only_when_paths_leave_it_out() {
+    fn a_directory_as_start_is_an_error() {
         let (remote, env) = (Remote::new(), Env::new());
-        let with_paths = remote.repo(&["docs"], &["src"]);
-        assert_eq!(
-            verify(&env.source(), &remote, &with_paths, ONLINE),
-            Err("refs::git::start_not_file".into())
-        );
-        // no `paths`: the whole repo is checked out, directories included
-        let whole = remote.repo(&[], &["src"]);
-        assert_eq!(verify(&env.source(), &remote, &whole, ONLINE), Ok(()));
+        for repo in [
+            remote.repo(&["docs"], &["src"]),
+            remote.repo(&["docs"], &["docs/guide"]),
+            remote.repo(&[], &["src"]),
+        ] {
+            assert_eq!(
+                verify(&env.source(), &remote, &repo, ONLINE),
+                Err("refs::git::start_not_file".into())
+            );
+        }
     }
 
     #[test]
@@ -774,7 +776,7 @@ mod outline {
     fn the_break_rule_and_verify_reject_the_same_missing_entries() {
         let (remote, env) = (Remote::new(), Env::new());
         let outline = env.source().outline(&remote.url(), "main").unwrap();
-        let cases: [(&[&str], &[&str], Option<&str>); 3] = [
+        let cases: [(&[&str], &[&str], Option<&str>); 5] = [
             (&["docs/guide"], &["docs/guide/a.md"], None),
             (&["docs/nope"], &[], Some("refs::git::path_missing")),
             (
@@ -782,6 +784,12 @@ mod outline {
                 &["docs/MIGRATION.md"],
                 Some("refs::git::start_missing"),
             ),
+            (
+                &["docs"],
+                &["docs/guide"],
+                Some("refs::git::start_not_file"),
+            ),
+            (&[], &["src"], Some("refs::git::start_not_file")),
         ];
         for (paths, start, rejected) in cases {
             let (p, s): (Vec<_>, Vec<_>) = (strings(paths), strings(start));

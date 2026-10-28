@@ -79,6 +79,21 @@ pub fn load(start: &Path) -> Result<Project, Vec<miette::Report>> {
     }
 }
 
+/// `load`, except that with no `refs.toml` anywhere up the project is the place `refs init`
+/// would set one up and an empty config: the edit creates the file (ADR 0005).
+pub fn load_or_create(start: &Path) -> Result<Project, Vec<miette::Report>> {
+    match find_root(start) {
+        Err(ProjectError::NoConfig { .. }) => {
+            let root = init_root(start, false).map_err(|e| vec![e.into()])?;
+            Ok(Project {
+                root,
+                config: Config::default(),
+            })
+        }
+        _ => load(start),
+    }
+}
+
 /// The §6.1 checks on the output paths, run before anything is written: each must stay
 /// inside the project once symlinks are resolved, with no broken symlink on the way; an
 /// existing `references_dir` must be a directory and each Agent file a regular file. Not

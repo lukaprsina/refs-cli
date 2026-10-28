@@ -126,7 +126,7 @@ paths = ["docs"]
 group = "g"
 description = "changed"
 packages = ["p"]
-start = ["docs"]
+start = ["docs/a.md"]
 "#,
     )
     .unwrap();

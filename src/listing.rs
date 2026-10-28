@@ -109,8 +109,8 @@ pub fn drop_children(dirs: Vec<String>) -> Vec<String> {
 }
 
 /// What a new tree (its listed file `paths`) lacks of a Repo's chosen `paths` and `start`: a
-/// `path` that is no directory in it, a `start` that is no file in it. Advisory, and not the
-/// check a sync must pass (`Source::verify`, which also tells a file from a directory).
+/// `path` that is no directory in it, a `start` that is no file in it. The rule
+/// `Source::verify` applies, read from the listing; advisory, as `verify` still decides.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Gone {
     pub paths: Vec<String>,

@@ -12,16 +12,16 @@ pub enum Outcome {
     Failed,
 }
 
-/// The outcome of `sync --check`. `plan` is `None` when the Lock does not cover the active
-/// Repos, so no Plan could be made: the Lock is what is out of date. `lock_drifted` is
-/// whether the Lock differed from the config. A refusal outranks drift, since "run `refs
-/// sync`" is the wrong advice when `sync` will also refuse.
-pub fn check_outcome(plan: Option<&Plan>, lock_drifted: bool) -> Outcome {
-    match plan {
-        None => Outcome::OutOfDate,
-        Some(plan) if !plan.refusals.is_empty() => Outcome::Refused,
-        Some(plan) if plan.is_drift() || lock_drifted => Outcome::OutOfDate,
-        Some(_) => Outcome::InSync,
+/// The outcome of `sync --check`. `lock_drifted` is whether the Lock differed from the
+/// config. A refusal outranks drift, since "run `refs sync`" is the wrong advice when `sync`
+/// will also refuse.
+pub fn check_outcome(plan: &Plan, lock_drifted: bool) -> Outcome {
+    if !plan.refusals.is_empty() {
+        Outcome::Refused
+    } else if plan.is_drift() || lock_drifted {
+        Outcome::OutOfDate
+    } else {
+        Outcome::InSync
     }
 }
 

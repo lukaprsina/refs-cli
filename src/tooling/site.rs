@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-pub(super) const PACKAGE_JSON: &str = "package.json";
+const PACKAGE_JSON: &str = "package.json";
 pub(super) const PYPROJECT: &str = "pyproject.toml";
 pub(super) const PRE_COMMIT: &str = ".pre-commit-config.yaml";
 
@@ -112,23 +112,6 @@ impl Site {
                 .filter_map(|line| line.trim_start_matches([' ', '-']).strip_prefix("id:"))
                 .any(|found| found.trim().trim_matches(['"', '\'']).starts_with(id))
         })
-    }
-
-    /// The files that show a tool is in use here, or `None` if nothing does: its own `present`
-    /// files and the manifests whose signal holds. Besides its own files, a tool is shown by a
-    /// key or entry in a manifest, or a hook in the pre-commit config.
-    pub(super) fn in_use(
-        &self,
-        present: &[&'static str],
-        signals: &[(&'static str, bool)],
-    ) -> Option<Vec<&'static str>> {
-        let mut files = present.to_vec();
-        for &(file, holds) in signals {
-            if holds && !files.contains(&file) {
-                files.push(file);
-            }
-        }
-        (!files.is_empty()).then_some(files)
     }
 }
 

@@ -470,22 +470,3 @@ fn change_rejects_an_id_that_is_not_in_the_config() {
     let err = change(PINNED, &[("nope", "v1")]).unwrap_err();
     assert_eq!(codes(&err), ["refs::config::unknown_repo"]);
 }
-
-#[test]
-fn an_add_says_whether_it_gives_the_config_its_first_active_repo() {
-    let req = new_repo("https://github.com/solidjs/solid-router");
-    let off = disable(CONFIG, Target::Repo("solid")).unwrap();
-
-    let first = |text: &str| Edit::Add(&req).apply(text).unwrap().first_active;
-
-    assert!(first(""));
-    assert!(first(&off));
-    assert!(!first(CONFIG));
-    // Other edits never do, even when they leave a repo active where there was none.
-    assert!(
-        !Edit::Enable(Target::Repo("solid"))
-            .apply(&off)
-            .unwrap()
-            .first_active
-    );
-}

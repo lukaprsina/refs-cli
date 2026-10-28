@@ -81,7 +81,7 @@ pub enum ConfigProblem {
     )]
     StartOutsidePaths { start: String },
 
-    #[error("`{path}` must be a relative path without `..`")]
+    #[error("`{path}` must be a relative path without `..`, `.`, an empty part or a trailing `/`")]
     #[diagnostic(code(refs::config::bad_path))]
     BadPath { path: String },
 
@@ -233,12 +233,10 @@ pub enum SourceError {
         sha: String,
     },
 
-    #[error("`start` file `{path}` in `{repo}` at {sha} is a directory that is not checked out")]
+    #[error("`start` file `{path}` in `{repo}` at {sha} is a directory")]
     #[diagnostic(
         code(refs::git::start_not_file),
-        help(
-            "with `paths` set, only files directly in the repo root are checked out besides them"
-        )
+        help("`start` names files; a directory can be listed in `paths`")
     )]
     StartNotFile {
         repo: String,

@@ -1,28 +1,14 @@
 //! The questions of `add` (ADR 0008): complete an `AddRepo` with what the command line left out.
 //! Nothing here edits a file.
 
+use super::Looked;
 use crate::config::{self, Config};
 use crate::edit::{AddRepo, id_from_url};
-use crate::manifests::Manifests;
 use crate::registry;
-use crate::source::{Outline, Pin};
+use crate::source::Pin;
 use crate::ui::Say;
 use crate::ui::pickers::{ask_optional, ask_packages, ask_paths, ask_start, non_empty};
 use crate::ui::{Abort, Prompter};
-
-/// What `add` knows about the repo before it asks about the rest.
-#[derive(Default)]
-pub(super) struct Known<'a> {
-    /// The description to start from: the registry's, else the root Manifest's.
-    pub described: Option<&'a str>,
-    /// What the repo was looked at for, when it was: the commit and the paths of its tree.
-    pub looked_at: Option<&'a Outline>,
-    /// Whether the `paths` of the repo are the registry's, to be picked from with those ticked,
-    /// and not given on the command line.
-    pub paths_from_registry: bool,
-    /// The Manifests read, when the repo was looked at.
-    pub manifests: Option<&'a Manifests>,
-}
 
 /// Complete `repo` by showing a summary of what will be written and asking `Customize?`. A value
 /// given on the command line is never asked for again; an empty answer leaves a value absent, as
@@ -37,7 +23,8 @@ pub(super) fn fill_add(
     repo: &mut AddRepo,
     config: &Config,
     prompter: &mut dyn Prompter,
-    known: &Known,
+    looked: &Looked,
+    paths_from_registry: bool,
     say: &mut dyn Say,
 ) -> Result<(), Abort> {
     let suggested = id_from_url(&repo.url).to_lowercase();
@@ -49,22 +36,18 @@ pub(super) fn fill_add(
     }
     let mut description_open = repo.description.is_none();
     if description_open {
-        repo.description = known.described.map(str::to_owned);
+        repo.description = looked.described.clone();
     }
     if description_open && repo.description.is_none() {
         repo.description = ask_description(prompter, None)?;
         description_open = false;
     }
     let (paths_open, start_open, packages_open) = (
-        repo.paths.is_empty() || known.paths_from_registry,
+        repo.paths.is_empty() || paths_from_registry,
         repo.start.is_empty(),
         repo.packages.is_empty(),
     );
-    let packages_for = |paths: &[String]| {
-        known
-            .manifests
-            .map_or_else(Vec::new, |m| m.packages_for(paths))
-    };
+    let packages_for = |paths: &[String]| looked.manifests.packages_for(paths);
     if packages_open {
         repo.packages = packages_for(&repo.paths);
     }
@@ -73,12 +56,12 @@ pub(super) fn fill_add(
     let open =
         id_open || description_open || group_open || paths_open || start_open || packages_open;
     if open {
-        for line in summary(repo, &id, known.looked_at.map(|o| &o.pin)) {
+        for line in summary(repo, &id, looked.outline.as_ref().map(|o| &o.pin)) {
             say.shown(line);
         }
     }
     if open && prompter.confirm("Customize?")? {
-        let listed = known.looked_at.map(|o| &o.paths[..]);
+        let listed = looked.outline.as_ref().map(|o| &o.paths[..]);
         if id_open {
             id = ask_id(prompter, &id, config)?;
         }

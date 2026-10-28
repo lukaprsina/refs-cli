@@ -19,10 +19,10 @@ mod ask;
 mod assess;
 
 use crate::active::active;
-use crate::config::Config;
 use crate::edit::{Edit, RepoChange};
 use crate::failure::Failure;
 use crate::lock::Lock;
+use crate::project::Project;
 use crate::source::Source;
 use crate::sync::{self, Report, SyncFlags};
 use crate::ui::{Prompter, Say};
@@ -41,13 +41,16 @@ pub struct Request<'a> {
 }
 
 /// What a run came to.
-pub struct Done {
-    /// The sync of the edit; none when no Repo moved.
-    pub report: Option<Report>,
-    /// Repos that could not be assessed or moved, each reported already.
-    pub skipped: usize,
+pub enum Done {
     /// `--list`: the lines to print, one block per Repo.
-    pub listing: String,
+    Listed(String),
+    /// A run that assessed and moved what it could.
+    Ran {
+        /// The sync of the edit; none when no Repo moved.
+        report: Option<Report>,
+        /// Repos that could not be assessed or moved, each reported already.
+        skipped: usize,
+    },
 }
 
 /// What a run does, from the request and whether there is someone to ask.
@@ -76,8 +79,7 @@ impl Mode {
 /// as status, skips as problems, and one `id  old → new` line per Repo once the edit was written.
 pub fn run(
     source: &dyn Source,
-    root: &Path,
-    config: &Config,
+    project: &Project,
     request: &Request,
     prompter: Option<&mut dyn Prompter>,
     say: &mut dyn Say,
@@ -85,7 +87,8 @@ pub fn run(
     if request.git_ref.is_some() && request.ids.len() != 1 {
         return Err(Failure::Usage("`--ref` sets the Ref of one repo".into()));
     }
-    let active = active(config);
+    let root = &project.root;
+    let active = active(&project.config);
     let unknown: Vec<String> = request
         .ids
         .iter()
@@ -103,7 +106,7 @@ pub fn run(
         [] => active.repos().map(|repo| repo.id).collect(),
         named => named.iter().map(String::as_str).collect(),
     };
-    let lock = Lock::read(&Lock::path(root)).map_err(Failure::Lock)?;
+    let lock = Lock::read(&Lock::path(root))?;
     let mut assessing = Assessing::new(source, root, lock, prompter, &mut *say, request.force);
     let mut seen = Vec::<&str>::new();
     let mut found = Vec::new();
@@ -126,11 +129,7 @@ pub fn run(
         found.push(assessing.find(repo, request));
     }
     if mode == Mode::List {
-        return Ok(Done {
-            report: None,
-            skipped: 0,
-            listing: assessing.listing(&found),
-        });
+        return Ok(Done::Listed(assessing.listing(&found)));
     }
     let chosen = match mode {
         Mode::Pick => assessing.pick(&found).map_err(Failure::Asked)?,
@@ -147,9 +146,8 @@ pub fn run(
                 moves.extend(moved);
                 continue;
             }
-            Err(Failure::Source(e)) => e.to_string(),
             Err(Failure::Refused(why)) => why,
-            // `Asked` ends the run; `settle` returns no other kind.
+            // `Asked` ends the run; `settle` returns only that and `Refused`.
             Err(other) => return Err(other),
         };
         assessing
@@ -158,10 +156,9 @@ pub fn run(
         skipped += 1;
     }
     if moves.is_empty() {
-        return Ok(Done {
+        return Ok(Done::Ran {
             report: None,
             skipped,
-            listing: String::new(),
         });
     }
     Ok(apply(source, root, moves, skipped, request.force, say))
@@ -204,9 +201,8 @@ fn apply(
             say.status(found.line);
         }
     }
-    Done {
+    Done::Ran {
         report: Some(report),
         skipped,
-        listing: String::new(),
     }
 }

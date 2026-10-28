@@ -2,12 +2,11 @@
 //! enabled. With a `Status` (the Lock and the Checkout states) each line also gets the locked
 //! SHA and the state of its Checkout. `list` is pure over the two; `status` does the reading.
 
-use std::path::Path;
-
 use crate::active::{LaidRepo, active, layout};
 use crate::config::Config;
 use crate::lock::Lock;
 use crate::plan::{Cause, CheckoutState, Checkouts, classify};
+use crate::project::Project;
 use crate::source::Source;
 
 /// What `list --status` adds to each row: the Lock and the Checkouts of the active Repos.
@@ -19,13 +18,9 @@ pub struct Status {
 
 /// Read the Lock and inspect every active Repo, as the plan does, so a broken disabled Repo
 /// does not fail it. Every inspect failure is collected.
-pub fn status(
-    source: &dyn Source,
-    root: &Path,
-    config: &Config,
-) -> Result<Status, Vec<miette::Report>> {
-    let lock = Lock::read(&Lock::path(root)).map_err(|e| vec![miette::Report::new(e)])?;
-    let checkouts = Checkouts::observe(&active(config), &[], |name| {
+pub fn status(source: &dyn Source, project: &Project) -> Result<Status, Vec<miette::Report>> {
+    let lock = Lock::read(&Lock::path(&project.root)).map_err(|e| vec![miette::Report::new(e)])?;
+    let checkouts = Checkouts::observe(&active(&project.config), &[], |name| {
         source.inspect(name).map_err(|e| e.for_repo(name))
     })?;
     Ok(Status { lock, checkouts })

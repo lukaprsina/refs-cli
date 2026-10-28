@@ -266,15 +266,15 @@ impl Validator<'_> {
             self.text_line(text);
         }
         for path in repo.paths.iter().chain(&repo.start) {
-            if !is_relative_path(path.get_ref()) {
+            if !is_repo_path(path.get_ref()) {
                 let bad = path.get_ref().clone();
                 self.report(path, ConfigProblem::BadPath { path: bad });
             }
         }
-        // a start that is not a relative path was already reported as `bad_path`
+        // a start that is no repo path was already reported as `bad_path`
         if !repo.paths.is_empty() {
             for start in &repo.start {
-                if is_relative_path(start.get_ref())
+                if is_repo_path(start.get_ref())
                     && !start_is_checked_out(start.get_ref(), &repo.paths)
                 {
                     let bad = start.get_ref().clone();
@@ -387,6 +387,12 @@ fn is_relative_path(path: &str) -> bool {
         && !path.split('/').any(|part| part == "..")
 }
 
+/// A `paths` or `start` entry: relative, and spelled one way, with no `.` or empty part (so no
+/// trailing `/`). Git lists what is in `docs/` or `.`, so `verify` could not tell what they are.
+fn is_repo_path(path: &str) -> bool {
+    is_relative_path(path) && !path.split('/').any(|part| matches!(part, "" | "."))
+}
+
 /// A `settings` output path: relative, inside the project, not the project root itself, and
 /// safe to paste into the block's prose (no backtick, no control character, no marker).
 fn is_project_path(path: &str) -> bool {
@@ -399,10 +405,9 @@ fn is_project_path(path: &str) -> bool {
 /// Cone mode checks out every `paths` entry plus the files directly in the repo root.
 fn start_is_checked_out(start: &str, paths: &[Spanned<String>]) -> bool {
     !start.contains('/')
-        || paths.iter().any(|p| {
-            let dir = p.as_ref().trim_end_matches('/');
+        || paths.iter().any(|dir| {
             start
-                .strip_prefix(dir)
+                .strip_prefix(dir.as_ref().as_str())
                 .is_some_and(|rest| rest.starts_with('/'))
         })
 }

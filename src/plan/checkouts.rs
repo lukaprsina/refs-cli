@@ -8,7 +8,6 @@ use crate::config::RepoRef;
 use crate::diagnostic::{Note, Refusal};
 use crate::lock::Lock;
 use crate::plan::classify::{CheckoutState, classify};
-use crate::plan::outcome::Outcome;
 use crate::render::render;
 use crate::source::{Observed, Pin};
 
@@ -165,12 +164,6 @@ impl RepoAction<'_> {
             _ => None,
         }
     }
-
-    /// Whether the block lists this Repo's Checkout, so that the block must not be written
-    /// if the action failed. A Checkout that is only being removed is not listed.
-    pub fn gates_writes(&self) -> bool {
-        !matches!(self, RepoAction::Remove { .. })
-    }
 }
 
 /// Replace the file with `text` (the whole file, block spliced in).
@@ -182,7 +175,7 @@ pub struct WriteAgentFile {
 
 /// Stage 2's decisions, by what they act on (ADR 0006). The executor runs `repos` (a
 /// failure of one does not stop the others), then reports `refusals`, then runs `writes`
-/// only if no `gates_writes` action failed, each independently, then the exclude rule.
+/// only if no action but a removal failed, each independently, then the exclude rule.
 #[derive(Debug)]
 pub struct Plan<'a> {
     /// Removals of non-active names first, then the active Repos in block order.
@@ -194,22 +187,6 @@ pub struct Plan<'a> {
 }
 
 impl Plan<'_> {
-    /// What applying the Plan comes to if nothing the executor does fails: it refused or it
-    /// did not.
-    pub fn applied_outcome(&self) -> Outcome {
-        if self.refusals.is_empty() {
-            Outcome::InSync
-        } else {
-            Outcome::Refused
-        }
-    }
-
-    /// Whether the Agent file writes are held back, given the indices into `repos` of the
-    /// actions that failed: they are if one of them is on a Checkout the block lists.
-    pub fn holds_back_writes(&self, failed: &[usize]) -> bool {
-        failed.iter().any(|&i| self.repos[i].gates_writes())
-    }
-
     /// Anything to do or refuse: everything except the note that there is no git repository.
     pub fn is_drift(&self) -> bool {
         !self.repos.is_empty()

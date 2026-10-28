@@ -19,9 +19,7 @@ fn aborted(abort: Abort, console: &mut Console) -> u8 {
 /// Say why `add` or `update` stopped, and give the exit code.
 pub(crate) fn failed(failure: Failure, console: &mut Console) -> u8 {
     match failure {
-        Failure::Registry(e) => fail(e, console),
-        Failure::Source(e) => fail(e, console),
-        Failure::Lock(e) => fail(e, console),
+        Failure::Error(report) => fail(report, console),
         Failure::Asked(abort) => aborted(abort, console),
         Failure::Refused(why) => {
             console.problem(format_args!("error: {why}"));

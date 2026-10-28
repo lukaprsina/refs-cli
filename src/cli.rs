@@ -1,6 +1,7 @@
-//! The command line: parsing and the entry points. What to do is decided by `sync`, `plan`, `add`
-//! and `update`; this module parses the arguments into plain values and, in `dispatch`, strings the steps
-//! in `commands` together for each command, which reports through `ui`.
+//! The command line: parsing and the entry points. What to do is decided by `sync`, `plan`, `add`,
+//! `update`, `init` and `self_update`; this module parses the arguments into plain values and, in
+//! `dispatch`, strings the steps together for each command: load the project, build the `Source`
+//! when the command syncs, run and print the report, give the exit code. It reports through `ui`.
 //!
 //! The `Source` is injected into `run` as a function of the loaded project (the real one
 //! needs its root and `references_dir`): tests return the fake in-process (the `testing`
@@ -13,14 +14,16 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::add::Asking;
-use crate::commands;
+mod run;
+
 use crate::edit::{AddRepo, Edit, Target};
+use crate::init;
+use crate::project;
 use crate::registry::{self, Registry};
 use crate::self_update::{self, Updater};
 use crate::source::MakeSource;
 use crate::sync::{self, SyncFlags};
-use crate::ui::{self, Console, EXIT_ERROR, Prompter};
+use crate::ui::{self, Console, EXIT_ERROR, Prompter, fail_all};
 use crate::update;
 
 #[derive(Debug, Parser)]
@@ -346,13 +349,13 @@ fn dispatch(
     console: &mut Console,
 ) -> Result<u8, u8> {
     let code = match command {
-        Command::Init(args) => commands::init(start, args.here, console),
+        Command::Init(args) => init::run(start, args.here, console),
         Command::SelfCommand(SelfCommand::Update(args)) => {
-            commands::self_update(outside.updater, args.check, console)
+            self_update::run(outside.updater, args.check, console)
         }
         Command::Update(args) => {
-            let project = commands::load(start, console)?;
-            let source = commands::source(make_source, &project, console)?;
+            let project = run::load(start, console)?;
+            let source = run::build_source(make_source, &project, console)?;
             let request = update::Request {
                 ids: &args.ids,
                 git_ref: args.git_ref.as_deref(),
@@ -360,35 +363,34 @@ fn dispatch(
                 list: args.list,
             };
             let prompter = args.input.gate(outside.prompter);
-            commands::update(&*source, &project, &request, prompter, console)
+            run::run_update(&*source, &project, &request, prompter, console)
         }
         Command::List(args) => {
-            let project = commands::load(start, console)?;
+            let project = run::load(start, console)?;
             let source = if args.status {
-                Some(commands::source(make_source, &project, console)?)
+                Some(run::build_source(make_source, &project, console)?)
             } else {
                 None
             };
-            commands::list(&project, source.as_deref(), color, console)
+            run::run_list(&project, source.as_deref(), color, console)
         }
         Command::Add { repo, flags, input } => {
             // With no `refs.toml` yet, `add` makes one (ADR 0005).
-            let project = commands::load_or_create(start, console)?;
+            let project =
+                project::load_or_create(start).map_err(|reports| fail_all(reports, console))?;
             let source = if flags.no_sync {
                 None
             } else {
-                Some(commands::source(make_source, &project, console)?)
+                Some(run::build_source(make_source, &project, console)?)
             };
-            let asking = Asking {
-                prompter: input.gate(outside.prompter),
-                registry: outside.registry,
-            };
-            commands::add(
+            let prompter = input.gate(outside.prompter);
+            run::run_add(
                 source.as_deref(),
                 &project,
                 &repo,
                 &flags.sync_flags(),
-                asking,
+                prompter,
+                outside.registry,
                 console,
             )
         }
@@ -414,8 +416,8 @@ fn dispatch(
             console,
         )?,
         Command::Sync(args) => {
-            let project = commands::load(start, console)?;
-            let source = commands::source(make_source, &project, console)?;
+            let project = run::load(start, console)?;
+            let source = run::build_source(make_source, &project, console)?;
             let flags = SyncFlags {
                 offline: args.offline,
                 force: args.force,
@@ -437,11 +439,11 @@ fn edit(
     flags: &EditFlags,
     console: &mut Console,
 ) -> Result<u8, u8> {
-    let project = commands::load(start, console)?;
+    let project = run::load(start, console)?;
     let report = if flags.no_sync {
         sync::edit_only(&project.root, &edit)
     } else {
-        let source = commands::source(make_source, &project, console)?;
+        let source = run::build_source(make_source, &project, console)?;
         sync::edit(&*source, &project.root, &edit, &flags.sync_flags())
     };
     Ok(ui::print_report(&report, false, console))

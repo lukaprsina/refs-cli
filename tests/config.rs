@@ -162,6 +162,20 @@ fn paths_and_start_are_relative_without_dot_dot() {
 }
 
 #[test]
+fn paths_and_start_have_one_spelling() {
+    // git lists what is in `docs/` or `.`, so `verify` could not tell a directory from a file
+    for bad in ["docs/", ".", "./docs", "docs//guide"] {
+        for key in ["paths", "start"] {
+            code_and_span(
+                &repo(&format!("{key} = [\"{bad}\"]\n")),
+                "refs::config::bad_path",
+                &format!("\"{bad}\""),
+            );
+        }
+    }
+}
+
+#[test]
 fn url_must_not_look_like_an_option_or_carry_a_password() {
     let with = |url: &str| format!("[repos.a]\nurl = \"{url}\"\n");
     for bad in [
