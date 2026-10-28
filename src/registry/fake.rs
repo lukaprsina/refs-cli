@@ -46,3 +46,15 @@ impl Registry for FakeRegistry {
             })
     }
 }
+
+/// A registry for a run that never asks one: it knows no package. Unlike `FakeRegistry` it
+/// keeps no calls, so a test can borrow it without a local.
+pub struct Unused;
+
+impl Registry for Unused {
+    fn lookup(&self, package: &Package) -> Result<Found, RegistryError> {
+        Err(RegistryError::NotFound {
+            package: package.clone(),
+        })
+    }
+}

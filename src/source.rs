@@ -14,15 +14,9 @@ use crate::lock::Field;
 
 /// How a run gets its `Source`, once the project is loaded: it needs the project's root and
 /// config (the real one wants its `references_dir`). Tests return the fake.
-pub trait MakeSource<'a>:
-    FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>
-{
-}
+pub trait MakeSource: FnOnce(&Path, &Config) -> Result<Box<dyn Source>, SourceError> {}
 
-impl<'a, F> MakeSource<'a> for F where
-    F: FnOnce(&Path, &Config) -> Result<Box<dyn Source + 'a>, SourceError>
-{
-}
+impl<F> MakeSource for F where F: FnOnce(&Path, &Config) -> Result<Box<dyn Source>, SourceError> {}
 
 /// A resolved identity of a Repo: a commit of a git remote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

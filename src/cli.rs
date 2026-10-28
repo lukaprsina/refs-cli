@@ -219,10 +219,10 @@ struct SyncArgs {
 /// Run `refs` with `args` (the first is the program name) from `cwd`, and return the exit
 /// code: 0 in sync, 1 error or refusal, 2 usage, 3 `--check` found drift. `make_source` is
 /// given the project root and config once they are loaded.
-pub fn run<'a>(
+pub fn run(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
-    make_source: impl MakeSource<'a>,
+    make_source: impl MakeSource,
 ) -> u8 {
     use std::io::IsTerminal;
     let styled = no_color_env_unset();
@@ -259,10 +259,11 @@ pub struct Styled {
 
 /// `run` with the two output streams given, so a test can read what went to each. Neither is
 /// a terminal, so clap's messages are plain.
-pub fn run_with<'a>(
+#[cfg(any(test, feature = "testing"))]
+pub fn run_with(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
-    make_source: impl MakeSource<'a>,
+    make_source: impl MakeSource,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> u8 {
@@ -273,11 +274,7 @@ pub fn run_with<'a>(
         out,
         err,
         Styled::default(),
-        Outside {
-            prompter: None,
-            updater: &self_update::Unmanaged,
-            registry: &registry::Unavailable,
-        },
+        Outside::offline(None),
     )
 }
 
@@ -291,11 +288,24 @@ pub struct Outside<'a> {
     pub registry: &'a dyn Registry,
 }
 
+impl<'a> Outside<'a> {
+    /// Nothing outside the run: no self update, no registry package. For tests that script
+    /// neither.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn offline(prompter: Option<&'a mut dyn Prompter>) -> Self {
+        Outside {
+            prompter,
+            updater: &self_update::fake::Unmanaged,
+            registry: &registry::fake::Unused,
+        }
+    }
+}
+
 /// `run_with`, told which streams are styled and given what the run reaches outside.
-pub fn run_on<'a>(
+pub fn run_on(
     args: impl IntoIterator<Item = OsString>,
     cwd: &Path,
-    make_source: impl MakeSource<'a>,
+    make_source: impl MakeSource,
     out: &mut dyn Write,
     err: &mut dyn Write,
     styles: Styled,
@@ -340,10 +350,10 @@ pub fn run_on<'a>(
 
 /// Run one command. `Err` is the exit code of a project or a `Source` that did not load; the
 /// problems are already printed.
-fn dispatch<'a>(
+fn dispatch(
     command: Command,
     start: &Path,
-    make_source: impl MakeSource<'a>,
+    make_source: impl MakeSource,
     color: bool,
     outside: Outside,
     console: &mut Console,
@@ -433,9 +443,9 @@ fn dispatch<'a>(
 }
 
 /// `remove`, `enable` and `disable`: an edit of `refs.toml`, then a sync unless `--no-sync`.
-fn edit<'a>(
+fn edit(
     start: &Path,
-    make_source: impl MakeSource<'a>,
+    make_source: impl MakeSource,
     edit: Edit,
     flags: &EditFlags,
     console: &mut Console,

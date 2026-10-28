@@ -28,7 +28,7 @@ Assert what the user sees: stdout, stderr, exit code, files on disk, the Plan as
 
 Scripted stand-ins, each given to `cli::run_on`:
 
-- `refs self update`: `self_update::fake::FakeUpdater` (`tests/cli_self_update.rs`). `cli::run_with` gets `self_update::Unmanaged`, so only `cli::run` reaches axoupdater.
+- `refs self update`: `self_update::fake::FakeUpdater` (`tests/cli_self_update.rs`). `cli::run_with` gets `self_update::fake::Unmanaged`, so only `cli::run` reaches axoupdater.
 - Registry lookups: `registry::fake::FakeRegistry` (`tests/cli_registry.rs`). The adapters are tested through their pure `found(body)` functions against recorded response bodies (`tests/registry.rs`); `registry::Http` through its pure `request_url` and `interpret` (`tests/registry_http.rs`).
 - Prompts: the scripted `Prompter` shared by the tests (`tests/common/script.rs`, used by `tests/cli_prompt.rs`).
 - Packages inferred on `add` (and the vanished ones on `update`): `packages::manifest_paths` and `packages::infer` as data over paths and text (`tests/packages.rs`), read through `manifests::Manifests`; the add pipeline through `cli::run_on` with a scripted `Prompter` and a `FakeSource` that serves the Manifests (`tests/cli_add_packages.rs`).
@@ -37,7 +37,7 @@ Scripted stand-ins, each given to `cli::run_on`:
 - Package lockfiles: `registry::used::used_versions` is tested as data per format (`tests/registry_used.rs`), `registry::used::find` and `worktree::candidate_dirs` over temp directories (`tests/registry_used_find.rs`, `tests/worktree.rs`).
 - Tooling gaps: `tooling::gaps` over temp directories (`tests/tooling.rs`); the note on `sync`, `add` and `--check` through `cli::run_with` (`tests/cli_output.rs`), which also covers the editor hint of `init` and of the first `add`.
 - What `add` pins a registry package to: `add::pin::pin` over temp directories, a scripted tag list and scripted answers, including its wording and questions (`tests/add_pin.rs`); and end to end through `cli::run_with` (`tests/cli_registry.rs`).
-- `refs update`: through `cli::run_on` with a `FakeSource`, real Package lockfiles in a temp directory, and `registry::Unavailable` (which errors if called: `update` never asks the Registry), each run starting from a synced project (`tests/cli_update.rs`). The Ref policy lives in `update` and is tested through the command, not as helpers.
+- `refs update`: through `cli::run_on` with a `FakeSource`, real Package lockfiles in a temp directory, and `registry::fake::Unused` (which knows no package: `update` never asks the Registry), each run starting from a synced project (`tests/cli_update.rs`). The Ref policy lives in `update` and is tested through the command, not as helpers.
 - Tags: `Source::tags` is a row of the `Source` contract (`tests/contract.rs`), run against the fake and git; `registry::tag::tag_for`, `split` and `newest` are tested as data (`tests/registry_tag.rs`).
 
 Three adapters have no test. After changing one, check it by hand:

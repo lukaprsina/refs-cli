@@ -8,7 +8,7 @@ use std::path::Path;
 use refs_cli::cli::{Outside, Styled, run_on};
 use refs_cli::registry::fake::FakeRegistry;
 use refs_cli::registry::{Ecosystem, Found};
-use refs_cli::self_update::Unmanaged;
+use refs_cli::self_update::fake::Unmanaged;
 use refs_cli::source::fake::{Call, FakeSource, Method};
 use refs_cli::ui::Prompter;
 use tempfile::TempDir;
@@ -52,7 +52,7 @@ fn add(dir: &Path, source: &FakeSource, args: &[&str], prompter: Option<&mut dyn
             .chain(args.iter().copied())
             .map(Into::into),
         dir,
-        |_, _| Ok(Box::new(source)),
+        |_, _| Ok(Box::new(source.clone())),
         &mut out,
         &mut err,
         Styled::default(),

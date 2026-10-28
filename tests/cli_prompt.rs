@@ -6,7 +6,6 @@ use std::path::Path;
 
 use refs_cli::cli::{Outside, Styled, run_on};
 use refs_cli::diagnostic::SourceError;
-use refs_cli::self_update::Unmanaged;
 use refs_cli::source::Source;
 use refs_cli::ui::Prompter;
 use tempfile::TempDir;
@@ -50,11 +49,7 @@ fn refs(dir: &Path, args: &[&str], prompter: Option<&mut dyn Prompter>) -> Run {
         &mut out,
         &mut err,
         Styled::default(),
-        Outside {
-            prompter,
-            updater: &Unmanaged,
-            registry: &refs_cli::registry::Unavailable,
-        },
+        Outside::offline(prompter),
     );
     Run {
         code,
@@ -494,5 +489,5 @@ fn a_registry_shorthand_typed_at_the_url_question_is_looked_up() {
 
     assert_eq!(run.code, 1);
     assert!(script.rejected.is_empty(), "{:?}", script.rejected);
-    assert!(run.err.contains("no registry is available"), "{}", run.err);
+    assert!(run.err.contains("`left-pad` is not on npm"), "{}", run.err);
 }

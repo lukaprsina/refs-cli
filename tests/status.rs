@@ -25,7 +25,7 @@ fn list_status(source: &FakeSource, lock: Option<Lock>, config: &str) -> (u8, St
     let code = run_with(
         args,
         dir.path(),
-        |_, _| Ok(Box::new(source)),
+        |_, _| Ok(Box::new(source.clone())),
         &mut out,
         &mut err,
     );

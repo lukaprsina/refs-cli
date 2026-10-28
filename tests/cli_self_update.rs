@@ -31,7 +31,7 @@ fn refs(dir: &Path, args: &[&str], updater: &FakeUpdater) -> Run {
         Outside {
             prompter: None,
             updater,
-            registry: &refs_cli::registry::Unavailable,
+            registry: &refs_cli::registry::fake::Unused,
         },
     );
     Run {

@@ -16,7 +16,7 @@ publish = false
 allow-branch = ["main"]
 
 [features]
-# Exposes `source::fake` to integration tests and downstream test code.
+# Exposes the `fake` modules (`source`, `registry`, `self_update`) and `cli::run_with` to integration tests.
 testing = []
 
 [dependencies]

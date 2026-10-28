@@ -7,7 +7,7 @@ use std::path::Path;
 use refs_cli::cli::{Outside, Styled, run_on};
 use refs_cli::registry::fake::FakeRegistry;
 use refs_cli::registry::{Ecosystem, Found};
-use refs_cli::self_update::Unmanaged;
+use refs_cli::self_update::fake::Unmanaged;
 use refs_cli::source::fake::{Call, FakeSource, Method};
 use refs_cli::ui::Prompter;
 use tempfile::TempDir;
@@ -57,7 +57,7 @@ fn add_asking<'a>(
             .chain(args.iter().copied())
             .map(Into::into),
         dir,
-        |_, _| Ok(Box::new(source)),
+        |_, _| Ok(Box::new(source.clone())),
         &mut out,
         &mut err,
         Styled::default(),
@@ -1144,15 +1144,11 @@ fn a_repo_with_an_origin_syncs_and_lists_without_the_registry() {
         let code = run_on(
             ["refs", command].map(Into::into),
             dir.path(),
-            |_, _| Ok(Box::new(&source)),
+            |_, _| Ok(Box::new(source.clone())),
             &mut out,
             &mut err,
             Styled::default(),
-            Outside {
-                prompter: None,
-                updater: &Unmanaged,
-                registry: &refs_cli::registry::Unavailable,
-            },
+            Outside::offline(None),
         );
         let err = String::from_utf8(err).unwrap();
         assert_eq!(code, 0, "{command}: {err}");

@@ -63,3 +63,17 @@ impl Updater for FakeUpdater {
         self.outcome.clone()
     }
 }
+
+/// An updater with no installer behind it, for a run that never self-updates. Unlike
+/// `FakeUpdater::unmanaged` it keeps no calls, so a test can borrow it without a local.
+pub struct Unmanaged;
+
+impl Updater for Unmanaged {
+    fn is_update_available(&self) -> Result<bool, SelfUpdateError> {
+        Err(SelfUpdateError::NotInstalledByInstaller)
+    }
+
+    fn install(&self) -> Result<Option<Installed>, SelfUpdateError> {
+        Err(SelfUpdateError::NotInstalledByInstaller)
+    }
+}

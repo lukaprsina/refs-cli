@@ -3,6 +3,7 @@
 //! stored has the git URL. So is `gh:owner/repo` (`forge`), which asks nothing.
 
 pub mod crates;
+#[cfg(any(test, feature = "testing"))]
 pub mod fake;
 pub mod forge;
 pub mod npm;
@@ -125,10 +126,6 @@ fn parse<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, String> {
 /// Why a registry could not say where a package lives.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
 pub enum RegistryError {
-    #[error("no registry is available here")]
-    #[diagnostic(code(refs::registry::unavailable))]
-    Unavailable,
-
     #[error("`{}` is not on {}", .package.name, .package.ecosystem.registry())]
     #[diagnostic(code(refs::registry::not_found))]
     NotFound { package: Package },
@@ -212,15 +209,6 @@ pub enum RegistryError {
 /// Looks packages up. One call per `add`, for the document that names the package's repository.
 pub trait Registry {
     fn lookup(&self, package: &Package) -> Result<Found, RegistryError>;
-}
-
-/// The registry of a run that has none: `cli::run_with`, which cannot reach the network.
-pub struct Unavailable;
-
-impl Registry for Unavailable {
-    fn lookup(&self, _: &Package) -> Result<Found, RegistryError> {
-        Err(RegistryError::Unavailable)
-    }
 }
 
 /// The ecosystem, package name and version a shorthand such as `npm:@scope/name@1.2.3` asks

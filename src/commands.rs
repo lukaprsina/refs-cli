@@ -43,11 +43,11 @@ pub(crate) fn load_or_create(start: &Path, console: &mut Console) -> Result<Proj
 
 /// Build the `Source`; on failure the problem is printed and the exit code returned. Only the
 /// commands that sync ask for one, so the others do not need a cache directory.
-pub(crate) fn source<'a>(
-    make_source: impl MakeSource<'a>,
+pub(crate) fn source(
+    make_source: impl MakeSource,
     project: &Project,
     console: &mut Console,
-) -> Result<Box<dyn Source + 'a>, u8> {
+) -> Result<Box<dyn Source>, u8> {
     make_source(&project.root, &project.config).map_err(|e| fail(e, console))
 }
 
