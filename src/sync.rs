@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::active::{ActiveSet, active};
 use crate::agent_file;
-use crate::config::{self, Config};
+use crate::config::Config;
 use crate::diagnostic::Note;
 use crate::edit::Edit;
 use crate::exclude;
@@ -264,14 +264,8 @@ impl Applied {
             false => project::read_config(root).map_err(rejected)?,
         };
         let applied = edit.apply(&before).map_err(rejected)?;
-        // `before` parsed when it was last written; a hand edit that broke it is the edit's problem.
-        let had_active =
-            config::parse(&before).is_ok_and(|config| active(&config).repos().next().is_some());
-        let first_active = matches!(edit, Edit::Add(_))
-            && !had_active
-            && active(&applied.config).repos().next().is_some();
         Ok(Applied {
-            first_active,
+            first_active: applied.first_active,
             created,
             before,
             after: applied.text,

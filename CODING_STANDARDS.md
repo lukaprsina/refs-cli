@@ -8,7 +8,7 @@ A change that alters behaviour updates, in the same change, every doc that descr
 
 ## Where decisions live
 
-`plan` decides and returns data; `sync` runs typed actions through `Source` and reports; `cli` parses arguments into plain values and calls one driver in `commands/` (ADR 0006); the driver loads the project, runs, and prints the typed result through `ui` (`print_report`, `Console`). A `match` on policy in `sync`, `cli` or a driver belongs in `plan`. The follow-up `Hint` is not policy: it records where a run stopped, so `sync` sets it there.
+`plan` decides and returns data; `sync` runs typed actions through `Source` and reports; `cli` parses arguments into plain values and calls one driver in `commands/` (ADR 0006); the driver loads the project, runs, and prints the typed result through `ui` (`print_report`, `Console`). A `match` on policy in `sync`, `cli` or a driver belongs in `plan`. The follow-up `Hint` is not policy: it records where a run stopped, so `sync` sets it there. A fact about an edit (the Group it created, whether it gave the config its first active Repo) lives with `Edit` and comes back in `edit::Applied`; `sync` copies it.
 
 Per command:
 

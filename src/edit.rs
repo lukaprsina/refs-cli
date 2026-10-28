@@ -6,6 +6,7 @@
 
 use toml_edit::{Array, Document, DocumentMut, Item, Table, value};
 
+use crate::active::active;
 use crate::config;
 use crate::diagnostic::EditError;
 use crate::line_ending;
@@ -88,17 +89,23 @@ pub struct Fields {
     pub packages: Option<Vec<String>>,
 }
 
-/// What an edit gave: the new text, that text parsed, and the Group it had to create for it.
+/// What an edit gave: the new text, that text parsed, the Group it had to create for it, and
+/// whether it took the config from no active Repo to one.
 #[derive(Debug)]
 pub struct Applied {
     pub text: String,
     pub config: config::Config,
     pub group_created: Option<String>,
+    /// Whether the edit is an `add` that takes the config from no active Repo to one.
+    pub first_active: bool,
 }
 
 impl Edit<'_> {
     /// The text this edit gives `text`.
     pub fn apply(&self, text: &str) -> Result<Applied, EditError> {
+        // `text` parsed when it was last written; a hand edit that broke it is the edit's problem.
+        let had_active =
+            config::parse(text).is_ok_and(|config| active(&config).repos().next().is_some());
         let (text, group_created) = match self {
             Edit::Add(req) => add(text, req)?,
             Edit::Remove(id) => (remove(text, id)?, None),
@@ -107,10 +114,13 @@ impl Edit<'_> {
             Edit::Change(changes) => (change(text, changes)?, None),
         };
         let config = config::parse(&text)?;
+        let first_active =
+            matches!(self, Edit::Add(_)) && !had_active && active(&config).repos().next().is_some();
         Ok(Applied {
             text,
             config,
             group_created,
+            first_active,
         })
     }
 }
