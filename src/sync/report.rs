@@ -97,16 +97,16 @@ impl Report {
     }
 }
 
-/// Which run it was, for its Hint.
+/// Which run it was, for its Hint: what it does to `refs.toml`.
 #[derive(Debug, Clone, Copy)]
-pub(super) enum Kind {
-    /// `refs sync`, or an edit that changes nothing: once it is applied, `refs.toml` is as it
-    /// was whatever happens next.
-    Sync,
+pub(super) enum RunKind {
+    /// `refs sync`, or an edit that changes nothing: `refs.toml` is as it was whatever
+    /// happens next.
+    KeepsConfig,
     /// An edit that changes `refs.toml`, then a sync.
-    Edit,
+    EditsConfig,
     /// An edit written without a sync (`--no-sync`).
-    NoSync,
+    WritesConfigOnly,
 }
 
 /// A run that did not get through stage 2: where it stopped, with what it has to say.
@@ -128,7 +128,7 @@ pub(super) enum Stop {
     /// The edit could not be read or applied, or `refs.toml` could not be written.
     Rejected,
     /// `refs.lock` could not be read or written.
-    Lock,
+    LockFile,
     /// Stage 1 failed or was refused.
     StageOne,
     /// Stage 2 would refuse, so an edit was not written.
@@ -145,21 +145,21 @@ impl Stop {
 
 /// The follow-up for a `kind` of run that stopped at `stop` (`None`: it got through stage 2,
 /// to `outcome`).
-fn hint(kind: Kind, stop: Option<Stop>, outcome: Outcome) -> Option<Hint> {
+fn hint(kind: RunKind, stop: Option<Stop>, outcome: Outcome) -> Option<Hint> {
     let incomplete = matches!(outcome, Outcome::Failed | Outcome::Refused);
     match (kind, stop) {
         (_, Some(Stop::Rejected)) => Some(Hint::ConfigUnchanged),
-        (Kind::Sync, _) => incomplete.then_some(Hint::RunSyncOnceFixed),
-        (Kind::Edit, Some(Stop::Lock | Stop::Refused)) => Some(Hint::ConfigUnchanged),
-        (Kind::Edit, Some(Stop::StageOne)) => Some(Hint::ConfigUnchangedTryNoSync),
-        (Kind::Edit, Some(Stop::Unobserved)) => Some(Hint::ConfigUnchangedUnobserved),
-        (Kind::Edit, None) => incomplete.then_some(Hint::FixOrRemoveThenSync),
-        (Kind::NoSync, _) => Some(Hint::RunSync),
+        (RunKind::KeepsConfig, _) => incomplete.then_some(Hint::RunSyncOnceFixed),
+        (RunKind::EditsConfig, Some(Stop::LockFile | Stop::Refused)) => Some(Hint::ConfigUnchanged),
+        (RunKind::EditsConfig, Some(Stop::StageOne)) => Some(Hint::ConfigUnchangedTryNoSync),
+        (RunKind::EditsConfig, Some(Stop::Unobserved)) => Some(Hint::ConfigUnchangedUnobserved),
+        (RunKind::EditsConfig, None) => incomplete.then_some(Hint::FixOrRemoveThenSync),
+        (RunKind::WritesConfigOnly, _) => Some(Hint::RunSync),
     }
 }
 
 /// The Report of a run: its Hint, and its changes in the order the CLI says them.
-pub(super) fn finish(kind: Kind, run: Result<Report, Stopped>, drift: Vec<Drift>) -> Report {
+pub(super) fn finish(kind: RunKind, run: Result<Report, Stopped>, drift: Vec<Drift>) -> Report {
     let (stop, mut report) = match run {
         Ok(report) => (None, report),
         Err(Stopped { at, report }) => (Some(at), report),

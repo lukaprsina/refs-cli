@@ -23,7 +23,7 @@ use crate::project;
 use crate::source::Source;
 use crate::tooling;
 pub use report::{Changed, Hint, Report};
-use report::{Kind, Stop, Stopped, failed_at, finish};
+use report::{RunKind, Stop, Stopped, failed_at, finish};
 
 #[derive(Debug, Default)]
 pub struct SyncFlags {
@@ -38,7 +38,7 @@ pub struct SyncFlags {
 /// Read the Lock on disk (if any), see how it differs from the active set of `config`, run
 /// `stages` on the three, and build the Report.
 fn observe_and_run(
-    kind: Kind,
+    kind: RunKind,
     root: &Path,
     config: &Config,
     stages: impl FnOnce(&ActiveSet, Option<Lock>, &[Drift]) -> Result<Report, Stopped>,
@@ -46,7 +46,7 @@ fn observe_and_run(
     let active = active(config);
     let old = match Lock::read(&Lock::path(root)) {
         Ok(old) => old,
-        Err(e) => return finish(kind, Err(failed_at(Stop::Lock)(e)), Vec::new()),
+        Err(e) => return finish(kind, Err(failed_at(Stop::LockFile)(e)), Vec::new()),
     };
     let drift = lock_drift(&active, old.as_ref());
     let run = stages(&active, old, &drift);
@@ -55,7 +55,7 @@ fn observe_and_run(
 
 /// `refs sync`. With `check`, nothing is resolved, verified, fetched or written.
 pub fn sync(source: &dyn Source, root: &Path, config: &Config, flags: &SyncFlags) -> Report {
-    observe_and_run(Kind::Sync, root, config, |active, old, drift| {
+    observe_and_run(RunKind::KeepsConfig, root, config, |active, old, drift| {
         run_sync(source, root, config, active, old, drift, flags)
     })
 }
@@ -188,13 +188,13 @@ impl Edited {
 pub fn edit(source: Option<&dyn Source>, root: &Path, edit: &Edit, flags: &SyncFlags) -> Report {
     let edited = match Edited::read(root, edit) {
         // A rejected edit is hinted alike whatever the kind.
-        Err(stopped) => return finish(Kind::Edit, Err(stopped), Vec::new()),
+        Err(stopped) => return finish(RunKind::EditsConfig, Err(stopped), Vec::new()),
         Ok(edited) => edited,
     };
     let kind = match (source, edited.unchanged()) {
-        (_, true) => Kind::Sync,
-        (Some(_), false) => Kind::Edit,
-        (None, false) => Kind::NoSync,
+        (_, true) => RunKind::KeepsConfig,
+        (Some(_), false) => RunKind::EditsConfig,
+        (None, false) => RunKind::WritesConfigOnly,
     };
     let config = &edited.applied.config;
     match source {
@@ -271,7 +271,7 @@ fn write_lock(root: &Path, old: Option<&Lock>, lock: &Lock) -> Result<Option<Cha
         return Ok(None);
     }
     lock.write(&Lock::path(root))
-        .map_err(failed_at(Stop::Lock))?;
+        .map_err(failed_at(Stop::LockFile))?;
     Ok(Some(Changed::Lock))
 }
 

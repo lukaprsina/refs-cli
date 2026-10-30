@@ -20,15 +20,16 @@ impl<'a> ActiveSet<'a> {
 /// One group (`None`: the trailing ungrouped section) with its repos in config order: every
 /// repo as a `LaidRepo` in the full layout, only the active ones as a `RepoRef` in the
 /// active set.
+/// In the active set it is one group's part of the Managed block, not the block.
 #[derive(Debug, Clone)]
 pub struct Section<'a, R> {
-    pub group: Option<LaidGroup<'a>>,
+    pub group: Option<GroupHeading<'a>>,
     pub repos: Vec<R>,
 }
 
 /// A group heading, with whether the group itself is enabled.
 #[derive(Debug, Clone, Copy)]
-pub struct LaidGroup<'a> {
+pub struct GroupHeading<'a> {
     pub id: &'a str,
     pub group: &'a Group,
     pub enabled: bool,
@@ -60,7 +61,7 @@ pub fn layout(config: &Config) -> Vec<Section<'_, LaidRepo<'_>>> {
         .map(|(group_id, group)| {
             let enabled = group.enabled.unwrap_or(true);
             Section {
-                group: Some(LaidGroup {
+                group: Some(GroupHeading {
                     id: group_id.as_ref().as_str(),
                     group,
                     enabled,
