@@ -3,7 +3,7 @@ use crate::config::{Config, Group, Id, Repo, RepoRef};
 /// What `render` and `sync` act on: only active repos, grouped as the block shows them.
 #[derive(Debug, Clone)]
 pub struct ActiveSet<'a> {
-    pub sections: Vec<Section<'a>>,
+    pub sections: Vec<Section<'a, RepoRef<'a>>>,
 }
 
 impl<'a> ActiveSet<'a> {
@@ -17,17 +17,19 @@ impl<'a> ActiveSet<'a> {
     }
 }
 
-/// A group heading with its active repos in config order. `group` is `None` for the
-/// trailing "Ungrouped" section.
+/// One group (`None`: the trailing ungrouped section) with its repos in config order: every
+/// repo as a `LaidRepo` in the full layout, only the active ones as a `RepoRef` in the
+/// active set.
+/// In the active set it is one group's part of the Managed block, not the block.
 #[derive(Debug, Clone)]
-pub struct Section<'a> {
-    pub group: Option<(&'a str, &'a Group)>,
-    pub repos: Vec<RepoRef<'a>>,
+pub struct Section<'a, R> {
+    pub group: Option<GroupHeading<'a>>,
+    pub repos: Vec<R>,
 }
 
-/// A group heading in the full layout, with whether the group itself is enabled.
-#[derive(Debug)]
-pub struct LaidGroup<'a> {
+/// A group heading, with whether the group itself is enabled.
+#[derive(Debug, Clone, Copy)]
+pub struct GroupHeading<'a> {
     pub id: &'a str,
     pub group: &'a Group,
     pub enabled: bool,
@@ -40,17 +42,10 @@ pub struct LaidRepo<'a> {
     pub enabled: bool,
 }
 
-/// One group (`None`: the trailing ungrouped section) with all its repos, enabled or not.
-#[derive(Debug)]
-pub struct LaidSection<'a> {
-    pub group: Option<LaidGroup<'a>>,
-    pub repos: Vec<LaidRepo<'a>>,
-}
-
 /// Every group in config order, then the ungrouped repos (only if there are any), each repo
 /// tagged enabled or disabled. The one place the rule "enabled unless set false, in an
 /// enabled group" is written (spec §6.4); the active set and `list` both come from it.
-pub fn layout(config: &Config) -> Vec<LaidSection<'_>> {
+pub fn layout(config: &Config) -> Vec<Section<'_, LaidRepo<'_>>> {
     fn laid<'a>(id: &'a Id, repo: &'a Repo, group_enabled: bool) -> LaidRepo<'a> {
         LaidRepo {
             repo: RepoRef {
@@ -65,8 +60,8 @@ pub fn layout(config: &Config) -> Vec<LaidSection<'_>> {
         .iter()
         .map(|(group_id, group)| {
             let enabled = group.enabled.unwrap_or(true);
-            LaidSection {
-                group: Some(LaidGroup {
+            Section {
+                group: Some(GroupHeading {
                     id: group_id.as_ref().as_str(),
                     group,
                     enabled,
@@ -91,7 +86,7 @@ pub fn layout(config: &Config) -> Vec<LaidSection<'_>> {
         .map(|(id, r)| laid(id, r, true))
         .collect();
     if !ungrouped.is_empty() {
-        sections.push(LaidSection {
+        sections.push(Section {
             group: None,
             repos: ungrouped,
         });
@@ -111,7 +106,7 @@ pub fn active(config: &Config) -> ActiveSet<'_> {
                 .map(|r| r.repo)
                 .collect();
             (!repos.is_empty()).then_some(Section {
-                group: section.group.map(|g| (g.id, g.group)),
+                group: section.group,
                 repos,
             })
         })

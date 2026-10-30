@@ -93,7 +93,7 @@ The machine-wide store of the commits fetched for Repos that Checkouts are made 
 _Avoid_: Store, registry
 
 **Outline**:
-What `add` looks at before it asks anything: the Pin a Ref resolves to and every path in that commit's tree, read through the Cache without any file contents. A bad URL or Ref fails here, before anything is edited.
+The Pin a Ref resolves to and every path in that commit's tree, read through the Cache without any file contents. `add` looks at it before it asks anything, so a bad URL or Ref fails here, before anything is edited; `update` looks at the new Ref's for a Break. The `paths` and `start` pickers offer what it lists, and only the Manifests it lists that a Checkout will hold are read.
 _Avoid_: Listing, index
 
 **Break**:

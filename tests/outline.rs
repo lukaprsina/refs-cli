@@ -1,10 +1,16 @@
 //! The policy behind the `paths` and `start` pickers, as data: what a Checkout holds, what
-//! counts as a docs file, the order under the cap, and which selections are redundant.
+//! counts as a docs file and the order under the cap.
 
-use refs_cli::listing::{directories, drop_children, held, start_files, with_ticked};
+use refs_cli::outline::{Outline, held};
+use refs_cli::source::Pin;
 
 fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()
+}
+
+fn outline(paths: Vec<String>) -> Outline {
+    let pin = Pin::new("https://example.com/r", "HEAD", &"a".repeat(40), None);
+    Outline { pin, paths }
 }
 
 #[test]
@@ -50,7 +56,7 @@ fn start_offers_docs_files_by_extension_and_readme_by_name() {
         "README.txt",
         "docs/md",
     ]);
-    let (files, left) = start_files(&paths, &[]);
+    let (files, left) = outline(paths).start_files(&[]);
     assert_eq!(
         files,
         [
@@ -70,7 +76,10 @@ fn start_offers_docs_files_by_extension_and_readme_by_name() {
 #[test]
 fn directories_come_from_every_level_in_path_order() {
     let paths = strings(&["a/b/c.rs", "a/d.rs", "z.rs", "b/e.rs"]);
-    assert_eq!(directories(&paths), (strings(&["a", "a/b", "b"]), 0));
+    assert_eq!(
+        outline(paths).directories(),
+        (strings(&["a", "a/b", "b"]), 0)
+    );
 }
 
 #[test]
@@ -82,7 +91,7 @@ fn dot_directories_and_what_is_below_them_are_not_offered() {
         "packages/.cache/y",
     ]);
     assert_eq!(
-        directories(&paths),
+        outline(paths).directories(),
         (strings(&["packages", "packages/a"]), 0)
     );
 }
@@ -91,26 +100,8 @@ fn dot_directories_and_what_is_below_them_are_not_offered() {
 fn past_the_cap_the_shallowest_stay_and_the_rest_are_counted() {
     let mut paths: Vec<String> = (0..5000).map(|i| format!("d{i:04}/f.rs")).collect();
     paths.push("a/b/c/f.rs".into());
-    let (dirs, left) = directories(&paths);
+    let (dirs, left) = outline(paths).directories();
     assert_eq!(dirs.len(), 5000);
     assert_eq!(left, 3);
     assert!(!dirs.contains(&"a/b".to_string()) && dirs.contains(&"a".to_string()));
-}
-
-#[test]
-fn a_selected_directory_makes_its_descendants_redundant() {
-    let picked = strings(&["packages", "packages/a/b", "packages-x", "src/a", "src"]);
-    assert_eq!(
-        drop_children(picked),
-        strings(&["packages", "packages-x", "src"])
-    );
-}
-
-#[test]
-fn a_ticked_option_the_list_lacks_is_added_in_path_order() {
-    let options = strings(&["a", "c"]);
-    assert_eq!(
-        with_ticked(options, &strings(&["b", "a"])),
-        strings(&["a", "b", "c"])
-    );
 }

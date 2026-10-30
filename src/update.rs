@@ -19,6 +19,7 @@ mod ask;
 mod assess;
 
 use crate::active::active;
+use crate::diagnostic::UpdateError;
 use crate::edit::{Edit, RepoChange};
 use crate::failure::Failure;
 use crate::lock::Lock;
@@ -26,7 +27,7 @@ use crate::project::Project;
 use crate::source::Source;
 use crate::sync::{self, Report, SyncFlags};
 use crate::ui::{Prompter, Say};
-use assess::{Assessing, Move};
+use assess::{Assessing, Move, Unsettled};
 
 /// What `refs update` was asked for.
 pub struct Request<'a> {
@@ -85,21 +86,16 @@ pub fn run(
     say: &mut dyn Say,
 ) -> Result<Done, Failure> {
     if request.git_ref.is_some() && request.ids.len() != 1 {
-        return Err(Failure::Usage("`--ref` sets the Ref of one repo".into()));
+        return Err(Failure::Usage(UpdateError::RefNeedsOneRepo.into()));
     }
     let root = &project.root;
     let active = active(&project.config);
-    let unknown: Vec<String> = request
-        .ids
-        .iter()
+    let unknown: Vec<String> = (request.ids.iter())
         .filter(|id| active.get(id).is_none())
-        .map(|id| format!("`{id}`"))
+        .cloned()
         .collect();
     if !unknown.is_empty() {
-        return Err(Failure::Refused(format!(
-            "no enabled repo named {}",
-            unknown.join(", ")
-        )));
+        return Err(UpdateError::UnknownRepo { ids: unknown }.into());
     }
     let mode = Mode::of(request, prompter.is_some());
     let ids: Vec<&str> = match request.ids {
@@ -146,9 +142,8 @@ pub fn run(
                 moves.extend(moved);
                 continue;
             }
-            Err(Failure::Refused(why)) => why,
-            // `Asked` ends the run; `settle` returns only that and `Refused`.
-            Err(other) => return Err(other),
+            Err(Unsettled::Skip(why)) => why,
+            Err(Unsettled::Asked(abort)) => return Err(Failure::Asked(abort)),
         };
         assessing
             .say
@@ -191,7 +186,7 @@ fn apply(
         reresolve,
         ..SyncFlags::default()
     };
-    let mut report = sync::edit(source, root, &Edit::Change(&changes), &flags);
+    let mut report = sync::edit(Some(source), root, &Edit::Change(&changes), &flags);
     if skipped > 0 {
         // The run ends with the count of skipped Repos, not the hint to fix a broken one.
         report.hint = None;

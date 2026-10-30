@@ -155,6 +155,11 @@ fn ref_with_several_ids_is_a_usage_error() {
     let run = p.update(&["foo", "bar", "--ref", "v1"]);
 
     assert_eq!(run.code, 2, "{}", run.err);
+    assert!(
+        run.err.contains("refs::update::ref_needs_one_repo"),
+        "{}",
+        run.err
+    );
 }
 
 // ---- news from the Package lockfile ----
@@ -378,7 +383,9 @@ fn several_versions_ask_which_and_without_a_terminal_skip_the_repo() {
 
     let skipped = p.update(&["foo"]);
     assert_eq!(skipped.code, 1, "{}", skipped.err);
-    assert!(skipped.err.contains("1.2.3, 1.10.0"), "{}", skipped.err);
+    let why = "package-lock.json has several versions of `foo-js` (1.2.3, 1.10.0), and none is \
+               the one the project asks for; use `refs update foo --ref <tag>` to choose one";
+    assert!(skipped.err.contains(why), "{}", skipped.err);
 
     let mut prompter = Script::new([Answer::Text("1.2.3")]);
     let asked = p.run(&["update", "foo"], Some(&mut prompter));
@@ -656,6 +663,11 @@ fn unknown_and_disabled_ids_refuse_the_whole_run_before_the_network() {
     let run = p.update(&["foo", "nope", "off"]);
 
     assert_eq!(run.code, 1, "{}", run.err);
+    assert!(
+        run.err.contains("refs::update::unknown_repo"),
+        "{}",
+        run.err
+    );
     assert!(
         run.err.contains("nope") && run.err.contains("off"),
         "{}",

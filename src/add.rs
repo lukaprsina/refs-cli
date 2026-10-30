@@ -13,12 +13,13 @@ mod expand;
 pub mod pin;
 
 use crate::config::Config;
+use crate::diagnostic::AddError;
 use crate::edit::{AddRepo, Edit};
 use crate::failure::Failure;
-use crate::manifests::Manifests;
+use crate::outline::{Manifests, Outline};
 use crate::project::Project;
 use crate::registry::Registry;
-use crate::source::{Outline, Source};
+use crate::source::Source;
 use crate::sync::{self, Report, SyncFlags};
 use crate::ui::{Prompter, Say};
 use expand::{Expanded, Requested, expand};
@@ -54,10 +55,7 @@ pub fn run(
             .status(format!("equivalent: {}", ask::equivalent_command(&repo)));
     }
     let edit = Edit::Add(&repo);
-    Ok(match source {
-        Some(source) => sync::edit(source, &project.root, &edit, flags),
-        None => sync::edit_only(&project.root, &edit),
-    })
+    Ok(sync::edit(source, &project.root, &edit, flags))
 }
 
 /// What the steps of `add` work with besides the repo: where it can look, who it can ask and
@@ -101,9 +99,7 @@ fn prepare(repo: &AddRepo, config: &Config, cx: &mut Context) -> Result<AddRepo,
             repo.packages = looked.manifests.packages_for(&repo.paths);
         }
         return match repo.url.is_empty() {
-            true => Err(Failure::Usage(
-                "a URL is required when not run in a terminal".into(),
-            )),
+            true => Err(Failure::Usage(AddError::UrlRequired.into())),
             false => Ok(repo),
         };
     };
@@ -200,8 +196,7 @@ impl Context<'_> {
         let nameless = repo.packages.is_empty();
         let undescribed = looked.described.is_none() && repo.description.is_none();
         if nameless || undescribed {
-            looked.manifests =
-                Manifests::read(source, &repo.url, &outline, &repo.paths, &mut *self.say)?;
+            looked.manifests = outline.manifests(source, &repo.paths, &mut *self.say)?;
             looked.described = looked.described.or(looked.manifests.description());
         }
         looked.outline = Some(outline);

@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::listing;
+use crate::outline;
 
 /// The most Manifests `add` and `update` read, shallowest first.
 const MAX_MANIFESTS: usize = 200;
@@ -21,14 +21,14 @@ pub struct Inferred {
 }
 
 /// The Manifests among the outline's `paths` that a Checkout of `chosen` will hold (see
-/// `listing::held`), at most `MAX_MANIFESTS` of them, shallowest first, and how many more there
+/// `outline::held`), at most `MAX_MANIFESTS` of them, shallowest first, and how many more there
 /// were. (A submodule is listed like a file, but no Manifest is one.)
 pub fn manifest_paths(paths: &[String], chosen: &[String]) -> (Vec<String>, usize) {
     let found = paths.iter().filter(|path| {
         let file = path.rsplit('/').next().unwrap_or(path);
-        reader(file).is_some() && listing::held(path, chosen)
+        reader(file).is_some() && outline::held(path, chosen)
     });
-    listing::shallowest(found.cloned().collect(), MAX_MANIFESTS)
+    outline::shallowest(found.cloned().collect(), MAX_MANIFESTS)
 }
 
 /// The names of the packages that the Manifests among `manifests` (path and text) give for a

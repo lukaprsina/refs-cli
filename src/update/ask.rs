@@ -2,19 +2,18 @@
 
 use crate::config::Repo;
 use crate::edit::Fields;
-use crate::listing::{self, Gone};
-use crate::manifests::Manifests;
+use crate::outline::{self, Gone, Manifests, Outline};
 use crate::ui::Say;
 use crate::ui::pickers::{ask_packages, ask_paths, ask_start};
 use crate::ui::{Abort, Prompter};
 
 /// Ask `Update?` once `mend` has said what the new Ref broke. On yes, re-ask only the broken fields of `repo`, each starting from `refs.toml`
 /// with the entries that are still valid ticked and the missing ones offered unticked; the
-/// `packages` are kept, and asked again only when the `paths` were. `listed` is the files of the
+/// `packages` are kept, and asked again only when the `paths` were. `outline` is the
 /// new tree and `manifests` its Manifests. On no there is nothing to change.
 pub(super) fn fill_update(
     repo: &Repo,
-    listed: &[String],
+    outline: &Outline,
     gone: &Gone,
     manifests: &Manifests,
     prompter: &mut dyn Prompter,
@@ -26,14 +25,13 @@ pub(super) fn fill_update(
     let valid = |items: Vec<String>, gone: &[String]| -> Vec<String> {
         items.into_iter().filter(|i| !gone.contains(i)).collect()
     };
-    let listed = Some(listed);
     let mut fixed = Fields::default();
     let mut paths = repo.path_strings();
     if !gone.paths.is_empty() {
         let ticked = valid(paths.clone(), &gone.paths);
-        paths = ask_paths(prompter, listed, (&paths, &ticked), say)?;
+        paths = ask_paths(prompter, Some(outline), (&paths, &ticked), say)?;
         let kept = repo.package_strings();
-        let offered = listing::with_ticked(manifests.packages_for(&paths), &kept);
+        let offered = outline::with_ticked(manifests.packages_for(&paths), &kept);
         if !offered.is_empty() {
             fixed.packages = Some(ask_packages(prompter, &offered, &kept)?);
         }
@@ -44,7 +42,7 @@ pub(super) fn fill_update(
         let ticked = valid(offered.clone(), &gone.start);
         fixed.start = Some(ask_start(
             prompter,
-            listed,
+            Some(outline),
             &paths,
             (&offered, &ticked),
             say,

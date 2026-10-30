@@ -10,8 +10,7 @@ use std::path::{Path, PathBuf};
 
 use super::command::Cmd;
 use super::remote::{
-    EntryKind, ancestor_dirs, cache_dir_name, entry_kind, missing_oids, normalise_url,
-    object_unavailable, tree_blobs,
+    ancestor_dirs, cache_dir_name, missing_oids, normalise_url, object_unavailable, tree_blobs,
 };
 use crate::diagnostic::SourceError;
 
@@ -263,16 +262,6 @@ impl Repo {
             })
     }
 
-    /// What is at `path` in the tree of `sha`.
-    pub fn entry_kind(&self, sha: &str, path: &str) -> Result<EntryKind, SourceError> {
-        let out = self
-            .git()
-            .no_lazy_fetch()
-            .args(["ls-tree", sha, "--", path])
-            .run()?;
-        Ok(entry_kind(&out))
-    }
-
     /// Fetch every blob a checkout of `sha` with `paths` reads, in one round trip, so that
     /// `checkout` never has to fetch lazily (spec §7.3 step 1b). Cone mode checks out the
     /// files directly in the root and in every ancestor directory of a path, as well as
@@ -355,12 +344,22 @@ impl Repo {
             })
     }
 
-    /// Every path in the tree of `sha`, in git's order.
-    pub fn paths(&self, sha: &str) -> Result<Vec<String>, SourceError> {
+    /// Every path in the tree of `sha`, or of those at or below one of `within` when there are
+    /// any, in git's order. Each of `within` is a path, never a pattern.
+    pub fn paths(&self, sha: &str, within: &[String]) -> Result<Vec<String>, SourceError> {
         let out = self
             .git()
             .no_lazy_fetch()
-            .args(["ls-tree", "-r", "--name-only", "-z", sha])
+            .args([
+                "--literal-pathspecs",
+                "ls-tree",
+                "-r",
+                "--name-only",
+                "-z",
+                sha,
+            ])
+            .arg("--")
+            .args(within)
             .run()?;
         Ok(out
             .split('\0')

@@ -6,5 +6,5 @@ Config parsing, the active set, locking, Entry building, rendering, Agent-file s
 
 - `add` asks the `Source` about a remote that is not in the config yet, by URL: its tags (to turn a version into a Version tag), and its tree and Manifests (`outline` and `read`, ADR 0011). It takes the `Source` as an `Option`: `--no-sync` has none, and so asks nothing. This is not a second kind of seam to the project's data.
 
-- Only `source` code interprets the pin.
+- Only `source` code interprets the pin: turns it into git objects and commands. The rest of the core reads its fields only to show it (the Managed block, `list`, messages and errors), compare it (`Pin::same_commit`, `update`'s branch check) or hand it back to the `Source`.
 - `GitSource` keeps a few real-git contract tests, because those pin down facts about git that a fake would only restate (per-worktree sparse config, blobless fetch, a Cache with no history). Pure parts of it (ref preference, URL normalisation, `ls-remote` parsing) are tested as data.

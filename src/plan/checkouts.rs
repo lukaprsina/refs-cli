@@ -186,7 +186,29 @@ pub struct Plan<'a> {
     pub refusals: Vec<Refusal>,
 }
 
+/// How a run ended; the CLI maps it to an exit code (0, 3, 1, 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    InSync,
+    OutOfDate,
+    Refused,
+    Failed,
+}
+
 impl Plan<'_> {
+    /// The outcome of `sync --check`; `lock_drifted` is whether the Lock differed from the
+    /// config. A refusal outranks drift, since "run `refs sync`" is the wrong advice when
+    /// `sync` will also refuse.
+    pub fn outcome(&self, lock_drifted: bool) -> Outcome {
+        if !self.refusals.is_empty() {
+            Outcome::Refused
+        } else if self.is_drift() || lock_drifted {
+            Outcome::OutOfDate
+        } else {
+            Outcome::InSync
+        }
+    }
+
     /// Anything to do or refuse: everything except the note that there is no git repository.
     pub fn is_drift(&self) -> bool {
         !self.repos.is_empty()

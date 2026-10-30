@@ -11,11 +11,12 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
-use crate::source::{Observed, Outline, Pin, Source};
+use crate::outline::Outline;
+use crate::source::{Observed, Pin, Source};
 use cache::{Cache, Repo};
 use checkout::{Layout, Record};
 use command::Cmd;
-use remote::{EntryKind, cache_dir_name, dirty_files};
+use remote::{cache_dir_name, dirty_files};
 
 pub struct GitSource {
     cache: Cache,
@@ -64,7 +65,7 @@ impl Source for GitSource {
         remote::check_sha(sha)?;
         let paths = self
             .cache
-            .with_repo(url, sha, false, |cache| cache.paths(sha))?;
+            .with_repo(url, sha, false, |cache| cache.paths(sha, &[]))?;
         Ok(Outline { pin, paths })
     }
 
@@ -89,53 +90,16 @@ impl Source for GitSource {
         Ok(remote::select_tags(&out))
     }
 
-    fn verify(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError> {
+    fn files(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<Vec<String>, SourceError> {
         let (url, sha) = (pin.url(), pin.sha());
         remote::check_sha(sha)?;
-        self.cache.with_repo(url, sha, offline, |cache| {
-            for path in &repo.repo.paths {
-                let path = path.get_ref();
-                match cache.entry_kind(sha, path)? {
-                    EntryKind::Tree => {}
-                    EntryKind::Missing => {
-                        return Err(SourceError::PathMissing {
-                            repo: repo.id.into(),
-                            path: path.into(),
-                            sha: sha.to_string(),
-                        });
-                    }
-                    EntryKind::Other => {
-                        return Err(SourceError::PathNotDir {
-                            repo: repo.id.into(),
-                            path: path.into(),
-                            sha: sha.to_string(),
-                        });
-                    }
-                }
-            }
-            for path in &repo.repo.start {
-                let path = path.get_ref();
-                let (id, path, sha) = (repo.id.to_string(), path.to_string(), sha.to_string());
-                match cache.entry_kind(&sha, &path)? {
-                    EntryKind::Missing => {
-                        return Err(SourceError::StartMissing {
-                            repo: id,
-                            path,
-                            sha,
-                        });
-                    }
-                    EntryKind::Tree => {
-                        return Err(SourceError::StartNotFile {
-                            repo: id,
-                            path,
-                            sha,
-                        });
-                    }
-                    EntryKind::Other => {}
-                }
-            }
-            Ok(())
-        })
+        let mut within = repo.repo.path_strings();
+        within.extend(repo.repo.start_strings());
+        self.cache
+            .with_repo(url, sha, offline, |cache| match within.is_empty() {
+                true => Ok(vec![]),
+                false => cache.paths(sha, &within),
+            })
     }
 
     fn materialise(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError> {

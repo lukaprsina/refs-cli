@@ -1,4 +1,4 @@
-//! `GitSource` against real git (`verify`, `materialise`, the state of a Checkout, `outline`): a local `file://` remote that
+//! `GitSource` against real git (`files` and `verify`, `materialise`, the state of a Checkout, `outline`): a local `file://` remote that
 //! allows filters (spec §7.1), a Cache in a temporary directory, Checkouts beside it.
 
 mod common;
@@ -12,6 +12,7 @@ use std::process::Command;
 use miette::Diagnostic;
 use refs_cli::config::{Repo, RepoRef, parse};
 use refs_cli::diagnostic::SourceError;
+use refs_cli::outline::verify as check;
 use refs_cli::source::git::GitSource;
 use refs_cli::source::git::remote::cache_dir_name;
 use refs_cli::source::{Observed, Pin, Source};
@@ -183,10 +184,18 @@ fn at<'a>(id: &'a str, repo: &'a Repo) -> RepoRef<'a> {
     RepoRef { id, repo }
 }
 
+/// What `sync` checks of `repo` at the remote's commit: `files`, then the rule over them. Every
+/// error code, joined.
 fn verify(source: &GitSource, remote: &Remote, repo: &Repo, offline: bool) -> Result<(), String> {
-    source
-        .verify(at("r", repo), &remote.pin(), offline)
-        .map_err(code)
+    let pin = remote.pin();
+    let files = (source.files(at("r", repo), &pin, offline)).map_err(code)?;
+    let wrong: Vec<String> = (check(at("r", repo), &pin, &files).into_iter())
+        .map(code)
+        .collect();
+    match wrong.is_empty() {
+        true => Ok(()),
+        false => Err(wrong.join(", ")),
+    }
 }
 
 fn materialise(
@@ -199,10 +208,6 @@ fn materialise(
     source
         .materialise(at(id, repo), &remote.pin(), offline)
         .map_err(code)
-}
-
-fn strings(items: &[&str]) -> Vec<String> {
-    items.iter().map(|i| i.to_string()).collect()
 }
 
 fn names(files: &[&str]) -> BTreeSet<String> {
@@ -281,10 +286,9 @@ mod verify {
     fn a_missing_path_is_an_error() {
         let (remote, env) = (Remote::new(), Env::new());
         let repo = remote.repo(&["docs/nope"], &[]);
-        let err = env
-            .source()
-            .verify(at("r", &repo), &remote.pin(), false)
-            .unwrap_err();
+        let pin = remote.pin();
+        let files = env.source().files(at("r", &repo), &pin, false);
+        let err = check(at("r", &repo), &pin, &files.unwrap()).remove(0);
         assert_eq!(err.code().unwrap().to_string(), "refs::git::path_missing");
         let message = err.to_string();
         assert!(
@@ -326,6 +330,25 @@ mod verify {
     }
 
     #[test]
+    fn every_missing_or_wrong_entry_is_an_error_at_once() {
+        let (remote, env) = (Remote::new(), Env::new());
+        let repo = remote.repo(
+            &["docs/nope", "README.md", "docs"],
+            &["src", "docs/MIGRATION.md"],
+        );
+        assert_eq!(
+            verify(&env.source(), &remote, &repo, ONLINE),
+            Err([
+                "refs::git::path_missing",
+                "refs::git::path_not_dir",
+                "refs::git::start_not_file",
+                "refs::git::start_missing",
+            ]
+            .join(", "))
+        );
+    }
+
+    #[test]
     fn a_tag_object_is_not_a_commit() {
         let (remote, env) = (Remote::new(), Env::new());
         let tag_object = git(remote.dir.path(), &["rev-parse", "v1"]);
@@ -333,10 +356,7 @@ mod verify {
         let pin = Pin::new(&remote.url(), "v1", &tag_object, None);
         let repo = remote.repo(&[], &[]);
 
-        let err = env
-            .source()
-            .verify(at("r", &repo), &pin, false)
-            .unwrap_err();
+        let err = env.source().files(at("r", &repo), &pin, false).unwrap_err();
         assert_eq!(code(err), "refs::git::unpeeled_tag");
     }
 
@@ -347,7 +367,7 @@ mod verify {
         let repo = remote.repo(&[], &[]);
         let source = env.source();
 
-        let err = source.verify(at("r", &repo), &pin, false).unwrap_err();
+        let err = source.files(at("r", &repo), &pin, false).unwrap_err();
         assert_eq!(code(err), "refs::git::unsafe_input");
         let err = source.materialise(at("r", &repo), &pin, false).unwrap_err();
         assert_eq!(code(err), "refs::git::unsafe_input");
@@ -360,10 +380,7 @@ mod verify {
         let pin = Pin::new(&remote.url(), "main", &"0123456789".repeat(4), None);
         let repo = remote.repo(&[], &[]);
 
-        let err = env
-            .source()
-            .verify(at("r", &repo), &pin, false)
-            .unwrap_err();
+        let err = env.source().files(at("r", &repo), &pin, false).unwrap_err();
         assert_eq!(code(err), "refs::git::commit_unavailable");
     }
 }
@@ -771,35 +788,6 @@ fn a_real_remote_serves_a_blobless_fetch() {
 
 mod outline {
     use super::*;
-
-    #[test]
-    fn the_break_rule_and_verify_reject_the_same_missing_entries() {
-        let (remote, env) = (Remote::new(), Env::new());
-        let outline = env.source().outline(&remote.url(), "main").unwrap();
-        let cases: [(&[&str], &[&str], Option<&str>); 5] = [
-            (&["docs/guide"], &["docs/guide/a.md"], None),
-            (&["docs/nope"], &[], Some("refs::git::path_missing")),
-            (
-                &["docs"],
-                &["docs/MIGRATION.md"],
-                Some("refs::git::start_missing"),
-            ),
-            (
-                &["docs"],
-                &["docs/guide"],
-                Some("refs::git::start_not_file"),
-            ),
-            (&[], &["src"], Some("refs::git::start_not_file")),
-        ];
-        for (paths, start, rejected) in cases {
-            let (p, s): (Vec<_>, Vec<_>) = (strings(paths), strings(start));
-            let gone = refs_cli::listing::gone(&outline.paths, &p, &s);
-            let repo = remote.repo(paths, start);
-            let verified = verify(&env.source(), &remote, &repo, ONLINE);
-            assert_eq!(gone.is_empty(), rejected.is_none(), "{paths:?} {start:?}");
-            assert_eq!(verified.err().as_deref(), rejected, "{paths:?} {start:?}");
-        }
-    }
 
     #[test]
     fn read_fetches_only_the_named_blobs() {

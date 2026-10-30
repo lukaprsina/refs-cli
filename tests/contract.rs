@@ -254,6 +254,26 @@ fn outline_rows<H: Harness>(new: &impl Fn() -> H) {
     );
 }
 
+/// `files` lists the files of the pinned commit at the Repo's paths: those below a directory, a
+/// file as itself, none for a path the tree lacks.
+fn files_rows<H: Harness>(new: &impl Fn() -> H) {
+    let h = new();
+    let pin = &h.pins()[1];
+    for (paths, expected) in [
+        (&["docs"][..], &["docs/a.md"][..]),
+        (&["src/b.md", "docs"], &["docs/a.md", "src/b.md"]),
+        (&["nope"], &[]),
+    ] {
+        let repo = repo_with(&h.url(), paths);
+        let repo = RepoRef {
+            id: ID,
+            repo: &repo,
+        };
+        let files = h.source().files(repo, pin, false).unwrap();
+        assert_eq!(files, expected, "files: {paths:?}");
+    }
+}
+
 /// `inspect` reports what was seeded, and looking changes nothing.
 fn inspect_rows<H: Harness>(new: &impl Fn() -> H) {
     for (name, state) in states(&new()) {
@@ -342,6 +362,11 @@ macro_rules! meets_the_contract {
             #[test]
             fn outline() {
                 outline_rows(&$new);
+            }
+
+            #[test]
+            fn files() {
+                files_rows(&$new);
             }
 
             #[test]

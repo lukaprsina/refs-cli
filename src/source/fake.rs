@@ -4,15 +4,16 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use super::{Observed, Outline, Pin, Source};
+use super::{Observed, Pin, Source};
 use crate::config::RepoRef;
 use crate::diagnostic::SourceError;
+use crate::outline::{Outline, within};
 
 /// The `Source` methods a failure can be injected into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Method {
     Resolve,
-    Verify,
+    Files,
     Materialise,
     Remove,
     Inspect,
@@ -26,7 +27,7 @@ pub enum Method {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Call {
     Resolve(String),
-    Verify { id: String, offline: bool },
+    Files { id: String, offline: bool },
     Materialise { id: String, offline: bool },
     Remove(String),
     Tags(String),
@@ -114,7 +115,7 @@ impl FakeSource {
         self.0.trees.borrow_mut().insert(url.into(), tree);
     }
 
-    /// Every `resolve`, `verify`, `materialise`, `remove`, `tags` and `outline` received so far.
+    /// Every `resolve`, `files`, `materialise`, `remove`, `tags` and `outline` received so far.
     pub fn calls(&self) -> Vec<Call> {
         self.0.calls.borrow().clone()
     }
@@ -157,12 +158,25 @@ impl Source for FakeSource {
         ))
     }
 
-    fn verify(&self, repo: RepoRef, _pin: &Pin, offline: bool) -> Result<(), SourceError> {
-        self.record(Call::Verify {
+    /// The files of the tree set for the Repo's URL at its `paths` and `start`. Without one,
+    /// everything is there: a file below each path, and each `start` file.
+    fn files(&self, repo: RepoRef, _pin: &Pin, offline: bool) -> Result<Vec<String>, SourceError> {
+        self.record(Call::Files {
             id: repo.id.into(),
             offline,
         });
-        self.check(repo.id, Method::Verify)
+        self.check(repo.id, Method::Files)?;
+        let (paths, start) = (repo.repo.path_strings(), repo.repo.start_strings());
+        let trees = self.0.trees.borrow();
+        let Some(tree) = trees.get(repo.repo.url.as_ref()) else {
+            let below = paths.iter().map(|dir| format!("{dir}/README.md"));
+            return Ok(below.chain(start).collect());
+        };
+        let wanted = |file: &str| (paths.iter().chain(&start)).any(|p| within(file, p));
+        Ok((tree.files.iter())
+            .map(|(path, _)| path.clone())
+            .filter(|path| wanted(path))
+            .collect())
     }
 
     fn materialise(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError> {

@@ -123,11 +123,11 @@ fn a_second_sync_resolves_and_writes_nothing_but_still_verifies() {
     assert_eq!(
         p.source.calls()[seen..],
         [
-            Call::Verify {
+            Call::Files {
                 id: "a".into(),
                 offline: false
             },
-            Call::Verify {
+            Call::Files {
                 id: "b".into(),
                 offline: false
             }
@@ -156,7 +156,7 @@ fn one_failed_repo_does_not_stop_the_others_and_the_block_is_not_written() {
 fn a_failed_stage_one_writes_no_lock_and_touches_no_checkout() {
     let p = Project::new(AB);
     p.source.fail("a", Method::Resolve, "unreachable");
-    p.source.fail("b", Method::Verify, "no such path");
+    p.source.fail("b", Method::Files, "no such path");
 
     let report = p.sync(&SyncFlags::default());
 
@@ -336,7 +336,7 @@ fn offline_is_passed_to_materialise() {
         id: "a".into(),
         offline: true
     }));
-    assert!(p.source.calls()[seen..].contains(&Call::Verify {
+    assert!(p.source.calls()[seen..].contains(&Call::Files {
         id: "a".into(),
         offline: true
     }));

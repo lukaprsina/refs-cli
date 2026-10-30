@@ -29,7 +29,7 @@ fn single<'a>(mut shas: Vec<&'a str>, git_ref: &str) -> Result<Option<&'a str>, 
 ///
 /// A tag with no `^{}` line is taken as lightweight: the output cannot tell it from an
 /// annotated tag the server failed to peel. Rejecting a tag object (`refs::git::unpeeled_tag`)
-/// needs the object type, so `verify` does it once the Cache has the object.
+/// needs the object type, so the Cache does it once it has the object.
 pub fn select_ref(url: &str, git_ref: &str, ls_remote: &str) -> Result<String, SourceError> {
     let named = |name: String| -> Vec<&str> {
         lines(ls_remote)
@@ -163,24 +163,6 @@ pub fn cache_dir_name(url: &str) -> String {
         .take(8)
         .map(|byte| format!("{byte:02x}"))
         .collect()
-}
-
-/// What `git ls-tree <commit> -- <path>` found at `path`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EntryKind {
-    Missing,
-    Tree,
-    /// A file, a symlink or a submodule: anything that is not a directory.
-    Other,
-}
-
-/// The kind of the first entry of `git ls-tree` output (`<mode> <type> <oid>\t<path>`).
-pub fn entry_kind(ls_tree: &str) -> EntryKind {
-    match ls_tree.split_whitespace().nth(1) {
-        None => EntryKind::Missing,
-        Some("tree") => EntryKind::Tree,
-        Some(_) => EntryKind::Other,
-    }
 }
 
 /// The distinct blob ids in `git ls-tree -z` output (NUL separated, so no path can break an

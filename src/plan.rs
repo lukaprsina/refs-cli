@@ -3,12 +3,10 @@
 mod checkouts;
 mod classify;
 mod lock;
-mod outcome;
 
 pub use checkouts::{
-    AgentFileText, Checkout, Checkouts, Exclude, Placement, Plan, ProjectObserved, RepoAction,
-    WriteAgentFile, plan_checkouts,
+    AgentFileText, Checkout, Checkouts, Exclude, Outcome, Placement, Plan, ProjectObserved,
+    RepoAction, WriteAgentFile, plan_checkouts,
 };
 pub use classify::{Cause, CheckoutState, classify};
 pub use lock::{Drift, Step, lock_drift, plan_lock, shrunk_lock};
-pub use outcome::{Hint, Outcome, check_outcome};

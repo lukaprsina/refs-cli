@@ -17,9 +17,9 @@ use crate::lock::{Lock, LockedRepo};
 /// every active Repo: `plan` makes sure of it before it renders.
 pub fn render(active: &ActiveSet, lock: &Lock, references_dir: &str) -> String {
     let locked = |repo: RepoRef| lock.get(repo.id);
-    let repos = || active.sections.iter().flat_map(|s| &s.repos);
-    let first_id = repos().next().map(|r| r.id);
-    let first_package = repos()
+    let first_id = active.repos().next().map(|r| r.id);
+    let first_package = active
+        .repos()
         .find_map(|r| r.repo.packages.first())
         .map(|p| p.get_ref().as_str());
 
@@ -62,13 +62,14 @@ fn preamble(dir: &str, first_id: Option<&str>, first_package: Option<&str>) -> S
     out
 }
 
-fn section_text<'a>(section: &Section, locked: impl Fn(RepoRef) -> &'a LockedRepo) -> String {
-    let heading = section
-        .group
-        .map_or("Ungrouped", |(id, group)| group.title(id));
+fn section_text<'a>(
+    section: &Section<RepoRef>,
+    locked: impl Fn(RepoRef) -> &'a LockedRepo,
+) -> String {
+    let heading = section.group.map_or("Ungrouped", |g| g.group.title(g.id));
     let mut out = format!("### {heading}\n\n```text\n");
-    if let Some((_, group)) = section.group
-        && let Some(description) = &group.description
+    if let Some(g) = section.group
+        && let Some(description) = &g.group.description
     {
         write!(out, "{}\n\n", description.get_ref()).unwrap();
     }

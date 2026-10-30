@@ -298,6 +298,7 @@ fn without_a_terminal_nothing_is_asked_and_a_missing_url_is_a_usage_error() {
 
     assert_eq!(run.code, 2);
     assert!(run.err.contains("URL is required"), "{}", run.err);
+    assert!(run.err.contains("refs::add::url_required"), "{}", run.err);
     assert_eq!(config_text(dir.path()), CONFIG);
 
     let run = refs(
