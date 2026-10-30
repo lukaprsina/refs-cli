@@ -11,7 +11,7 @@ use crate::registry::Package;
 use crate::registry::tag::tag_for;
 use crate::registry::used::{self, Answer};
 use crate::source::Source;
-use crate::ui::pickers::{ask_version, several_versions};
+use crate::ui::pickers::{ask_version, several_versions_refusal};
 use crate::ui::{Abort, Prompter, Say};
 
 /// What `pin` settled for a registry add's Ref.
@@ -106,7 +106,7 @@ impl Pinning<'_, '_> {
             } => {
                 self.ignored(&ignored, &file);
                 let Some(prompter) = self.prompter.as_deref_mut() else {
-                    let why = several_versions(name, &versions, &file);
+                    let why = several_versions_refusal(name, &versions, &file);
                     return Err(Failure::Refused(format!(
                         "{why}; give one as `{name}@version`"
                     )));

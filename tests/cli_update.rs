@@ -378,7 +378,9 @@ fn several_versions_ask_which_and_without_a_terminal_skip_the_repo() {
 
     let skipped = p.update(&["foo"]);
     assert_eq!(skipped.code, 1, "{}", skipped.err);
-    assert!(skipped.err.contains("1.2.3, 1.10.0"), "{}", skipped.err);
+    let why = "package-lock.json has several versions of `foo-js` (1.2.3, 1.10.0), and none is \
+               the one the project asks for; use `refs update foo --ref <tag>` to choose one";
+    assert!(skipped.err.contains(why), "{}", skipped.err);
 
     let mut prompter = Script::new([Answer::Text("1.2.3")]);
     let asked = p.run(&["update", "foo"], Some(&mut prompter));

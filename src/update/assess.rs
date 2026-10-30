@@ -17,7 +17,7 @@ use crate::registry::Package;
 use crate::registry::tag::{newest, split, tag_for};
 use crate::registry::used::{self, Answer};
 use crate::source::{Observed, Source};
-use crate::ui::pickers::{ask_version, several_versions};
+use crate::ui::pickers::{ask_version, several_versions_refusal};
 use crate::ui::{Abort, Prompter, Say};
 
 /// A Repo that moves.
@@ -364,7 +364,7 @@ impl<'a, 'p> Assessing<'a, 'p> {
             tags,
         } = choice;
         let Some(prompter) = self.prompter.as_deref_mut() else {
-            let why = several_versions(&name, &versions, &file);
+            let why = several_versions_refusal(&name, &versions, &file);
             return Err(skip(format!(
                 "{why}; use `refs update {} --ref <tag>` to choose one",
                 repo.id

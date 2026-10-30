@@ -1,5 +1,6 @@
 //! The pickers `add` and `update` share: the questions about `paths`, `start`, `packages` and
-//! which of several Used versions, and the free-text helpers under them.
+//! which of several Used versions (and the refusal when there is no one to ask it), and the
+//! free-text helpers under them.
 
 use crate::outline::{self, Outline};
 use crate::ui::{Abort, Prompter, Say};
@@ -85,7 +86,7 @@ pub(crate) fn ask_version(
 
 /// Why `versions` of `name` in `file` cannot be chosen between with no one to ask: the start of
 /// the refusal, which the caller ends with what to do instead.
-pub(crate) fn several_versions(name: &str, versions: &[String], file: &str) -> String {
+pub(crate) fn several_versions_refusal(name: &str, versions: &[String], file: &str) -> String {
     format!(
         "{file} has several versions of `{name}` ({}), and none is the one the project asks for",
         versions.join(", ")
