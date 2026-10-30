@@ -288,7 +288,7 @@ impl<'a, 'p> Assessing<'a, 'p> {
         let outline = self
             .source
             .outline(repo.repo.url.as_ref(), &found.look_at)?;
-        let gone = outline.gone(&repo.repo.path_strings(), &repo.repo.start_strings());
+        let gone = outline.gone(repo.repo);
         Ok((outline, gone))
     }
 

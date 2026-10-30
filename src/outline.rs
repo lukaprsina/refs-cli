@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use crate::config::RepoRef;
+use crate::config::{Repo, RepoRef};
 use crate::diagnostic::SourceError;
 use crate::packages::{self, infer, manifest_paths};
 use crate::source::{Pin, Source};
@@ -51,9 +51,9 @@ impl Outline {
         (files, left)
     }
 
-    /// What the tree lacks of a Repo's `paths` and `start` (the Break rule).
-    pub fn gone(&self, paths: &[String], start: &[String]) -> Gone {
-        gone(&self.paths, paths, start)
+    /// What the tree lacks of `repo`'s `paths` and `start` (the Break rule).
+    pub fn gone(&self, repo: &Repo) -> Gone {
+        gone(&self.paths, repo)
     }
 
     /// The Manifests of the tree that a Checkout of `paths` will hold, up to the cap (said when
@@ -185,14 +185,16 @@ impl Gone {
     }
 }
 
-/// What `files` lacks of `paths` and `start`.
-fn gone(files: &[String], paths: &[String], start: &[String]) -> Gone {
+/// What `files` lacks of `repo`'s `paths` and `start`.
+fn gone(files: &[String], repo: &Repo) -> Gone {
     let missing = |chosen: &[String], found: &dyn Fn(&String) -> bool| {
         chosen.iter().filter(|c| !found(c)).cloned().collect()
     };
     Gone {
-        paths: missing(paths, &|dir| files.iter().any(|file| below(file, dir))),
-        start: missing(start, &|file| files.contains(file)),
+        paths: missing(&repo.path_strings(), &|dir| {
+            files.iter().any(|file| below(file, dir))
+        }),
+        start: missing(&repo.start_strings(), &|file| files.contains(file)),
     }
 }
 
@@ -200,7 +202,7 @@ fn gone(files: &[String], paths: &[String], start: &[String]) -> Gone {
 /// of the Repo's `paths` and `start` that `files` (`Source::files`) lacks, telling one of the
 /// wrong kind from a missing one. A submodule or a symlink is listed as a file.
 pub fn verify(repo: RepoRef, pin: &Pin, files: &[String]) -> Vec<SourceError> {
-    let gone = gone(files, &repo.repo.path_strings(), &repo.repo.start_strings());
+    let gone = gone(files, repo.repo);
     let (id, sha) = (repo.id.to_string(), pin.sha().to_string());
     let paths = gone.paths.into_iter().map(|path| {
         let (repo, sha) = (id.clone(), sha.clone());
