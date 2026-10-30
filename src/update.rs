@@ -19,6 +19,7 @@ mod ask;
 mod assess;
 
 use crate::active::active;
+use crate::diagnostic::UpdateError;
 use crate::edit::{Edit, RepoChange};
 use crate::failure::Failure;
 use crate::lock::Lock;
@@ -85,21 +86,16 @@ pub fn run(
     say: &mut dyn Say,
 ) -> Result<Done, Failure> {
     if request.git_ref.is_some() && request.ids.len() != 1 {
-        return Err(Failure::Usage("`--ref` sets the Ref of one repo".into()));
+        return Err(Failure::Usage(UpdateError::RefNeedsOneRepo.into()));
     }
     let root = &project.root;
     let active = active(&project.config);
-    let unknown: Vec<String> = request
-        .ids
-        .iter()
+    let unknown: Vec<String> = (request.ids.iter())
         .filter(|id| active.get(id).is_none())
-        .map(|id| format!("`{id}`"))
+        .cloned()
         .collect();
     if !unknown.is_empty() {
-        return Err(Failure::Refused(format!(
-            "no enabled repo named {}",
-            unknown.join(", ")
-        )));
+        return Err(UpdateError::UnknownRepo { ids: unknown }.into());
     }
     let mode = Mode::of(request, prompter.is_some());
     let ids: Vec<&str> = match request.ids {

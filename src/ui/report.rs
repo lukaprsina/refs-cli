@@ -21,12 +21,8 @@ pub(crate) fn failed(failure: Failure, console: &mut Console) -> u8 {
     match failure {
         Failure::Error(report) => fail(report, console),
         Failure::Asked(abort) => aborted(abort, console),
-        Failure::Refused(why) => {
-            console.problem(format_args!("error: {why}"));
-            EXIT_ERROR
-        }
-        Failure::Usage(why) => {
-            console.problem(format_args!("error: {why}"));
+        Failure::Usage(report) => {
+            fail(report, console);
             EXIT_USAGE
         }
     }

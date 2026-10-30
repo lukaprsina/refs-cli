@@ -155,6 +155,11 @@ fn ref_with_several_ids_is_a_usage_error() {
     let run = p.update(&["foo", "bar", "--ref", "v1"]);
 
     assert_eq!(run.code, 2, "{}", run.err);
+    assert!(
+        run.err.contains("refs::update::ref_needs_one_repo"),
+        "{}",
+        run.err
+    );
 }
 
 // ---- news from the Package lockfile ----
@@ -658,6 +663,11 @@ fn unknown_and_disabled_ids_refuse_the_whole_run_before_the_network() {
     let run = p.update(&["foo", "nope", "off"]);
 
     assert_eq!(run.code, 1, "{}", run.err);
+    assert!(
+        run.err.contains("refs::update::unknown_repo"),
+        "{}",
+        run.err
+    );
     assert!(
         run.err.contains("nope") && run.err.contains("off"),
         "{}",

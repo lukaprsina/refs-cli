@@ -444,6 +444,32 @@ pub enum Refusal {
     },
 }
 
+/// Why `add` refuses a request as given, before it edits anything.
+#[derive(Debug, Error, Diagnostic)]
+pub enum AddError {
+    #[error("a URL is required when not run in a terminal")]
+    #[diagnostic(code(refs::add::url_required))]
+    UrlRequired,
+
+    /// `why` is `ui::pickers::several_versions_refusal`.
+    #[error("{why}; give one as `{name}@version`")]
+    #[diagnostic(code(refs::add::several_versions))]
+    SeveralVersions { why: String, name: String },
+}
+
+/// Why `update` refuses a request as given, before it asks the network anything.
+#[derive(Debug, Error, Diagnostic)]
+pub enum UpdateError {
+    #[error("`--ref` sets the Ref of one repo")]
+    #[diagnostic(code(refs::update::ref_needs_one_repo))]
+    RefNeedsOneRepo,
+
+    /// Not in the active set: unknown to `refs.toml`, or disabled.
+    #[error("no enabled repo named {}", .ids.iter().map(|id| format!("`{id}`")).collect::<Vec<_>>().join(", "))]
+    #[diagnostic(code(refs::update::unknown_repo))]
+    UnknownRepo { ids: Vec<String> },
+}
+
 /// An autofix `sync` announces; not drift.
 #[derive(Debug, Clone, Error, Diagnostic)]
 #[diagnostic(severity(Advice))]

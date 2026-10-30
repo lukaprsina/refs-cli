@@ -6,6 +6,7 @@
 
 use std::path::Path;
 
+use crate::diagnostic::AddError;
 use crate::failure::Failure;
 use crate::registry::Package;
 use crate::registry::tag::tag_for;
@@ -107,9 +108,8 @@ impl Pinning<'_, '_> {
                 self.ignored(&ignored, &file);
                 let Some(prompter) = self.prompter.as_deref_mut() else {
                     let why = several_versions_refusal(name, &versions, &file);
-                    return Err(Failure::Refused(format!(
-                        "{why}; give one as `{name}@version`"
-                    )));
+                    let name = name.clone();
+                    return Err(AddError::SeveralVersions { why, name }.into());
                 };
                 let version = ask_version(prompter, name, &versions, &file);
                 self.settle(&version.map_err(Failure::Asked)?)

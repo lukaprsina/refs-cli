@@ -250,11 +250,13 @@ fn several_versions_are_asked_and_the_one_chosen_is_pinned() {
 fn several_versions_with_no_one_to_ask_are_refused() {
     let dir = project(Some(TWO_SERDES));
     let (pinned, _) = run(None, &dir, Some(&tagged(&["v1.0.200"])));
-    let Err(Failure::Refused(why)) = pinned else {
+    let Err(Failure::Error(report)) = pinned else {
         panic!("expected a refusal");
     };
+    let code = report.code().map(|code| code.to_string());
+    assert_eq!(code.as_deref(), Some("refs::add::several_versions"));
     assert_eq!(
-        why,
+        report.to_string(),
         "Cargo.lock has several versions of `serde` (1.0.100, 1.0.200), and none is the one \
          the project asks for; give one as `serde@version`"
     );

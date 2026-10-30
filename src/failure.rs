@@ -5,15 +5,14 @@ use crate::ui::Abort;
 
 #[derive(Debug)]
 pub enum Failure {
-    /// Something could not be read or looked at: the Registry, the remote or `refs.lock`.
+    /// Something could not be read or looked at (the Registry, the remote or `refs.lock`), or the
+    /// request cannot be done as given, or a question had to be asked with no one to ask: the
+    /// report says what to do.
     Error(miette::Report),
     /// A question ended without an answer.
     Asked(Abort),
-    /// The request cannot be done as given, or a question had to be asked with no one to ask:
-    /// the message says what to do.
-    Refused(String),
-    /// The command line is wrong: the message says how.
-    Usage(String),
+    /// The command line is wrong: the report says how.
+    Usage(miette::Report),
 }
 
 impl<E: miette::Diagnostic + Send + Sync + 'static> From<E> for Failure {

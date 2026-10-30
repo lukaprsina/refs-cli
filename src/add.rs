@@ -13,6 +13,7 @@ mod expand;
 pub mod pin;
 
 use crate::config::Config;
+use crate::diagnostic::AddError;
 use crate::edit::{AddRepo, Edit};
 use crate::failure::Failure;
 use crate::outline::{Manifests, Outline};
@@ -98,9 +99,7 @@ fn prepare(repo: &AddRepo, config: &Config, cx: &mut Context) -> Result<AddRepo,
             repo.packages = looked.manifests.packages_for(&repo.paths);
         }
         return match repo.url.is_empty() {
-            true => Err(Failure::Usage(
-                "a URL is required when not run in a terminal".into(),
-            )),
+            true => Err(Failure::Usage(AddError::UrlRequired.into())),
             false => Ok(repo),
         };
     };
