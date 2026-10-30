@@ -7,7 +7,7 @@ use std::rc::Rc;
 use super::{Observed, Pin, Source};
 use crate::config::RepoRef;
 use crate::diagnostic::SourceError;
-use crate::outline::{Outline, below};
+use crate::outline::{Outline, within};
 
 /// The `Source` methods a failure can be injected into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -172,7 +172,7 @@ impl Source for FakeSource {
             let below = paths.iter().map(|dir| format!("{dir}/README.md"));
             return Ok(below.chain(start).collect());
         };
-        let wanted = |file: &str| (paths.iter().chain(&start)).any(|p| file == p || below(file, p));
+        let wanted = |file: &str| (paths.iter().chain(&start)).any(|p| within(file, p));
         Ok((tree.files.iter())
             .map(|(path, _)| path.clone())
             .filter(|path| wanted(path))

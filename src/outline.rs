@@ -99,7 +99,7 @@ pub(crate) fn below(path: &str, dir: &str) -> bool {
 }
 
 /// Whether `path` is `dir` or below it.
-fn within(path: &str, dir: &str) -> bool {
+pub(crate) fn within(path: &str, dir: &str) -> bool {
     path == dir || below(path, dir)
 }
 
@@ -201,16 +201,16 @@ fn gone(files: &[String], paths: &[String], start: &[String]) -> Gone {
 /// wrong kind from a missing one. A submodule or a symlink is listed as a file.
 pub fn verify(repo: RepoRef, sha: &str, files: &[String]) -> Vec<SourceError> {
     let gone = gone(files, &repo.repo.path_strings(), &repo.repo.start_strings());
-    let at = |path: String| (repo.id.to_string(), path, sha.to_string());
-    let paths =
-        gone.paths
-            .into_iter()
-            .map(at)
-            .map(|(repo, path, sha)| match files.contains(&path) {
-                true => SourceError::PathNotDir { repo, path, sha },
-                false => SourceError::PathMissing { repo, path, sha },
-            });
-    let start = gone.start.into_iter().map(at).map(|(repo, path, sha)| {
+    let (id, sha) = (repo.id.to_string(), sha.to_string());
+    let paths = gone.paths.into_iter().map(|path| {
+        let (repo, sha) = (id.clone(), sha.clone());
+        match files.contains(&path) {
+            true => SourceError::PathNotDir { repo, path, sha },
+            false => SourceError::PathMissing { repo, path, sha },
+        }
+    });
+    let start = gone.start.into_iter().map(|path| {
+        let (repo, sha) = (id.clone(), sha.clone());
         match files.iter().any(|file| below(file, &path)) {
             true => SourceError::StartNotFile { repo, path, sha },
             false => SourceError::StartMissing { repo, path, sha },
