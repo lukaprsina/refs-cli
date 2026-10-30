@@ -26,7 +26,7 @@ use crate::project::Project;
 use crate::source::Source;
 use crate::sync::{self, Report, SyncFlags};
 use crate::ui::{Prompter, Say};
-use assess::{Assessing, Move};
+use assess::{Assessing, Move, Unsettled};
 
 /// What `refs update` was asked for.
 pub struct Request<'a> {
@@ -146,9 +146,8 @@ pub fn run(
                 moves.extend(moved);
                 continue;
             }
-            Err(Failure::Refused(why)) => why,
-            // `Asked` ends the run; `settle` returns only that and `Refused`.
-            Err(other) => return Err(other),
+            Err(Unsettled::Skip(why)) => why,
+            Err(Unsettled::Asked(abort)) => return Err(Failure::Asked(abort)),
         };
         assessing
             .say

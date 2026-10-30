@@ -11,6 +11,7 @@ use crate::registry::Package;
 use crate::registry::tag::tag_for;
 use crate::registry::used::{self, Answer};
 use crate::source::Source;
+use crate::ui::pickers::{ask_version, several_versions};
 use crate::ui::{Abort, Prompter, Say};
 
 /// What `pin` settled for a registry add's Ref.
@@ -52,32 +53,6 @@ pub fn pin(
         Some(version) => pinning.settle(version),
         None => pinning.read_lockfile(),
     }
-}
-
-/// Which of `versions` of `name` to use: asked, with the highest as the default, or refused
-/// without someone to ask; the refusal ends with `instead`, what to do.
-pub fn choose_version(
-    prompter: Option<&mut (dyn Prompter + '_)>,
-    name: &str,
-    versions: &[&str],
-    file: &str,
-    instead: &str,
-) -> Result<String, Failure> {
-    let list = versions.join(", ");
-    let Some(prompter) = prompter else {
-        return Err(Failure::Refused(format!(
-            "{file} has several versions of `{name}` ({list}), and none is the one the \
-             project asks for; {instead}"
-        )));
-    };
-    let one_of_them = |answer: &str| match versions.contains(&answer) {
-        true => Ok(()),
-        false => Err(format!("one of {list}")),
-    };
-    let message = format!("{file} has several versions of `{name}`: {list}. Which one?");
-    prompter
-        .text(&message, versions.last().copied(), &one_of_them)
-        .map_err(Failure::Asked)
 }
 
 const FOLLOWS: &str = "the repo follows the remote's default branch";
@@ -130,15 +105,14 @@ impl Pinning<'_, '_> {
                 ignored,
             } => {
                 self.ignored(&ignored, &file);
-                let versions: Vec<&str> = versions.iter().map(String::as_str).collect();
-                let version = choose_version(
-                    self.prompter.as_deref_mut(),
-                    name,
-                    &versions,
-                    &file,
-                    &format!("give one as `{name}@version`"),
-                )?;
-                self.settle(&version)
+                let Some(prompter) = self.prompter.as_deref_mut() else {
+                    let why = several_versions(name, &versions, &file);
+                    return Err(Failure::Refused(format!(
+                        "{why}; give one as `{name}@version`"
+                    )));
+                };
+                let version = ask_version(prompter, name, &versions, &file);
+                self.settle(&version.map_err(Failure::Asked)?)
             }
         }
     }

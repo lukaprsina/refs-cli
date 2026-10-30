@@ -1,5 +1,5 @@
-//! The pickers `add` and `update` share: the questions about `paths`, `start` and `packages`,
-//! and the free-text helpers under them.
+//! The pickers `add` and `update` share: the questions about `paths`, `start`, `packages` and
+//! which of several Used versions, and the free-text helpers under them.
 
 use crate::outline::{self, Outline};
 use crate::ui::{Abort, Prompter, Say};
@@ -62,6 +62,34 @@ pub(crate) fn ask_packages(
 ) -> Result<Vec<String>, Abort> {
     let message = "Packages (type to filter; none selected: none)";
     prompter.pick(message, offered, ticked)
+}
+
+/// Which of `versions` of `name`, all in the Package lockfile `file`, to use; the highest is the
+/// default.
+pub(crate) fn ask_version(
+    prompter: &mut dyn Prompter,
+    name: &str,
+    versions: &[String],
+    file: &str,
+) -> Result<String, Abort> {
+    let one_of_them = |answer: &str| match versions.iter().any(|v| v == answer) {
+        true => Ok(()),
+        false => Err(format!("one of {}", versions.join(", "))),
+    };
+    let message = format!(
+        "{file} has several versions of `{name}`: {}. Which one?",
+        versions.join(", ")
+    );
+    prompter.text(&message, versions.last().map(String::as_str), &one_of_them)
+}
+
+/// Why `versions` of `name` in `file` cannot be chosen between with no one to ask: the start of
+/// the refusal, which the caller ends with what to do instead.
+pub(crate) fn several_versions(name: &str, versions: &[String], file: &str) -> String {
+    format!(
+        "{file} has several versions of `{name}` ({}), and none is the one the project asks for",
+        versions.join(", ")
+    )
 }
 
 /// A selection from `options`, with `ticked` ticked, of which `left` more were cut off: said, with

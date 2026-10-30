@@ -8,18 +8,16 @@ use std::path::Path;
 
 use super::Request;
 use super::ask::fill_update;
-// `update` shares the version question with `add`, so it imports from `add::pin` (and nothing else of `add`).
-use crate::add::pin::choose_version;
 use crate::config::{RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
 use crate::edit::Fields;
-use crate::failure::Failure;
 use crate::lock::Lock;
 use crate::outline::{Gone, Outline};
 use crate::registry::Package;
 use crate::registry::tag::{newest, split, tag_for};
 use crate::registry::used::{self, Answer};
 use crate::source::{Observed, Source};
+use crate::ui::pickers::{ask_version, several_versions};
 use crate::ui::{Abort, Prompter, Say};
 
 /// A Repo that moves.
@@ -86,9 +84,23 @@ struct Choice {
     tags: Vec<String>,
 }
 
-/// The reason a Repo is left as it is, as a `Failure::Refused`.
-fn skip(why: impl ToString) -> Failure {
-    Failure::Refused(why.to_string())
+/// Why `settle` came to neither a move nor a stay.
+pub(super) enum Unsettled {
+    /// The Repo is left as it is and reported as skipped: why.
+    Skip(String),
+    /// A question was cancelled: the run ends.
+    Asked(Abort),
+}
+
+impl From<Abort> for Unsettled {
+    fn from(abort: Abort) -> Self {
+        Unsettled::Asked(abort)
+    }
+}
+
+/// The reason a Repo is left as it is.
+fn skip(why: impl ToString) -> Unsettled {
+    Unsettled::Skip(why.to_string())
 }
 
 /// What the stages of `update` share: where to look (`source`, `root`, the `lock`), who to ask and
@@ -135,7 +147,7 @@ impl<'a, 'p> Assessing<'a, 'p> {
 
     /// Decide what `candidate` comes to for a Repo the person named or picked: hold it back if its
     /// Checkout has changes, ask what it needs, then see what the new Ref breaks.
-    pub(super) fn settle(&mut self, candidate: Candidate) -> Result<Option<Move>, Failure> {
+    pub(super) fn settle(&mut self, candidate: Candidate) -> Result<Option<Move>, Unsettled> {
         let repo = candidate.repo;
         if let Some(hold) = candidate.hold.filter(|_| !self.force) {
             return Err(skip(format!(
@@ -229,7 +241,7 @@ impl<'a, 'p> Assessing<'a, 'p> {
 
     /// Outline where `found` goes. If that tree lacks a `path` or `start` file of the Repo, say
     /// so and ask `Update?`: yes sets the broken fields again, no leaves the Repo as it is.
-    fn mend(&mut self, repo: RepoRef, mut found: Move) -> Result<Option<Move>, Failure> {
+    fn mend(&mut self, repo: RepoRef, mut found: Move) -> Result<Option<Move>, Unsettled> {
         let id = repo.id;
         let to = found
             .git_ref
@@ -262,7 +274,7 @@ impl<'a, 'p> Assessing<'a, 'p> {
             ));
         }
         let asked = fill_update(repo.repo, &outline, &gone, &manifests, prompter, self.say);
-        match asked.map_err(Failure::Asked)? {
+        match asked? {
             Some(fields) => {
                 found.fields = fields;
                 Ok(Some(found))
@@ -343,7 +355,7 @@ impl<'a, 'p> Assessing<'a, 'p> {
     }
 
     /// Ask which of the versions the lockfile has moves `repo`.
-    fn choose(&mut self, repo: RepoRef, choice: Choice) -> Result<Outcome, Failure> {
+    fn choose(&mut self, repo: RepoRef, choice: Choice) -> Result<Outcome, Unsettled> {
         let Choice {
             name,
             file,
@@ -351,14 +363,14 @@ impl<'a, 'p> Assessing<'a, 'p> {
             current,
             tags,
         } = choice;
-        let list: Vec<&str> = versions.iter().map(String::as_str).collect();
-        let version = choose_version(
-            self.prompter.as_deref_mut(),
-            &name,
-            &list,
-            &file,
-            &format!("use `refs update {} --ref <tag>` to choose one", repo.id),
-        )?;
+        let Some(prompter) = self.prompter.as_deref_mut() else {
+            let why = several_versions(&name, &versions, &file);
+            return Err(skip(format!(
+                "{why}; use `refs update {} --ref <tag>` to choose one",
+                repo.id
+            )));
+        };
+        let version = ask_version(prompter, &name, &versions, &file)?;
         Ok(by_version(repo, &name, &version, &current, &tags))
     }
 
@@ -391,7 +403,7 @@ impl<'a, 'p> Assessing<'a, 'p> {
     }
 
     /// The Ref of `repo` is gone from the remote: ask for another, starting from the old one.
-    fn ask_ref(&mut self, repo: RepoRef) -> Result<Outcome, Failure> {
+    fn ask_ref(&mut self, repo: RepoRef) -> Result<Outcome, Unsettled> {
         let (id, old, url) = (repo.id, repo.repo.effective_ref(), repo.repo.url.as_ref());
         let Some(prompter) = self.prompter.as_deref_mut() else {
             return Err(skip(format!(
@@ -404,9 +416,7 @@ impl<'a, 'p> Assessing<'a, 'p> {
             true => Err("a Ref is needed".to_owned()),
             false => Ok(()),
         };
-        let new = prompter
-            .text("Ref", Some(old), &valid)
-            .map_err(Failure::Asked)?;
+        let new = prompter.text("Ref", Some(old), &valid)?;
         Ok(moved_to(id, old, new.trim()))
     }
 
