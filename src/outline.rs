@@ -56,9 +56,7 @@ impl Outline {
             chosen.iter().filter(|c| !found(c)).cloned().collect()
         };
         Gone {
-            paths: missing(paths, &|dir| {
-                (self.paths.iter()).any(|file| within(file, dir) && file != dir)
-            }),
+            paths: missing(paths, &|dir| self.paths.iter().any(|file| below(file, dir))),
             start: missing(start, &|file| self.paths.contains(file)),
         }
     }
@@ -100,9 +98,14 @@ impl Manifests {
     }
 }
 
+/// Whether `path` is below the directory `dir`.
+pub(crate) fn below(path: &str, dir: &str) -> bool {
+    path.strip_prefix(dir).is_some_and(|r| r.starts_with('/'))
+}
+
 /// Whether `path` is `dir` or below it.
 fn within(path: &str, dir: &str) -> bool {
-    path == dir || path.strip_prefix(dir).is_some_and(|r| r.starts_with('/'))
+    path == dir || below(path, dir)
 }
 
 /// Whether `dir` is a dot directory (`.github`): tooling, not what the Repo documents.

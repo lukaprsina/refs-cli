@@ -5,6 +5,7 @@ use toml::Spanned;
 use miette::NamedSource;
 
 use crate::diagnostic::{ConfigError, ConfigErrors, ConfigProblem};
+use crate::outline::below;
 use crate::registry::Package;
 use crate::tooling;
 
@@ -404,12 +405,7 @@ fn is_project_path(path: &str) -> bool {
 
 /// Cone mode checks out every `paths` entry plus the files directly in the repo root.
 fn start_is_checked_out(start: &str, paths: &[Spanned<String>]) -> bool {
-    !start.contains('/')
-        || paths.iter().any(|dir| {
-            start
-                .strip_prefix(dir.as_ref().as_str())
-                .is_some_and(|rest| rest.starts_with('/'))
-        })
+    !start.contains('/') || paths.iter().any(|dir| below(start, dir.as_ref()))
 }
 
 /// `[a-z0-9][a-z0-9._-]*`
