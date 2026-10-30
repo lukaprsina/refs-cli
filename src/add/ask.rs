@@ -61,7 +61,7 @@ pub(super) fn fill_add(
         }
     }
     if open && prompter.confirm("Customize?")? {
-        let listed = looked.outline.as_ref().map(|o| &o.paths[..]);
+        let outline = looked.outline.as_ref();
         if id_open {
             id = ask_id(prompter, &id, config)?;
         }
@@ -73,13 +73,13 @@ pub(super) fn fill_add(
             repo.description = ask_description(prompter, current.as_deref())?;
         }
         if paths_open {
-            repo.paths = ask_paths(prompter, listed, (&repo.paths, &repo.paths), say)?;
+            repo.paths = ask_paths(prompter, outline, (&repo.paths, &repo.paths), say)?;
             if packages_open {
                 repo.packages = packages_for(&repo.paths);
             }
         }
         if start_open {
-            repo.start = ask_start(prompter, listed, &repo.paths, (&[], &[]), say)?;
+            repo.start = ask_start(prompter, outline, &repo.paths, (&[], &[]), say)?;
         }
         if packages_open && !repo.packages.is_empty() {
             if let Some(left) = summed.checked_sub(repo.packages.len()).filter(|n| *n > 0) {

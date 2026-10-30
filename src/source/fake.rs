@@ -4,9 +4,10 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use super::{Observed, Outline, Pin, Source};
+use super::{Observed, Pin, Source};
 use crate::config::RepoRef;
 use crate::diagnostic::SourceError;
+use crate::outline::Outline;
 
 /// The `Source` methods a failure can be injected into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

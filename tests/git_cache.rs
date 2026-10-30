@@ -793,7 +793,7 @@ mod outline {
         ];
         for (paths, start, rejected) in cases {
             let (p, s): (Vec<_>, Vec<_>) = (strings(paths), strings(start));
-            let gone = refs_cli::listing::gone(&outline.paths, &p, &s);
+            let gone = outline.gone(&p, &s);
             let repo = remote.repo(paths, start);
             let verified = verify(&env.source(), &remote, &repo, ONLINE);
             assert_eq!(gone.is_empty(), rejected.is_none(), "{paths:?} {start:?}");

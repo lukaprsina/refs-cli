@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::{Config, Repo, RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
 use crate::lock::Field;
+use crate::outline::Outline;
 
 /// How a run gets its `Source`, once the project is loaded: it needs the project's root and
 /// config (the real one wants its `references_dir`). Tests return the fake.
@@ -97,13 +98,6 @@ pub enum Observed {
         paths: Vec<String>,
         dirty_files: Vec<String>,
     },
-}
-
-/// What a remote holds at a ref: the Pin it resolved to and every path of the commit's tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Outline {
-    pub pin: Pin,
-    pub paths: Vec<String>,
 }
 
 pub trait Source {

@@ -14,13 +14,12 @@ use crate::config::{RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
 use crate::edit::Fields;
 use crate::failure::Failure;
-use crate::listing::{self, Gone};
 use crate::lock::Lock;
-use crate::manifests::Manifests;
+use crate::outline::{Gone, Outline};
 use crate::registry::Package;
 use crate::registry::tag::{newest, split, tag_for};
 use crate::registry::used::{self, Answer};
-use crate::source::{Observed, Outline, Source};
+use crate::source::{Observed, Source};
 use crate::ui::{Abort, Prompter, Say};
 
 /// A Repo that moves.
@@ -231,7 +230,7 @@ impl<'a, 'p> Assessing<'a, 'p> {
     /// Outline where `found` goes. If that tree lacks a `path` or `start` file of the Repo, say
     /// so and ask `Update?`: yes sets the broken fields again, no leaves the Repo as it is.
     fn mend(&mut self, repo: RepoRef, mut found: Move) -> Result<Option<Move>, Failure> {
-        let (id, url) = (repo.id, repo.repo.url.as_ref());
+        let id = repo.id;
         let to = found
             .git_ref
             .as_deref()
@@ -246,7 +245,9 @@ impl<'a, 'p> Assessing<'a, 'p> {
                 "`{to}` no longer has {gone}; run `refs update {id}` in a terminal to choose others"
             )));
         };
-        let manifests = Manifests::read(self.source, url, &outline, &[], self.say).map_err(skip)?;
+        let manifests = outline
+            .manifests(self.source, &[], self.say)
+            .map_err(skip)?;
         let have = manifests.packages_for(&paths);
         let vanished: Vec<String> = (repo.repo.package_strings().into_iter())
             .filter(|name| !have.contains(name))
@@ -260,14 +261,7 @@ impl<'a, 'p> Assessing<'a, 'p> {
                 names.join(", ")
             ));
         }
-        let asked = fill_update(
-            repo.repo,
-            &outline.paths,
-            &gone,
-            &manifests,
-            prompter,
-            self.say,
-        );
+        let asked = fill_update(repo.repo, &outline, &gone, &manifests, prompter, self.say);
         match asked.map_err(Failure::Asked)? {
             Some(fields) => {
                 found.fields = fields;
@@ -282,11 +276,7 @@ impl<'a, 'p> Assessing<'a, 'p> {
         let outline = self
             .source
             .outline(repo.repo.url.as_ref(), &found.look_at)?;
-        let gone = listing::gone(
-            &outline.paths,
-            &repo.repo.path_strings(),
-            &repo.repo.start_strings(),
-        );
+        let gone = outline.gone(&repo.repo.path_strings(), &repo.repo.start_strings());
         Ok((outline, gone))
     }
 

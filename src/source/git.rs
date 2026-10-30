@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{RepoRef, is_full_sha};
 use crate::diagnostic::SourceError;
-use crate::source::{Observed, Outline, Pin, Source};
+use crate::outline::Outline;
+use crate::source::{Observed, Pin, Source};
 use cache::{Cache, Repo};
 use checkout::{Layout, Record};
 use command::Cmd;

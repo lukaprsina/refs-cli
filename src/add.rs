@@ -15,10 +15,10 @@ pub mod pin;
 use crate::config::Config;
 use crate::edit::{AddRepo, Edit};
 use crate::failure::Failure;
-use crate::manifests::Manifests;
+use crate::outline::{Manifests, Outline};
 use crate::project::Project;
 use crate::registry::Registry;
-use crate::source::{Outline, Source};
+use crate::source::Source;
 use crate::sync::{self, Report, SyncFlags};
 use crate::ui::{Prompter, Say};
 use expand::{Expanded, Requested, expand};
@@ -197,8 +197,7 @@ impl Context<'_> {
         let nameless = repo.packages.is_empty();
         let undescribed = looked.described.is_none() && repo.description.is_none();
         if nameless || undescribed {
-            looked.manifests =
-                Manifests::read(source, &repo.url, &outline, &repo.paths, &mut *self.say)?;
+            looked.manifests = outline.manifests(source, &repo.paths, &mut *self.say)?;
             looked.described = looked.described.or(looked.manifests.description());
         }
         looked.outline = Some(outline);
