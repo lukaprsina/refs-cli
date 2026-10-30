@@ -196,12 +196,12 @@ fn gone(files: &[String], paths: &[String], start: &[String]) -> Gone {
     }
 }
 
-/// The Break rule as the check `sync` makes at the commit `sha` it resolved: one error for each
+/// The Break rule as the check `sync` makes at the `pin` it resolved: one error for each
 /// of the Repo's `paths` and `start` that `files` (`Source::files`) lacks, telling one of the
 /// wrong kind from a missing one. A submodule or a symlink is listed as a file.
-pub fn verify(repo: RepoRef, sha: &str, files: &[String]) -> Vec<SourceError> {
+pub fn verify(repo: RepoRef, pin: &Pin, files: &[String]) -> Vec<SourceError> {
     let gone = gone(files, &repo.repo.path_strings(), &repo.repo.start_strings());
-    let (id, sha) = (repo.id.to_string(), sha.to_string());
+    let (id, sha) = (repo.id.to_string(), pin.sha().to_string());
     let paths = gone.paths.into_iter().map(|path| {
         let (repo, sha) = (id.clone(), sha.clone());
         match files.contains(&path) {

@@ -187,8 +187,9 @@ fn at<'a>(id: &'a str, repo: &'a Repo) -> RepoRef<'a> {
 /// What `sync` checks of `repo` at the remote's commit: `files`, then the rule over them. Every
 /// error code, joined.
 fn verify(source: &GitSource, remote: &Remote, repo: &Repo, offline: bool) -> Result<(), String> {
-    let files = (source.files(at("r", repo), &remote.pin(), offline)).map_err(code)?;
-    let wrong: Vec<String> = (check(at("r", repo), &remote.sha, &files).into_iter())
+    let pin = remote.pin();
+    let files = (source.files(at("r", repo), &pin, offline)).map_err(code)?;
+    let wrong: Vec<String> = (check(at("r", repo), &pin, &files).into_iter())
         .map(code)
         .collect();
     match wrong.is_empty() {
@@ -285,8 +286,9 @@ mod verify {
     fn a_missing_path_is_an_error() {
         let (remote, env) = (Remote::new(), Env::new());
         let repo = remote.repo(&["docs/nope"], &[]);
-        let files = env.source().files(at("r", &repo), &remote.pin(), false);
-        let err = check(at("r", &repo), &remote.sha, &files.unwrap()).remove(0);
+        let pin = remote.pin();
+        let files = env.source().files(at("r", &repo), &pin, false);
+        let err = check(at("r", &repo), &pin, &files.unwrap()).remove(0);
         assert_eq!(err.code().unwrap().to_string(), "refs::git::path_missing");
         let message = err.to_string();
         assert!(

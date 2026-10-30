@@ -307,7 +307,7 @@ fn resolve_all(
             .expect("a step is made per active Repo");
         match source.files(repo, &entry.pin, flags.offline) {
             Ok(files) => {
-                let wrong = outline::verify(repo, entry.pin.sha(), &files);
+                let wrong = outline::verify(repo, &entry.pin, &files);
                 if wrong.is_empty() {
                     passed.push(entry);
                 }
