@@ -106,7 +106,7 @@ fn offline_since(p: &Project, seen: usize) -> Vec<bool> {
     p.source.calls()[seen..]
         .iter()
         .filter_map(|call| match call {
-            Call::Verify { offline, .. } | Call::Materialise { offline, .. } => Some(*offline),
+            Call::Files { offline, .. } | Call::Materialise { offline, .. } => Some(*offline),
             _ => None,
         })
         .collect()

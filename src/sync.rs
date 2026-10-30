@@ -14,6 +14,7 @@ use crate::diagnostic::Note;
 use crate::edit::{self, Edit};
 use crate::exclude;
 use crate::lock::{Lock, LockedRepo};
+use crate::outline;
 pub use crate::plan::{Checkout, Outcome};
 use crate::plan::{
     Checkouts, Drift, Exclude, Plan, RepoAction, Step, lock_drift, plan_checkouts, plan_lock,
@@ -304,8 +305,14 @@ fn resolve_all(
         let repo = active
             .get(&entry.id)
             .expect("a step is made per active Repo");
-        match source.verify(repo, &entry.pin, flags.offline) {
-            Ok(()) => passed.push(entry),
+        match source.files(repo, &entry.pin, flags.offline) {
+            Ok(files) => {
+                let wrong = outline::verify(repo, entry.pin.sha(), &files);
+                if wrong.is_empty() {
+                    passed.push(entry);
+                }
+                errors.extend(wrong.into_iter().map(|e| e.for_repo(repo.id)));
+            }
             Err(e) => errors.push(e.for_repo(repo.id)),
         }
     }

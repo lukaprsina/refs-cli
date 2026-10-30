@@ -120,7 +120,7 @@ fn an_edit_verifies_every_repo_once() {
         .calls()
         .into_iter()
         .filter_map(|c| match c {
-            Call::Verify { id, .. } => Some(id),
+            Call::Files { id, .. } => Some(id),
             _ => None,
         })
         .collect();
@@ -230,7 +230,7 @@ fn synced_then_b_breaks() -> (TempDir, FakeSource) {
     let source = FakeSource::new();
     let first = run_edit(&dir, &source, &Edit::Enable(Target::Repo("a")));
     assert_eq!(first.outcome, Outcome::InSync);
-    source.fail("b", Method::Verify, "remote gone");
+    source.fail("b", Method::Files, "remote gone");
     (dir, source)
 }
 
@@ -245,7 +245,7 @@ fn verifies(source: &FakeSource) -> usize {
     source
         .calls()
         .iter()
-        .filter(|c| matches!(c, Call::Verify { .. }))
+        .filter(|c| matches!(c, Call::Files { .. }))
         .count()
 }
 

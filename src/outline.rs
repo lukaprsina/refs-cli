@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use crate::config::RepoRef;
 use crate::diagnostic::SourceError;
 use crate::packages::{self, infer, manifest_paths};
 use crate::source::{Pin, Source};
@@ -52,13 +53,7 @@ impl Outline {
 
     /// What the tree lacks of a Repo's `paths` and `start` (the Break rule).
     pub fn gone(&self, paths: &[String], start: &[String]) -> Gone {
-        let missing = |chosen: &[String], found: &dyn Fn(&String) -> bool| {
-            chosen.iter().filter(|c| !found(c)).cloned().collect()
-        };
-        Gone {
-            paths: missing(paths, &|dir| self.paths.iter().any(|file| below(file, dir))),
-            start: missing(start, &|file| self.paths.contains(file)),
-        }
+        gone(&self.paths, paths, start)
     }
 
     /// The Manifests of the tree that a Checkout of `paths` will hold, up to the cap (said when
@@ -175,9 +170,9 @@ pub fn drop_children(dirs: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-/// What a new tree lacks of a Repo's chosen `paths` and `start`: a `path` that is no directory
-/// in it, a `start` that is no file in it. The rule `Source::verify` applies, read from the
-/// Outline; advisory, as `verify` still decides.
+/// What a tree lacks of a Repo's chosen `paths` and `start`: a `path` that is no directory in
+/// it, a `start` that is no file in it. Read from the Outline of a new Ref it is advisory, as
+/// `verify` still decides at the commit `sync` resolves.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Gone {
     pub paths: Vec<String>,
@@ -188,6 +183,40 @@ impl Gone {
     pub fn is_empty(&self) -> bool {
         self.paths.is_empty() && self.start.is_empty()
     }
+}
+
+/// What `files` lacks of `paths` and `start`.
+fn gone(files: &[String], paths: &[String], start: &[String]) -> Gone {
+    let missing = |chosen: &[String], found: &dyn Fn(&String) -> bool| {
+        chosen.iter().filter(|c| !found(c)).cloned().collect()
+    };
+    Gone {
+        paths: missing(paths, &|dir| files.iter().any(|file| below(file, dir))),
+        start: missing(start, &|file| files.contains(file)),
+    }
+}
+
+/// The Break rule as the check `sync` makes at the commit `sha` it resolved: one error for each
+/// of the Repo's `paths` and `start` that `files` (`Source::files`) lacks, telling one of the
+/// wrong kind from a missing one. A submodule or a symlink is listed as a file.
+pub fn verify(repo: RepoRef, sha: &str, files: &[String]) -> Vec<SourceError> {
+    let gone = gone(files, &repo.repo.path_strings(), &repo.repo.start_strings());
+    let at = |path: String| (repo.id.to_string(), path, sha.to_string());
+    let paths =
+        gone.paths
+            .into_iter()
+            .map(at)
+            .map(|(repo, path, sha)| match files.contains(&path) {
+                true => SourceError::PathNotDir { repo, path, sha },
+                false => SourceError::PathMissing { repo, path, sha },
+            });
+    let start = gone.start.into_iter().map(at).map(|(repo, path, sha)| {
+        match files.iter().any(|file| below(file, &path)) {
+            true => SourceError::StartNotFile { repo, path, sha },
+            false => SourceError::StartMissing { repo, path, sha },
+        }
+    });
+    paths.chain(start).collect()
 }
 
 /// `paths `a`, `b`; start `c``

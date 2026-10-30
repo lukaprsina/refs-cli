@@ -108,8 +108,8 @@ url = \"https://github.com/o/c\"
 "
     ));
     assert_eq!(p.run(&["sync"]).code, 0);
-    p.source.fail("a", Method::Verify, "remote gone");
-    p.source.fail("b", Method::Verify, "remote gone");
+    p.source.fail("a", Method::Files, "remote gone");
+    p.source.fail("b", Method::Files, "remote gone");
 
     let ran = p.run(&["remove", "c"]);
 

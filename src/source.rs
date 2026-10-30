@@ -103,9 +103,10 @@ pub enum Observed {
 pub trait Source {
     /// Ref to commit. Asks the remote; never creates a Checkout.
     fn resolve(&self, repo: RepoRef) -> Result<Pin, SourceError>;
-    /// Check that `paths` and `start` exist at the pinned commit. Fetches the commit and its
-    /// trees on a Cache miss, unless `offline`.
-    fn verify(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError>;
+    /// The files of the pinned commit at the Repo's `paths` and `start`, which `sync` checks
+    /// them against (`outline::verify`). Fetches the commit and its trees on a Cache miss,
+    /// unless `offline`.
+    fn files(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<Vec<String>, SourceError>;
     /// Fetch the pinned commit and create or move the Checkout to it. `offline` forbids network
     /// access. `force` is `plan`'s business (ADR 0006), so `Source` never sees it.
     fn materialise(&self, repo: RepoRef, pin: &Pin, offline: bool) -> Result<(), SourceError>;
