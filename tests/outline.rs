@@ -103,5 +103,5 @@ fn past_the_cap_the_shallowest_stay_and_the_rest_are_counted() {
     let (dirs, left) = outline(paths).directories();
     assert_eq!(dirs.len(), 5000);
     assert_eq!(left, 3);
-    assert!(!dirs.contains(&"a/b".to_string()) && dirs.contains(&"a".to_string()));
+    assert!(!dirs.iter().any(|d| d == "a/b") && dirs.iter().any(|d| d == "a"));
 }
