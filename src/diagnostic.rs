@@ -490,7 +490,7 @@ pub enum Note {
     #[diagnostic(
         code(refs::tooling::editor_hint),
         help(
-            "Zed (needed on Windows, not tried elsewhere): add `\"file_scan_exclusions\": [\"**/{references_dir}\", \"...\"]` to .zed/settings.json. \
+            "Zed (on Windows): add `\"file_scan_exclusions\": [\"**/{references_dir}\", \"...\"]` to .zed/settings.json. \
              JetBrains (not tried): right-click {references_dir}, Mark Directory as, Excluded. \
              VS Code search, Helix and Neovim's ripgrep or fd pickers already skip it."
         )

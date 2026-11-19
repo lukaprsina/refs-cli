@@ -33,7 +33,11 @@ impl Gap {
             true => format!("create {file} with: {snippet}"),
             false => format!("add this to {file}: {snippet}"),
         };
-        format!(r#"{fix} (or add "{tool}" to tooling_ignore in refs.toml)"#)
+        let only = match tool {
+            "zed" => "needed on Windows; ",
+            _ => "",
+        };
+        format!(r#"{fix} ({only}or add "{tool}" to tooling_ignore in refs.toml)"#)
     }
 }
 

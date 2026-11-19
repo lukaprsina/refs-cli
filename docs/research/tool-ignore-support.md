@@ -29,7 +29,7 @@ Test layout (for every local run): `git init` repo, `.git/info/exclude` = `/.ref
 | markdownlint-cli2 | opt-in `gitignore` (tested: skipped with a `.gitignore` line) | **no** (tested, also with `gitignore: true`) | no | **yes** (scans by default, tested) |
 | golangci-lint | n/a (Go package lists) | n/a | n/a | no for `./...` |
 | VS Code search / Quick Open | yes | yes | yes | no |
-| Zed 1.25.3 | yes | **no** (tested): tree, search and file finder all show it | unverified | **yes**: `file_scan_exclusions` |
+| Zed | yes | Linux 1.29.2: **yes** for search and file finder (tested; the project panel still lists it). Windows 1.25.3: **no** (tested), all three show it | yes on Linux 1.29.2 (tested) | **yes** on Windows: `file_scan_exclusions` |
 | Helix | yes | yes | yes | no |
 | Neovim telescope / fzf-lua | via rg/fd: yes | yes | yes | no, unless the `find` fallback is used |
 | JetBrains | unverified | unverified | no | **yes** (needs its own exclude) |
@@ -42,7 +42,7 @@ README says: "Exclude it yourself in Ruff, Biome, Stylelint and your editor."
 
 - Ruff: **incorrect as a general statement.** `respect-gitignore` defaults to `true` and covers `.ignore`, `.gitignore`, `.git/info/exclude` and global gitignore (https://docs.astral.sh/ruff/settings/ , source comment in https://github.com/astral-sh/ruff/blob/main/crates/ruff_workspace/src/options.rs). Tested with `uvx ruff@0.17.3` (see Ruff). It stays a gap only when the project is not a git repo, `respect-gitignore = false`, or the path is passed explicitly (see `force-exclude` below).
 - Biome: correct. Stylelint: **incorrect** for its default file arguments (it never reaches the directory, tested). Prettier, ESLint, Black and markdownlint-cli2 are missing from the sentence and also need a gap note.
-- "Your editor": too broad. VS Code search and Quick Open, Helix and ripgrep/fd-based Neovim pickers honor `info/exclude`. Zed does not (tested) and JetBrains needs its own exclude.
+- "Your editor": too broad. VS Code search and Quick Open, Helix and ripgrep/fd-based Neovim pickers honor `info/exclude`. Zed honors it on Linux but not on Windows 1.25.3, and JetBrains needs its own exclude.
 
 ## Per-tool
 
@@ -237,8 +237,9 @@ README says: "Exclude it yourself in Ruff, Biome, Stylelint and your editor."
   ```json
   { "file_scan_exclusions": ["**/.references", "..."] }
   ```
-- `info/exclude`: **tested by hand on Zed 1.25.3 (Windows, 2026-10-23), default settings, `/.references/` only in `.git/info/exclude`: the project panel lists `.references/`, project search finds the string in `.references/dep/`, and the file finder lists it. `info/exclude` did nothing for any of the three.** With `file_scan_exclusions` set, all three stopped showing it.
-  - This contradicts what the source suggests: Zed's worktree has a `RepoExclude` ignore layer (merged: https://github.com/zed-industries/zed/pull/51536, respect `.git/info/exclude` in linked worktrees; https://github.com/zed-industries/zed/pull/62325, anchoring). The layer exists, but it did not take effect in this test. Why (platform, version, or a different code path such as the project panel and search not applying it) is unverified; only Windows 1.25.3 was tried, no Linux or macOS run and no `.gitignore` control run. Treat `info/exclude` as not reliable in Zed, as the maintainer's earlier experience also suggested.
+- `info/exclude`, tested by hand with `/.references/` only in `.git/info/exclude` (and again as a `.gitignore` line and in a linked worktree on Linux; all three behaved the same):
+  - Linux, Zed 1.29.2 (2026-11-19): project search and the file finder skip `.references/`; the project panel lists it, as it lists any ignored directory. `file_scan_exclusions` is not needed.
+  - Windows, Zed 1.25.3 (2026-10-23): the panel, search and file finder all show it; `info/exclude` did nothing. With `file_scan_exclusions` set, all three stopped showing it. The source has a `RepoExclude` layer (https://github.com/zed-industries/zed/pull/51536, https://github.com/zed-industries/zed/pull/62325); whether the Windows result comes from the platform or the version is not known, so refs treats Windows as needing the setting.
 
 ### Helix
 - `[editor.file-picker]` defaults: `hidden = true`, `ignore = true` (`.ignore`), `git-ignore = true`, `git-global = true`, `git-exclude = true` ("Enables reading `.git/info/exclude` files"), `parents = true`; git options only apply in a git repo. Extra: `.helix/ignore` in the workspace, or `~/.config/helix/ignore`. https://docs.helix-editor.com/editor.html
@@ -295,6 +296,6 @@ Problems in the Gemini note:
 - Ruff `force-exclude` editor interaction (docs text truncated in my fetch).
 - rust-analyzer gitignore handling; clippy source; golangci-lint gitignore handling and config file names; markdownlint-cli2 `package.json` support; markdownlint-cli.
 - VS Code: defaults of `search.useIgnoreFiles`, `explorer.excludeGitIgnore`, `files.watcherExclude`; workspace settings path in docs; tsserver loose-file behavior.
-- Zed: why `info/exclude` had no effect in 1.25.3 on Windows (other platforms, a `.gitignore` control run, and linked worktrees not tried).
+- Zed: macOS, and Windows on a current version.
 - JetBrains: `.iml` format, scope XML file format, `file:*//*`, indexing of git-ignored files, IDEA-specific File Types page.
 - mypy: release that added `exclude_gitignore`. Black: release that added gitignore support. Black: other versions, a nested `.references`, Windows paths and pre-commit or editor runs (fifth pass).
